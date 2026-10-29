@@ -1,2 +1,3 @@
 client/target/
 __pycache__/
+docker/logs/

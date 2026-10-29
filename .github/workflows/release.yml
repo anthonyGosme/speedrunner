@@ -51,8 +51,11 @@ jobs:
           name: ${{ matrix.arch }}
           path: speedrunner-*.tar.gz*
 
+  platforms:
+    uses: ./.github/workflows/platforms.yml
+
   publish:
-    needs: build
+    needs: [build, platforms]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

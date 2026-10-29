@@ -38,6 +38,10 @@ if it is not there yet; `SPEEDRUNNER_NO_MODIFY_PATH=1` to leave them alone). Rat
 Each tool's daemon runs on that tool's own interpreter: nothing else to install
 (PHP tools need PHP's FFI extension; without it they simply run natively).
 
+Tested, with the whole regression suite, on Debian 12, Ubuntu 22.04 and 24.04,
+Alpine 3.20 and Fedora 42, with Python 3.9 to 3.14, Ruby 3.0 to 3.4 and PHP 8.1
+to 8.4, as root and as an unprivileged user (`docker/test-all.sh`).
+
 Then see what it gains on your machine, with the tools you have:
 
 ```bash

@@ -1,0 +1,18 @@
+# The regression suites on Fedora (recent glibc, Python, Ruby and PHP), laid
+# out as on the dev VPS, same entry point as the Debian image:
+#   docker build -t speedrunner-fedora -f docker/Dockerfile.fedora docker
+#   docker run --rm -t -v "$PWD:/src" speedrunner-fedora tests
+FROM fedora:42
+
+ENV LANG=C.UTF-8
+RUN dnf install -y -q python3 ruby ruby-devel rubygems gcc make \
+        php-cli php-opcache php-ffi php-process php-xml php-mbstring composer \
+        cargo rust zsh procps-ng rsync git util-linux-script which \
+    && dnf clean all
+
+WORKDIR /root/speedrunner
+RUN python3 -m venv venv-aws && venv-aws/bin/pip install -q --no-cache-dir awscli \
+    && python3 -m venv venv-test
+
+COPY run.sh /usr/local/bin/speedrunner-dev
+ENTRYPOINT ["speedrunner-dev"]

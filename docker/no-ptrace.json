@@ -1,0 +1,5 @@
+{
+  "comment": "Everything allowed but ptrace: for the test run where the client cannot follow launchers.",
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [{"names": ["ptrace"], "action": "SCMP_ACT_ERRNO", "errnoRet": 1}]
+}

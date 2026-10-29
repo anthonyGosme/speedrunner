@@ -1,38 +1,68 @@
 #!/usr/bin/env bash
 # In the container: copy the working copy mounted at /src to where the VPS
-# has it, build the client, install the test fixtures, then run the command
-# given (in the copy). New bench results are copied back to /src.
+# has it, build the client (or take SPEEDRUNNER_BIN, a prebuilt one), install
+# the test fixtures this image can run, then run the suites or command given
+# (in the copy). New bench results are copied back to /src.
 #
-#   docker run --rm -it -v "$PWD:/src" speedrunner-dev tests      # the 5 suites
-#   docker run --rm -it -v "$PWD:/src" speedrunner-dev <command>  # anything
+#   docker run --rm -t -v "$PWD:/src" speedrunner-dev tests        # the 5 suites
+#   docker run --rm -t -v "$PWD:/src" IMAGE suites matrix ruby      # some of them
+#   docker run --rm -t -v "$PWD:/src" speedrunner-dev <command>    # anything
+#
+# Suites: matrix, shell, scripts (Python), ruby, php. SR_ROOT: where the
+# venvs and gems are (default /root/speedrunner).
 set -euo pipefail
-root=/root/speedrunner repo=/root/speedrunner/repo
+root=${SR_ROOT:-/root/speedrunner} repo=${SR_ROOT:-/root/speedrunner}/repo
 # Hidden top-level directories (git, editors, tools) stay out, CI config aside.
+mkdir -p "$repo"
 rsync -a --delete --include /.github --exclude "/.*" --exclude target /src/ "$repo/"
-(cd "$repo/client" && cargo build --release -q)
-cp -r "$repo/tests/fixture/hstest" /tmp/hstest-build
-"$root/venv-test/bin/pip" install -q --no-deps --force-reinstall /tmp/hstest-build
-rm -rf /tmp/hstest-build /tmp/rbtest-build
-cp -r "$repo/tests/fixture/rbtest" /tmp/rbtest-build
-(cd /tmp/rbtest-build && gem build -q rbtest.gemspec > /dev/null 2>&1 \
-    && GEM_HOME=$root/gems-rbtest gem install -q --local --no-document rbtest-0.1.0.gem > /dev/null)
+if [ -n "${SPEEDRUNNER_BIN:-}" ]; then
+    B=$SPEEDRUNNER_BIN
+else
+    (cd "$repo/client" && cargo build --release -q)
+    B=$repo/client/target/release/speedrunner
+fi
+tmp=$(mktemp -d)
+if [ -x "$root/venv-test/bin/pip" ]; then
+    cp -r "$repo/tests/fixture/hstest" "$tmp/hstest"
+    "$root/venv-test/bin/pip" install -q --disable-pip-version-check --no-deps --force-reinstall "$tmp/hstest"
+fi
+if command -v gem > /dev/null; then
+    cp -r "$repo/tests/fixture/rbtest" "$tmp/rbtest"
+    (cd "$tmp/rbtest" && gem build -q rbtest.gemspec > /dev/null 2>&1 \
+        && GEM_HOME=$root/gems-rbtest gem install -q --local --no-document rbtest-0.1.0.gem > /dev/null)
+fi
+rm -rf "$tmp"
 
 cd "$repo"
 before=$(ls bench/results)
-export B=$repo/client/target/release/speedrunner P=$root/venv-test/bin:$root/venv-aws/bin
+export B P=$root/venv-test/bin:$root/venv-aws/bin
 export ASCIINEMA=$root/venv-rec/bin/asciinema  # for bench/demo/record.sh
+# The Laravel project is in the Debian image only: optional elsewhere.
+laravel=$root/php/laravel; [ -d "$laravel" ] || laravel=
+
+suite() {
+    echo "== $1"
+    case $1 in
+        matrix|shell|scripts)
+            HS_BIN=$B HS_PATH=$P python3 "tests/test_$1.py" 2>&1 | tail -3 ;;
+        ruby)
+            RB_GEM_HOME=$root/gems-rbtest HS_BIN=$B HS_PATH=$root/gems-rbtest/bin:$P \
+                python3 tests/test_ruby.py 2>&1 | tail -3 ;;
+        php)
+            PHP_LARAVEL=$laravel HS_BIN=$B HS_PATH=$repo/tests/fixture/phptest/bin:$P \
+                python3 tests/test_php.py 2>&1 | tail -3 ;;
+        *) echo "unknown suite $1"; return 2 ;;
+    esac
+}
+
 status=0
-if [ "${1:-}" = tests ]; then
+case "${1:-}" in
+    tests) set -- suites matrix shell scripts ruby php ;;
+esac
+if [ "${1:-}" = suites ]; then
+    shift
     # Every suite runs; the exit status says whether one failed (for CI).
-    for t in test_matrix test_shell test_scripts; do
-        echo "== $t"; HS_BIN=$B HS_PATH=$P python3 tests/$t.py 2>&1 | tail -3 || status=1
-    done
-    echo "== ruby"
-    RB_GEM_HOME=$root/gems-rbtest HS_BIN=$B HS_PATH=$root/gems-rbtest/bin:$P python3 tests/test_ruby.py 2>&1 | tail -3 || status=1
-    echo "== php"
-    # The Laravel project is in the Debian image only: optional elsewhere.
-    laravel=$root/php/laravel; [ -d "$laravel" ] || laravel=
-    PHP_LARAVEL=$laravel HS_BIN=$B HS_PATH=$repo/tests/fixture/phptest/bin:$P python3 tests/test_php.py 2>&1 | tail -3 || status=1
+    for s in "$@"; do suite "$s" || status=1; done
 else
     "$@" || status=$?
 fi

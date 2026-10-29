@@ -1,5 +1,7 @@
-# The client's unit tests, then the five regression suites in the
-# Debian image of docker/, as they run on the dev VPS.
+# On every push: the client's unit tests, its static (musl) build as
+# releases make it, then the five regression suites in the Debian image of
+# docker/, as they run on the dev VPS. Other distributions and language
+# versions: platforms.yml.
 name: ci
 
 on:
@@ -12,6 +14,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cargo test --locked --manifest-path client/Cargo.toml
+
+  musl:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          docker run --rm -v "$PWD:/src" -w /src/client rust:1-alpine sh -c
+          'apk add -q musl-dev && cargo build --locked --release && ./target/release/speedrunner --version'
 
   suites:
     runs-on: ubuntu-24.04

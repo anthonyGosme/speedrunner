@@ -1,0 +1,35 @@
+# The regression suites across distributions, language versions, an
+# unprivileged user and a sandbox without ptrace (docker/test-all.sh), one
+# target per job, on x86_64 and, for two distributions, arm64. Nightly, on
+# demand, and before every release (release.yml).
+name: platforms
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  target:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [debian, ubuntu-24.04, ubuntu-22.04, alpine, fedora, non-root, no-ptrace,
+                 py3.9, py3.10, py3.11, py3.12, py3.13, py3.14,
+                 rb3.1, rb3.2, rb3.3, rb3.4,
+                 php8.1, php8.2, php8.3, php8.4]
+        runner: [ubuntu-24.04]
+        include:
+          - {target: ubuntu-24.04, runner: ubuntu-24.04-arm}
+          - {target: alpine, runner: ubuntu-24.04-arm}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker/test-all.sh ${{ matrix.target }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-${{ matrix.target }}-${{ matrix.runner }}
+          path: docker/logs/
