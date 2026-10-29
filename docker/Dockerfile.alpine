@@ -1,0 +1,19 @@
+# The regression suites on Alpine 3.20 (musl; Python 3.12, Ruby 3.3, PHP 8.3),
+# laid out as on the dev VPS. Same entry point as the Debian image:
+#   docker build -t speedrunner-alpine -f docker/Dockerfile.alpine docker
+#   docker run --rm -t -v "$PWD:/src" speedrunner-alpine tests
+FROM alpine:3.20
+
+ENV LANG=C.UTF-8
+RUN apk add --no-cache bash python3 ruby ruby-dev build-base \
+        php83 php83-opcache php83-ffi php83-pcntl php83-posix php83-phar php83-mbstring \
+        php83-openssl php83-iconv php83-ctype php83-tokenizer php83-xml php83-dom composer \
+        cargo rust zsh procps rsync git util-linux-misc ca-certificates unzip \
+    && { command -v php > /dev/null || ln -s /usr/bin/php83 /usr/bin/php; }
+
+WORKDIR /root/speedrunner
+RUN python3 -m venv venv-aws && venv-aws/bin/pip install -q --no-cache-dir awscli \
+    && python3 -m venv venv-test
+
+COPY run.sh /usr/local/bin/speedrunner-dev
+ENTRYPOINT ["speedrunner-dev"]

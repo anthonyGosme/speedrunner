@@ -30,7 +30,9 @@ if [ "${1:-}" = tests ]; then
     echo "== ruby"
     RB_GEM_HOME=$root/gems-rbtest HS_BIN=$B HS_PATH=$root/gems-rbtest/bin:$P python3 tests/test_ruby.py 2>&1 | tail -3 || status=1
     echo "== php"
-    PHP_LARAVEL=$root/php/laravel HS_BIN=$B HS_PATH=$repo/tests/fixture/phptest/bin:$P python3 tests/test_php.py 2>&1 | tail -3 || status=1
+    # The Laravel project is in the Debian image only: optional elsewhere.
+    laravel=$root/php/laravel; [ -d "$laravel" ] || laravel=
+    PHP_LARAVEL=$laravel HS_BIN=$B HS_PATH=$repo/tests/fixture/phptest/bin:$P python3 tests/test_php.py 2>&1 | tail -3 || status=1
 else
     "$@" || status=$?
 fi
