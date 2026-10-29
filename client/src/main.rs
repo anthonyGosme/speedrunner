@@ -175,7 +175,7 @@ fn cmd_demo(rest: &[OsString]) -> i32 {
         print!("  {:<24} ", format!("{} {}", name, DEMO_ARGS.join(" ")));
         let _ = io::stdout().flush();
         let native = || {
-            let mut c = process::Command::new(OsStr::from_bytes(&tool.path));
+            let mut c = process::Command::new(OsStr::from_bytes(&tool.found));
             c.args(DEMO_ARGS);
             c
         };
@@ -259,7 +259,8 @@ fn cmd_init(rest: &[OsString]) -> i32 {
 
 struct Tool<'a> {
     name: &'a OsStr,
-    path: Vec<u8>, // the script the daemon preloads
+    path: Vec<u8>,  // the script the daemon preloads: an absolute path
+    found: Vec<u8>, // the script as execvp finds it, maybe relative: what runs natively
     sock: PathBuf,
     dir: PathBuf,
     form: Option<ScriptForm>,
@@ -273,10 +274,13 @@ struct ScriptForm {
 
 impl<'a> Tool<'a> {
     fn resolve(name: &'a OsStr) -> Option<Tool<'a>> {
-        let path = resolve_in_path(name.as_bytes())?;
+        let found = resolve_in_path(name.as_bytes())?;
+        // `./manage.py` names a different script in each project: the
+        // daemon, which runs elsewhere, gets it relative to no directory.
+        let path = absolute(&found)?;
         let dir = runtime_dir();
         let sock = dir.join(socket_name(name, &path));
-        Some(Tool { name, path, sock, dir, form: None })
+        Some(Tool { name, path, found, sock, dir, form: None })
     }
 
     /// The tool as `php script args` runs it, when it is the PHP interpreter
@@ -297,13 +301,13 @@ impl<'a> Tool<'a> {
         let path = script.into_os_string().into_vec();
         let dir = runtime_dir();
         let sock = dir.join(socket_name(OsStr::from_bytes(basename(&path)), &path));
-        Some(Tool { name: self.name, path, sock, dir,
+        Some(Tool { name: self.name, found: path.clone(), path, sock, dir,
                     form: Some(ScriptForm { interp: self.path.clone(), typed: typed.clone() }) })
     }
 
-    /// argv[0] the tool sees: the script as typed, or its resolved path.
+    /// argv[0] the tool sees: the script as typed, or as execvp found it.
     fn argv0(&self) -> &[u8] {
-        self.form.as_ref().map_or(&self.path[..], |f| f.typed.as_bytes())
+        self.form.as_ref().map_or(&self.found[..], |f| f.typed.as_bytes())
     }
 
     fn display(&self) -> String {
@@ -499,7 +503,7 @@ fn exec_native(tool: &Tool, args: &[OsString]) -> ! {
         .collect();
     let mut ptrs: Vec<*const libc::c_char> = argv.iter().map(|c| c.as_ptr()).collect();
     ptrs.push(ptr::null());
-    let path = cstring(tool.form.as_ref().map_or(&tool.path[..], |f| &f.interp[..]));
+    let path = cstring(tool.form.as_ref().map_or(&tool.found[..], |f| &f.interp[..]));
     unsafe {
         // Rust ignores SIGPIPE at startup; the tool must inherit the default.
         libc::signal(libc::SIGPIPE, libc::SIG_DFL);
@@ -1640,6 +1644,17 @@ fn extract_daemon(file: &str) -> io::Result<PathBuf> {
 }
 
 // --- small helpers ---------------------------------------------------------
+
+/// `path` made absolute against the cwd, `.` components dropped: no
+/// symlink resolved, so that it still names what the shell would run.
+fn absolute(path: &[u8]) -> Option<Vec<u8>> {
+    let path = Path::new(OsStr::from_bytes(path));
+    if path.is_absolute() {
+        return Some(path.as_os_str().as_bytes().to_vec());
+    }
+    let full: PathBuf = env::current_dir().ok()?.join(path).components().collect();
+    Some(full.into_os_string().into_vec())
+}
 
 fn resolve_in_path(name: &[u8]) -> Option<Vec<u8>> {
     if name.is_empty() {

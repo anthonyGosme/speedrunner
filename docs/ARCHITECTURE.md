@@ -133,7 +133,7 @@ Avant chaque fork, `gc.freeze()` : le GC de l'enfant ne parcourt pas le tas hér
 Avant de répondre `R` (`why_not_fast`), sinon `N` et exécution native :
 
 - l'UID du pair (`SO_PEERCRED`), le gid et les groupes du client identiques à ceux du démon ;
-- le chemin du script ;
+- le chemin du script, tel que le client l'a lancé : absolu, ou relatif à son cwd (`./manage.py`) s'il désigne le même fichier ;
 - l'empreinte : `stat` du script, de l'interpréteur, des dossiers de `sys.path` et des `RECORD`, plus un `select()` sur la file inotify des fichiers de modules ;
 - l'env de démarrage : `PYTHON*`, `LC_ALL`, `LC_CTYPE`, `LANG` identiques à ceux du démon ;
 - l'env figé à l'import : les clés modifiées *ou lues* par le code de haut niveau doivent avoir la même valeur qu'au démarrage du démon. Exemples réels : botocore fige `AWS_NEW_RETRIES_2026` et un chemin dérivé de `HOME`, et gettext fige la langue.
@@ -254,6 +254,7 @@ Une release est un seul fichier : le client embarque les trois démons et le hoo
   - Les lectures d'`isatty` sont notées, comme les lectures d'env. En Python, `sys.stdin`, `stdout` et `stderr` sont remplacés dès le démarrage par une sous-classe de `TextIOWrapper`, et `os.isatty` est enveloppé. En Ruby, le module est préfixé sur `IO` : `reopen` change la classe d'un objet, ce qui fait perdre un module préfixé sur sa classe singleton.
   - L'enfant refuse le chemin rapide si un fd lu n'a pas le même état chez le client.
 - **Le message d'une exception Ruby non rattrapée.** L'afficheur natif de Ruby 3.1 échappe le message : il double les barres obliques inverses, nomme les caractères de contrôle (`\e`, `\r`…, sinon `\x1F`), écrit DEL `\c?`, et laisse tels quels la tabulation, le retour à la ligne et les octets non ASCII. `full_message`, qu'utilise le démon, ne l'échappe pas. Le démon échappe donc le message dans le texte de `full_message`, ligne par ligne, parce que le message peut venir d'une méthode `message` redéfinie (le `CLAide::Help` de CocoaPods), et que sur un terminal chaque ligne est entourée de codes de mise en forme. Trouvé par `speedrunner demo` sur `pod --version`.
+- **Un script nommé relativement au cwd** (`./manage.py`). Le client le passait tel quel au démon, qui ne tourne pas dans le même dossier : le démon s'arrêtait au démarrage, et deux projets Django auraient eu le même nom de démon. Le client passe donc au démon le chemin absolu (sans résoudre les liens), d'où un démon par projet, mais garde le chemin tapé pour `argv[0]`. Il faut aussi le défaire de `runpy.run_path`, qui remet le chemin du script dans `sys.argv[0]` : l'enfant remplace `runpy._ModifiedArgv0` pour ce seul appel, puis le restaure. En Ruby et PHP, un tel appel part en natif.
 - **`subprocess` avec `timeout`** attend par paliers croissants, plafonnés à 50 ms : une mesure de temps doit attendre sans timeout.
 - **Faux serveurs dans les tests.** Un processus forké depuis le lanceur de tests doit finir par `os._exit` quoi qu'il arrive, sinon il exécute le reste de la suite en parallèle. Un faux serveur qui écrit à un client parti meurt de `BrokenPipe`. Dans les deux cas, on obtient un démon fantôme.
 

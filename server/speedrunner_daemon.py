@@ -828,10 +828,23 @@ def save_skip(state, skip):
 
 # --- child: one invocation -------------------------------------------------
 
+def names_script(state, argv0, cwd_fd):
+    """argv[0] names the preloaded script: its path, or, as `./manage.py`
+    gives it, a path relative to the client's cwd."""
+    if argv0 == state.script:
+        return True
+    if os.path.isabs(argv0):
+        return False
+    try:
+        return os.path.samefile(os.path.join(f"/proc/self/fd/{cwd_fd}", argv0), state.script)
+    except OSError:
+        return False
+
+
 def why_not_fast(state, req, peer_gid, fds):
     if state.disabled:
         return state.disabled
-    if not req.argv or os.fsdecode(req.argv[0]) != state.script:
+    if not req.argv or not names_script(state, os.fsdecode(req.argv[0]), fds[3]):
         return "script path mismatch"
     if is_stale(state):
         return "stale: installed files changed"
@@ -920,13 +933,15 @@ def apply_request(state, req, fds):
         if stream is not None:
             stream.reconfigure(line_buffering=buffered and stream.isatty())
 
-    args = [os.fsdecode(a) for a in req.argv[1:]]
+    # sys.argv[0] as natively: the script as the client ran it.
+    args = [os.fsdecode(a) for a in req.argv]
+    CHILD["argv0"] = args[0]
     if isinstance(sys.argv, list):
-        sys.argv[:] = [state.script] + args  # in place: see ArgvProbe
+        sys.argv[:] = args  # in place: see ArgvProbe
     else:
-        sys.argv = [state.script] + args
+        sys.argv = args
     if hasattr(sys, "orig_argv"):
-        sys.orig_argv = [sys.executable, state.script] + args
+        sys.orig_argv = [sys.executable] + args
 
 
 EXIT = {"code": None, "signal": None}
@@ -1035,11 +1050,28 @@ def write_all(fd, data):
         view = view[os.write(fd, view):]
 
 
+def keep_argv0(argv0, script):
+    """run_path sets sys.argv[0] to the script's path; natively it is the
+    path as typed, `./manage.py`. Only for our call: once used, runpy is
+    restored for the tool's own run_path calls."""
+    orig = getattr(runpy, "_ModifiedArgv0", None)
+    if argv0 == script or orig is None:
+        return
+
+    class KeepArgv0(orig):
+        def __init__(self, value):
+            runpy._ModifiedArgv0 = orig
+            super().__init__(argv0)
+
+    runpy._ModifiedArgv0 = KeepArgv0
+
+
 def run_tool(state, conn):
     # Natively printed by the imports on every run.
     write_all(1, state.import_output[0])
     write_all(2, state.import_output[1])
     CHILD["conn"] = conn
+    keep_argv0(CHILD.get("argv0", state.script), state.script)
     try:
         runpy.run_path(state.script, run_name="__main__")
         code = 0

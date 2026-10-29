@@ -405,6 +405,42 @@ class ScriptPrefix(Matrix):
         self.assertEqual((p.returncode, p.stderr), (2, b"usage: srr <tool> [args...]\n"))
 
 
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class RelativeScript(Matrix):
+    """`./manage.py`: a script named relative to the cwd, a different one in
+    each project. Each gets its own daemon, and sees argv[0] as typed."""
+
+    def project(self, name):
+        python = shutil.which("python3", path=os.environ["HS_PATH"])
+        d = tempfile.mkdtemp(dir=ROOT, prefix=name + "-")
+        with open(os.path.join(d, "manage.py"), "w") as f:
+            f.write(f"#!{python}\nimport os, sys\nimport hstest.cli\n"
+                    f"print({name!r}, sys.argv, os.path.basename(__file__),\n"
+                    f"      sys.path[0] == os.path.dirname(os.path.realpath(__file__)))\n")
+        os.chmod(os.path.join(d, "manage.py"), 0o755)
+        env = {"PWD": d}
+        self.addCleanup(lambda: subprocess.run([HS_BIN, "stop", "./manage.py"], cwd=d,
+                                               env={**BASE_ENV, **env}, capture_output=True))
+        return d, env
+
+    def warm(self, d, env, timeout=30.0):
+        deadline = time.monotonic() + timeout
+        while run("hs", ["./manage.py"], cwd=d, env=env).returncode == EXIT_NOT_FAST:
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"no daemon for {d}/manage.py")
+            time.sleep(0.1)
+
+    def test_one_daemon_per_project(self):
+        shop, blog = self.project("shop"), self.project("blog")
+        for d, env in (shop, blog):
+            run("hs", ["./manage.py"], cwd=d, env=env, require_fast=False)
+        for (d, env), name in ((shop, b"shop"), (blog, b"blog")):
+            with self.subTest(project=name):
+                self.warm(d, env)
+                _, out, _ = self.assertSame(["./manage.py", "check"], cwd=d, env=env)
+                self.assertEqual(out, b"%s ['./manage.py', 'check'] manage.py True\n" % name)
+
+
 class Teardown(Matrix):
     def test_unclosed_file_flushed_before_exit(self):
         for mode in ("native", "hs"):
