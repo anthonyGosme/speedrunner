@@ -123,8 +123,9 @@ if ! on_path "$bin_dir"; then
 fi
 cat << EOF
 
-  srr aws s3 ls                      # any Python, Ruby or PHP tool, nothing to set up
-  eval "\$(speedrunner activate)"     # at the top of a script: no prefix after
+  srr aws s3 ls                      # one command: any Python, Ruby or PHP tool
+  speedrunner exec ./script.sh       # a whole script: every tool it calls, preloaded
+  eval "\$(speedrunner activate)"     # or this line at the top of the script itself
 
   For zsh (wrappers, and daemons warmed up while you type), add to ~/.zshrc:
     eval "\$(speedrunner init zsh)"
