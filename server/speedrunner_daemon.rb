@@ -799,7 +799,8 @@ module Speedrunner
   def self.clean_backtrace(err, script)
     bt = err.backtrace or return
     err.set_backtrace(bt.reject { |f| f.start_with?("#{DAEMON_FILE}:") }.map do |f|
-      f.start_with?("#{script}:") ? f.sub("in `<top (required)>'", "in `<main>'") : f
+      # Ruby 3.4 quotes the label '<main>', earlier versions `<main>'.
+      f.start_with?("#{script}:") ? f.sub(/in ([`'])<top \(required\)>'/, "in \\1<main>'") : f
     end)
   end
 
