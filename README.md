@@ -1,13 +1,24 @@
-
+```text
+ ____                      _                                  
+/ ___| _ __   ___  ___  __| |_ __ _   _ _ __  _ __   ___ _ __ 
+\___ \| '_ \ / _ \/ _ \/ _` | '__| | | | '_ \| '_ \ / _ \ '__|
+ ___) | |_) |  __/  __/ (_| | |  | |_| | | | | | | |  __/ |   
+|____/| .__/ \___|\___|\__,_|_|   \__,_|_| |_|_| |_|\___|_|   
+      |_|                                                     
+```
 
 # speedrunner
 
-Run Python, Ruby and PHP command-line tools from a preloaded, forked daemon:
+Run Python, Ruby and PHP command-line tools from a preloaded, forked daemon from 3x up to 15x faster:
 the interpreter start, the imports and the configuration are done once, and
 each call starts with them already done. Output is identical to the native run.
 
+![speedrunner demo: the same bash script, run natively and with speedrunner](bench/speedrunner.gif)
+
+
 ```bash
 srr aws s3 ls                      # any Python, Ruby or PHP tool, nothing to set up
+speedrunner exec ./script.sh       # a whole script: every tool it calls, preloaded
 eval "$(speedrunner activate)"     # at the top of a script: no prefix needed after
 eval "$(speedrunner init zsh)"     # in ~/.zshrc: daemons warm up while you type
 speedrunner enroll aws             # then plain `aws s3 ls` in zsh
