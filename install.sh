@@ -1,20 +1,41 @@
 #!/bin/sh
-# Install speedrunner, for the current user:
+# Install speedrunner:
 #
 #   curl -fsSL https://raw.githubusercontent.com/anthonyGosme/speedrunner/main/install.sh | sh
 #
 # Downloads the static Linux binary of the latest release for this machine,
-# checks its SHA-256 sum, installs it as ~/.local/bin/speedrunner with the
-# `srr` link next to it, and prints what to add to ~/.zshrc. Needs no root.
+# checks its SHA-256 sum, installs it as speedrunner with the `srr` link next
+# to it. Needs no root, and no step after it: as root it installs in
+# /usr/local/bin; otherwise in ~/.local/bin or ~/bin when one is on PATH, else
+# in ~/.local/bin, added to PATH in ~/.profile, ~/.bashrc and ~/.zshrc.
 #
 # Env: SPEEDRUNNER_VERSION (a tag, default the latest release),
-#      SPEEDRUNNER_BIN_DIR (default ~/.local/bin),
+#      SPEEDRUNNER_BIN_DIR (where to install, instead),
+#      SPEEDRUNNER_NO_MODIFY_PATH=1 (leave the shell rc files alone),
 #      SPEEDRUNNER_BASE_URL (where the release files are, instead of GitHub).
 set -eu
 
 repo=anthonyGosme/speedrunner
 version=${SPEEDRUNNER_VERSION:-latest}
-bin_dir=${SPEEDRUNNER_BIN_DIR:-$HOME/.local/bin}
+on_path() {
+    case ":$PATH:" in
+        *":$1:"*) return 0 ;;
+    esac
+    return 1
+}
+if [ -n "${SPEEDRUNNER_BIN_DIR:-}" ]; then
+    bin_dir=$SPEEDRUNNER_BIN_DIR
+elif [ "$(id -u)" = 0 ]; then
+    bin_dir=/usr/local/bin  # on every PATH, root's included
+else
+    bin_dir=$HOME/.local/bin
+    for d in "$HOME/.local/bin" "$HOME/bin"; do
+        if on_path "$d"; then
+            bin_dir=$d  # works in this very shell
+            break
+        fi
+    done
+fi
 
 say() { printf 'speedrunner: %s\n' "$*"; }
 die() { say "$*" >&2; exit 1; }
@@ -73,10 +94,33 @@ mv -f "$bin_dir/.speedrunner.new" "$bin_dir/speedrunner"
 ln -sf speedrunner "$bin_dir/srr"
 
 say "installed $("$bin_dir/speedrunner" --version) in $bin_dir, with srr"
-case ":$PATH:" in
-    *":$bin_dir:"*) ;;
-    *) say "$bin_dir is not on your PATH: add  export PATH=\"$bin_dir:\$PATH\"  to your shell's rc file" ;;
-esac
+# Not on PATH: put it there for every new shell. Once per file, marked.
+if ! on_path "$bin_dir"; then
+    case $bin_dir in
+        "$HOME"/*) entry="\$HOME/${bin_dir#"$HOME"/}" ;;
+        *) entry=$bin_dir ;;
+    esac
+    line="export PATH=\"$entry:\$PATH\"  # added by the speedrunner installer"
+    if [ "${SPEEDRUNNER_NO_MODIFY_PATH:-}" = 1 ]; then
+        say "$bin_dir is not on your PATH: add  $line"
+    else
+        changed=
+        for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+            case $rc in
+                */.profile) wanted=1 ;;  # login shells, sh included
+                */.bashrc) [ -e "$rc" ] || [ "${SHELL##*/}" = bash ] && wanted=1 || wanted= ;;
+                */.zshrc) [ -e "$rc" ] || [ "${SHELL##*/}" = zsh ] && wanted=1 || wanted= ;;
+            esac
+            [ -n "$wanted" ] || continue
+            if ! grep -qs "added by the speedrunner installer" "$rc"; then
+                printf '\n%s\n' "$line" >> "$rc"
+                changed="$changed ${rc#"$HOME"/}"
+            fi
+        done
+        [ -z "$changed" ] || say "added $bin_dir to PATH in:$changed"
+        say "new shells find it; this one does once restarted:  exec \$SHELL"
+    fi
+fi
 cat << EOF
 
   srr aws s3 ls                      # any Python, Ruby or PHP tool, nothing to set up

@@ -21,8 +21,10 @@ Linux, x86_64 or aarch64, any distribution: one static binary, no root.
 curl -fsSL https://raw.githubusercontent.com/anthonyGosme/speedrunner/main/install.sh | sh
 ```
 
-It installs `speedrunner` and its `srr` link in `~/.local/bin`, after checking
-the download's SHA-256 sum. Rather not pipe to `sh`? Take the archive and its
+It checks the download's SHA-256 sum and installs `speedrunner` and its `srr`
+link where your shell finds them: `/usr/local/bin` as root, otherwise
+`~/.local/bin` (added to your PATH in `~/.profile`, `~/.bashrc` and `~/.zshrc`
+if it is not there yet; `SPEEDRUNNER_NO_MODIFY_PATH=1` to leave them alone). Rather not pipe to `sh`? Take the archive and its
 `.sha256` from the [releases](https://github.com/anthonyGosme/speedrunner/releases).
 Each tool's daemon runs on that tool's own interpreter: nothing else to install
 (PHP tools need PHP's FFI extension; without it they simply run natively).
