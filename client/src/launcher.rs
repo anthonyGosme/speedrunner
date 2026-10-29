@@ -136,7 +136,13 @@ fn wait(pid: i32) -> io::Result<i32> {
     }
 }
 
-unsafe fn ptrace(request: libc::c_uint, pid: i32, data: usize) -> libc::c_long {
+// The request's type differs between the glibc and musl bindings.
+#[cfg(target_env = "musl")]
+type Request = libc::c_int;
+#[cfg(not(target_env = "musl"))]
+type Request = libc::c_uint;
+
+unsafe fn ptrace(request: Request, pid: i32, data: usize) -> libc::c_long {
     libc::ptrace(request, pid as libc::pid_t, ptr::null_mut::<libc::c_void>(), data as *mut libc::c_void)
 }
 

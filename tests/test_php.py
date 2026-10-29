@@ -22,6 +22,16 @@ import test_matrix as m
 
 HS_BIN = m.HS_BIN
 LARAVEL = os.environ.get("PHP_LARAVEL")
+
+
+def php_script(name):
+    """name, on the tests' PATH, is a script run by PHP: what speedrunner serves."""
+    path = shutil.which(name, path=m.BASE_ENV["PATH"])
+    try:
+        with open(path or "", "rb") as f:
+            return b"php" in f.readline()
+    except OSError:
+        return False
 FIXTURE = os.path.abspath(os.path.join(os.path.dirname(__file__), "fixture", "phptest"))
 run, outcome, command = m.run, m.outcome, m.command
 
@@ -98,6 +108,7 @@ class Outputs(m.Matrix):
         self.assertSame(["phptest", "atexit"])
 
     @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    @unittest.skipUnless(php_script("composer"), "composer is not a PHP script here (Alpine: a shell wrapper)")
     def test_composer(self):
         m.wait_ready("composer")
         self.addCleanup(m.stop, "composer")

@@ -71,6 +71,8 @@ class Scripts(ScriptCase):
         self.assertEqual(self.native(), self.activated())
         m.wait_ready("hstest", self.env)  # started by activate, or by the first call
 
+    @unittest.skipUnless(subprocess.run(["env", "-S", "true"], capture_output=True).returncode == 0,
+                         "this env has no -S (busybox)")
     def test_exec_as_shebang(self):
         m.wait_ready("hstest", self.env)
         script = os.path.join(self.root, "script")

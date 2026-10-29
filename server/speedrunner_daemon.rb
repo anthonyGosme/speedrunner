@@ -302,7 +302,10 @@ module Speedrunner
   end
 
   def self.native_thread_count = Dir.children("/proc/self/task").size
-  def self.threads_running? = Thread.list.size != 1 || native_thread_count != 1
+  # Ruby 3.3 starts with a timer thread of its own, which fork handles:
+  # only threads beyond those we started with count.
+  BASE_THREADS = native_thread_count
+  def self.threads_running? = Thread.list.size != 1 || native_thread_count > BASE_THREADS
 
   def self.stat_key(path)
     st = File.stat(path)
@@ -765,6 +768,9 @@ module Speedrunner
   MESSAGE_ESCAPES = { "\\" => "\\\\", "\a" => "\\a", "\b" => "\\b", "\v" => "\\v", "\f" => "\\f",
                       "\r" => "\\r", "\e" => "\\e", "\x7F" => "\\c?" }.freeze
 
+  # Ruby 3.2 and later print the message as is (through detailed_message).
+  ESCAPES_MESSAGE = (RUBY_VERSION.split(".").map(&:to_i) <=> [3, 2]).negative?
+
   def self.escape(text)
     text.gsub(/[\x00-\x08\x0B-\x1F\x7F\\]/n) { |c| MESSAGE_ESCAPES[c] || format("\\x%02X", c.ord) }
   end
@@ -775,7 +781,7 @@ module Speedrunner
   def self.error_text(err)
     full = err.full_message
     message = err.message
-    return full unless message.is_a?(String)
+    return full unless ESCAPES_MESSAGE && message.is_a?(String)
 
     out = full.b
     pos = 0
