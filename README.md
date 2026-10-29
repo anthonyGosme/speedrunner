@@ -7,8 +7,6 @@
       |_|                                                     
 ```
 
-# speedrunner
-
 Run Python, Ruby and PHP command-line tools from a preloaded, forked daemon from 3x up to 15x faster:
 the interpreter start, the imports and the configuration are done once, and
 each call starts with them already done. Output is identical to the native run.
