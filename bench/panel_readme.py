@@ -13,8 +13,6 @@ RUNTIMES = {"python": "Python", "ruby": "Ruby", "php": "PHP"}
 
 # Why a command gains nothing: shown under its table.
 NOTES = {
-    "az": "`az` is a shell script that execs `python -m azure.cli`: the daemon only saves the shell's "
-          "start. Serving the module form (`python -m`) is future work.",
     "phpstan analyse": "`phpstan analyse` spends its time in the analysis itself, not in the "
                        "interpreter start.",
 }

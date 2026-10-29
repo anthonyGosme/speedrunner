@@ -47,6 +47,8 @@ PANEL = [
     ("python", "aws configure list", ["aws", "configure", "list"], None, False),
     ("python", "az --help", ["az", "--help"], None, False),
     ("python", "az vm --help", ["az", "vm", "--help"], None, False),
+    ("python", "gcloud --version", ["gcloud", "--version"], None, False),
+    ("python", "gcloud config list", ["gcloud", "config", "list"], None, False),
     ("python", "ansible --version", ["ansible", "--version"], None, False),
     ("python", "ansible-doc ping", ["ansible-doc", "ping"], None, False),
     ("python", "black --check sample.py", ["black", "--check", "sample.py"], "work", False),
@@ -103,6 +105,9 @@ def main():
         "AWS_CONFIG_FILE": os.path.join(scratch, "aws-config"),
         "AWS_SHARED_CREDENTIALS_FILE": os.path.join(scratch, "aws-credentials"),
         "AZURE_CORE_COLLECT_TELEMETRY": "no", "AZURE_CONFIG_DIR": os.path.join(scratch, "azure"),
+        "CLOUDSDK_CONFIG": os.path.join(scratch, "gcloud"),
+        "CLOUDSDK_CORE_DISABLE_USAGE_REPORTING": "true",
+        "CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK": "true",
         "COMPOSER_ALLOW_SUPERUSER": "1", "ANSIBLE_LOCAL_TEMP": os.path.join(scratch, "ansible"),
     }
     os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)

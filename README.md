@@ -53,54 +53,54 @@ Measured on a 2-vCPU Debian 12 VPS (Python 3.11.2, Ruby 3.1.2, PHP 8.2.35), medi
 
 | Command | Native | speedrunner | Speedup | Saved per call | Identical | Daemon memory |
 |---|---:|---:|---:|---:|:---:|---:|
-| `ansible-doc ping` | 393 ms | 70 ms | **x5.6** | 323 ms | ✓ | 76 MB |
-| `poetry --version` | 283 ms | 19 ms | **x14.6** | 264 ms | ✓ | 54 MB |
-| `ansible --version` | 222 ms | 16 ms | **x14.2** | 206 ms | ✓ | 67 MB |
-| `aws configure list` | 239 ms | 44 ms | **x5.4** | 195 ms | ✓ | 71 MB |
-| `aws --version` | 224 ms | 39 ms | **x5.7** | 184 ms | ✓ | 61 MB |
-| `http --offline (httpie)` | 201 ms | 55 ms | **x3.6** | 146 ms | ✓ | 49 MB |
-| `pytest -q` | 203 ms | 73 ms | **x2.8** | 130 ms | ✓ | 56 MB |
-| `pip list` | 131 ms | 18 ms | **x7.3** | 113 ms | ✓ | 45 MB |
-| `black --check sample.py` | 94 ms | 10 ms | **x9.1** | 83 ms | ✓ | 25 MB |
-| `pre-commit --version` | 82 ms | 11 ms | **x7.2** | 71 ms | ✓ | 25 MB |
-| `mypy sample.py` | 93 ms | 23 ms | **x4.0** | 70 ms | ✓ | 38 MB |
-| `flake8 sample.py` | 73 ms | 16 ms | **x4.4** | 57 ms | ✓ | 37 MB |
-| `yamllint sample.yaml` | 62 ms | 10 ms | **x6.3** | 53 ms | ✓ | 21 MB |
-| `az vm --help` | 369 ms | 332 ms | **x1.1** | 37 ms | ✓ | 15 MB |
-| `az --help` | 73 ms | 76 ms | **x1.0** | -3 ms | ✓ | 12 MB |
-
-No gain: `az` is a shell script that execs `python -m azure.cli`: the daemon only saves the shell's start. Serving the module form (`python -m`) is future work.
+| `gcloud config list` | 387 ms | 96 ms | **x4.0** | 291 ms | ✓ | 94 MB |
+| `ansible-doc ping` | 354 ms | 66 ms | **x5.3** | 287 ms | ✓ | 76 MB |
+| `gcloud --version` | 368 ms | 82 ms | **x4.5** | 286 ms | ✓ | 90 MB |
+| `az vm --help` | 322 ms | 65 ms | **x5.0** | 257 ms | ✓ | 83 MB |
+| `poetry --version` | 267 ms | 20 ms | **x13.1** | 247 ms | ✓ | 76 MB |
+| `ansible --version` | 222 ms | 15 ms | **x14.4** | 206 ms | ✓ | 60 MB |
+| `aws configure list` | 218 ms | 40 ms | **x5.5** | 178 ms | ✓ | 66 MB |
+| `aws --version` | 215 ms | 38 ms | **x5.7** | 177 ms | ✓ | 62 MB |
+| `http --offline (httpie)` | 202 ms | 60 ms | **x3.4** | 142 ms | ✓ | 48 MB |
+| `pip list` | 136 ms | 18 ms | **x7.6** | 118 ms | ✓ | 50 MB |
+| `pytest -q` | 172 ms | 60 ms | **x2.9** | 112 ms | ✓ | 58 MB |
+| `black --check sample.py` | 94 ms | 10 ms | **x9.3** | 84 ms | ✓ | 43 MB |
+| `pre-commit --version` | 87 ms | 11 ms | **x8.1** | 76 ms | ✓ | 28 MB |
+| `mypy sample.py` | 87 ms | 21 ms | **x4.1** | 66 ms | ✓ | 43 MB |
+| `az --help` | 74 ms | 18 ms | **x4.2** | 56 ms | ✓ | 39 MB |
+| `flake8 sample.py` | 69 ms | 16 ms | **x4.2** | 53 ms | ✓ | 39 MB |
+| `yamllint sample.yaml` | 53 ms | 10 ms | **x5.3** | 43 ms | ✓ | 32 MB |
 
 **Ruby**
 
 | Command | Native | speedrunner | Speedup | Saved per call | Identical | Daemon memory |
 |---|---:|---:|---:|---:|:---:|---:|
-| `solargraph --version` | 769 ms | 63 ms | **x12.2** | 706 ms | ✓ | 78 MB |
-| `rubocop sample.rb` | 722 ms | 196 ms | **x3.7** | 526 ms | ✓ | 26 MB |
-| `pod --version` | 378 ms | 47 ms | **x8.1** | 331 ms | ✓ | 38 MB |
-| `rubocop --version` | 447 ms | 128 ms | **x3.5** | 320 ms | ✓ | 64 MB |
-| `rdoc --version` | 216 ms | 18 ms | **x11.7** | 198 ms | ✓ | 34 MB |
-| `gem list` | 208 ms | 47 ms | **x4.4** | 161 ms | ✓ | 26 MB |
-| `rails --version` | 181 ms | 32 ms | **x5.6** | 148 ms | ✓ | 21 MB |
-| `rspec sample_spec.rb` | 119 ms | 13 ms | **x9.0** | 105 ms | ✓ | 21 MB |
-| `bundle --version` | 99 ms | 7 ms | **x14.8** | 93 ms | ✓ | 28 MB |
-| `rake --version` | 75 ms | 6 ms | **x12.1** | 69 ms | ✓ | 18 MB |
+| `solargraph --version` | 743 ms | 62 ms | **x12.0** | 682 ms | ✓ | 56 MB |
+| `rubocop sample.rb` | 724 ms | 183 ms | **x4.0** | 540 ms | ✓ | 82 MB |
+| `rubocop --version` | 442 ms | 114 ms | **x3.9** | 328 ms | ✓ | 34 MB |
+| `pod --version` | 358 ms | 43 ms | **x8.4** | 316 ms | ✓ | 38 MB |
+| `rdoc --version` | 226 ms | 14 ms | **x16.0** | 212 ms | ✓ | 29 MB |
+| `gem list` | 200 ms | 48 ms | **x4.1** | 152 ms | ✓ | 26 MB |
+| `rails --version` | 174 ms | 30 ms | **x5.7** | 144 ms | ✓ | 19 MB |
+| `rspec sample_spec.rb` | 122 ms | 14 ms | **x8.6** | 108 ms | ✓ | 21 MB |
+| `bundle --version` | 92 ms | 7 ms | **x12.6** | 85 ms | ✓ | 21 MB |
+| `rake --version` | 77 ms | 7 ms | **x11.7** | 70 ms | ✓ | 18 MB |
 
 **PHP**
 
 | Command | Native | speedrunner | Speedup | Saved per call | Identical | Daemon memory |
 |---|---:|---:|---:|---:|:---:|---:|
-| `rector --version` | 233 ms | 123 ms | **x1.9** | 110 ms | ✓ | 27 MB |
-| `php artisan list` | 121 ms | 32 ms | **x3.7** | 88 ms | ✓ | 27 MB |
-| `php artisan --version` | 107 ms | 25 ms | **x4.2** | 82 ms | ✓ | 28 MB |
-| `php-cs-fixer --version` | 100 ms | 38 ms | **x2.6** | 62 ms | ✓ | 28 MB |
-| `composer show` | 109 ms | 48 ms | **x2.3** | 62 ms | ✓ | 29 MB |
-| `phpstan analyse` | 661 ms | 620 ms | **x1.1** | 41 ms | ✓ | 26 MB |
-| `phpcs Greeter.php` | 46 ms | 15 ms | **x3.0** | 31 ms | ✓ | 27 MB |
-| `composer --version` | 39 ms | 15 ms | **x2.6** | 24 ms | ✓ | 26 MB |
-| `psalm --version` | 27 ms | 8 ms | **x3.6** | 19 ms | ✓ | 29 MB |
-| `phpunit --version` | 26 ms | 8 ms | **x3.5** | 19 ms | ✓ | 28 MB |
-| `phploc --version` | 25 ms | 7 ms | **x3.4** | 17 ms | ✓ | 29 MB |
+| `rector --version` | 230 ms | 114 ms | **x2.0** | 116 ms | ✓ | 25 MB |
+| `php artisan list` | 112 ms | 29 ms | **x3.8** | 82 ms | ✓ | 27 MB |
+| `php artisan --version` | 101 ms | 26 ms | **x3.9** | 75 ms | ✓ | 29 MB |
+| `php-cs-fixer --version` | 105 ms | 34 ms | **x3.1** | 71 ms | ✓ | 30 MB |
+| `composer show` | 96 ms | 46 ms | **x2.1** | 50 ms | ✓ | 26 MB |
+| `phpcs Greeter.php` | 45 ms | 15 ms | **x3.1** | 31 ms | ✓ | 26 MB |
+| `composer --version` | 33 ms | 13 ms | **x2.5** | 20 ms | ✓ | 26 MB |
+| `psalm --version` | 26 ms | 7 ms | **x3.7** | 19 ms | ✓ | 28 MB |
+| `phpunit --version` | 24 ms | 6 ms | **x3.8** | 18 ms | ✓ | 28 MB |
+| `phploc --version` | 23 ms | 7 ms | **x3.2** | 16 ms | ✓ | 28 MB |
+| `phpstan analyse` | 643 ms | 651 ms | **x1.0** | -8 ms | ✓ | 30 MB |
 
 No gain: `phpstan analyse` spends its time in the analysis itself, not in the interpreter start.
 

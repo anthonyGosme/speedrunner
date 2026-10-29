@@ -1,0 +1,78 @@
+aws --version                    {"identical": true, "native_rc": 0, "native_ms": 215.2, "native_sd": 10.3, "fast_ms": 37.9, "fast_sd": 1.1, "speedup": 5.67, "pss_mb": 62.1}
+aws configure list               {"identical": true, "native_rc": 0, "native_ms": 217.7, "native_sd": 16.2, "fast_ms": 39.8, "fast_sd": 2.8, "speedup": 5.48, "pss_mb": 66.3}
+az --help                        {"identical": true, "native_rc": 0, "native_ms": 73.8, "native_sd": 5.6, "fast_ms": 17.7, "fast_sd": 2.1, "speedup": 4.17, "pss_mb": 39.4}
+az vm --help                     {"identical": true, "native_rc": 0, "native_ms": 321.9, "native_sd": 39.1, "fast_ms": 64.8, "fast_sd": 4.4, "speedup": 4.97, "pss_mb": 83.2}
+gcloud --version                 {"identical": true, "native_rc": 0, "native_ms": 368.4, "native_sd": 23.6, "fast_ms": 81.9, "fast_sd": 4.9, "speedup": 4.5, "pss_mb": 90.0}
+gcloud config list               {"identical": true, "native_rc": 0, "native_ms": 386.6, "native_sd": 26.1, "fast_ms": 95.6, "fast_sd": 11.8, "speedup": 4.05, "pss_mb": 94.2}
+ansible --version                {"identical": true, "native_rc": 0, "native_ms": 221.7, "native_sd": 12.2, "fast_ms": 15.4, "fast_sd": 4.3, "speedup": 14.43, "pss_mb": 59.5}
+ansible-doc ping                 {"identical": true, "native_rc": 0, "native_ms": 353.6, "native_sd": 21.9, "fast_ms": 66.3, "fast_sd": 11.8, "speedup": 5.33, "pss_mb": 75.8}
+black --check sample.py          {"identical": true, "native_rc": 0, "native_ms": 94.0, "native_sd": 6.6, "fast_ms": 10.1, "fast_sd": 1.6, "speedup": 9.34, "pss_mb": 43.2}
+poetry --version                 {"identical": true, "native_rc": 0, "native_ms": 267.3, "native_sd": 9.8, "fast_ms": 20.5, "fast_sd": 5.3, "speedup": 13.05, "pss_mb": 75.9}
+http --offline (httpie)          {"identical": true, "native_rc": 0, "native_ms": 201.7, "native_sd": 6.0, "fast_ms": 59.7, "fast_sd": 16.4, "speedup": 3.38, "pss_mb": 48.3}
+pre-commit --version             {"identical": true, "native_rc": 0, "native_ms": 87.3, "native_sd": 4.7, "fast_ms": 10.8, "fast_sd": 1.4, "speedup": 8.11, "pss_mb": 27.6}
+mypy sample.py                   {"identical": true, "native_rc": 0, "native_ms": 86.6, "native_sd": 4.6, "fast_ms": 21.1, "fast_sd": 2.2, "speedup": 4.11, "pss_mb": 42.6}
+pytest -q                        {"identical": true, "native_rc": 0, "native_ms": 171.6, "native_sd": 6.6, "fast_ms": 59.8, "fast_sd": 2.7, "speedup": 2.87, "pss_mb": 57.6}
+flake8 sample.py                 {"identical": true, "native_rc": 0, "native_ms": 69.4, "native_sd": 1.2, "fast_ms": 16.3, "fast_sd": 0.7, "speedup": 4.25, "pss_mb": 38.6}
+yamllint sample.yaml             {"identical": true, "native_rc": 0, "native_ms": 52.6, "native_sd": 1.3, "fast_ms": 9.9, "fast_sd": 0.6, "speedup": 5.31, "pss_mb": 32.4}
+pip list                         {"identical": true, "native_rc": 0, "native_ms": 135.7, "native_sd": 4.3, "fast_ms": 17.8, "fast_sd": 1.0, "speedup": 7.62, "pss_mb": 49.6}
+rubocop --version                {"identical": true, "native_rc": 0, "native_ms": 441.7, "native_sd": 27.4, "fast_ms": 114.1, "fast_sd": 10.1, "speedup": 3.87, "pss_mb": 33.5}
+rubocop sample.rb                {"identical": true, "native_rc": 0, "native_ms": 723.6, "native_sd": 60.8, "fast_ms": 183.1, "fast_sd": 4.1, "speedup": 3.95, "pss_mb": 82.1}
+rake --version                   {"identical": true, "native_rc": 0, "native_ms": 76.6, "native_sd": 1.9, "fast_ms": 6.6, "fast_sd": 2.7, "speedup": 11.66, "pss_mb": 17.9}
+bundle --version                 {"identical": true, "native_rc": 0, "native_ms": 92.0, "native_sd": 2.3, "fast_ms": 7.3, "fast_sd": 1.9, "speedup": 12.55, "pss_mb": 20.6}
+gem list                         {"identical": true, "native_rc": 0, "native_ms": 200.3, "native_sd": 8.3, "fast_ms": 48.5, "fast_sd": 2.0, "speedup": 4.13, "pss_mb": 25.5}
+rails --version                  {"identical": true, "native_rc": 0, "native_ms": 174.0, "native_sd": 8.8, "fast_ms": 30.4, "fast_sd": 2.3, "speedup": 5.72, "pss_mb": 19.1}
+rspec sample_spec.rb             {"identical": true, "native_rc": 0, "native_ms": 122.2, "native_sd": 6.6, "fast_ms": 14.2, "fast_sd": 1.5, "speedup": 8.58, "pss_mb": 20.9}
+pod --version                    {"identical": true, "native_rc": 0, "native_ms": 358.4, "native_sd": 10.4, "fast_ms": 42.7, "fast_sd": 1.5, "speedup": 8.39, "pss_mb": 37.7}
+solargraph --version             {"identical": true, "native_rc": 0, "native_ms": 743.3, "native_sd": 29.9, "fast_ms": 61.7, "fast_sd": 7.4, "speedup": 12.04, "pss_mb": 56.5}
+rdoc --version                   {"identical": true, "native_rc": 0, "native_ms": 225.6, "native_sd": 12.4, "fast_ms": 14.1, "fast_sd": 0.9, "speedup": 15.99, "pss_mb": 28.8}
+composer --version               {"identical": true, "native_rc": 0, "native_ms": 33.1, "native_sd": 1.2, "fast_ms": 13.4, "fast_sd": 0.5, "speedup": 2.48, "pss_mb": 26.1}
+composer show                    {"identical": true, "native_rc": 0, "native_ms": 96.0, "native_sd": 12.9, "fast_ms": 45.7, "fast_sd": 1.3, "speedup": 2.1, "pss_mb": 25.5}
+php artisan --version            {"identical": true, "native_rc": 0, "native_ms": 100.7, "native_sd": 3.6, "fast_ms": 25.8, "fast_sd": 3.6, "speedup": 3.91, "pss_mb": 29.0}
+php artisan list                 {"identical": true, "native_rc": 0, "native_ms": 111.5, "native_sd": 3.5, "fast_ms": 29.1, "fast_sd": 1.2, "speedup": 3.83, "pss_mb": 27.0}
+phpcs Greeter.php                {"identical": true, "native_rc": 0, "native_ms": 45.3, "native_sd": 1.7, "fast_ms": 14.7, "fast_sd": 1.2, "speedup": 3.09, "pss_mb": 25.7}
+phpunit --version                {"identical": true, "native_rc": 0, "native_ms": 24.4, "native_sd": 1.8, "fast_ms": 6.4, "fast_sd": 0.5, "speedup": 3.81, "pss_mb": 27.8}
+phploc --version                 {"identical": true, "native_rc": 0, "native_ms": 23.3, "native_sd": 1.4, "fast_ms": 7.2, "fast_sd": 0.5, "speedup": 3.23, "pss_mb": 28.5}
+phpstan analyse                  {"identical": true, "native_rc": 0, "native_ms": 642.7, "native_sd": 25.6, "fast_ms": 650.9, "fast_sd": 21.0, "speedup": 0.99, "pss_mb": 29.7}
+php-cs-fixer --version           {"identical": true, "native_rc": 0, "native_ms": 105.4, "native_sd": 9.0, "fast_ms": 34.4, "fast_sd": 4.1, "speedup": 3.06, "pss_mb": 29.5}
+psalm --version                  {"identical": true, "native_rc": 0, "native_ms": 25.8, "native_sd": 1.2, "fast_ms": 7.1, "fast_sd": 0.3, "speedup": 3.66, "pss_mb": 28.4}
+rector --version                 {"identical": true, "native_rc": 0, "native_ms": 229.7, "native_sd": 14.6, "fast_ms": 113.9, "fast_sd": 2.3, "speedup": 2.02, "pss_mb": 25.2}
+| Runtime | Command | Native (ms) | speedrunner (ms) | Speedup | Identical | Daemon PSS (MB) |
+|---|---|---|---|---|---|---|
+| python | `aws --version` | 215.2 | 37.9 | x5.67 | yes | 62.1 |
+| python | `aws configure list` | 217.7 | 39.8 | x5.48 | yes | 66.3 |
+| python | `az --help` | 73.8 | 17.7 | x4.17 | yes | 39.4 |
+| python | `az vm --help` | 321.9 | 64.8 | x4.97 | yes | 83.2 |
+| python | `gcloud --version` | 368.4 | 81.9 | x4.5 | yes | 90.0 |
+| python | `gcloud config list` | 386.6 | 95.6 | x4.05 | yes | 94.2 |
+| python | `ansible --version` | 221.7 | 15.4 | x14.43 | yes | 59.5 |
+| python | `ansible-doc ping` | 353.6 | 66.3 | x5.33 | yes | 75.8 |
+| python | `black --check sample.py` | 94.0 | 10.1 | x9.34 | yes | 43.2 |
+| python | `poetry --version` | 267.3 | 20.5 | x13.05 | yes | 75.9 |
+| python | `http --offline (httpie)` | 201.7 | 59.7 | x3.38 | yes | 48.3 |
+| python | `pre-commit --version` | 87.3 | 10.8 | x8.11 | yes | 27.6 |
+| python | `mypy sample.py` | 86.6 | 21.1 | x4.11 | yes | 42.6 |
+| python | `pytest -q` | 171.6 | 59.8 | x2.87 | yes | 57.6 |
+| python | `flake8 sample.py` | 69.4 | 16.3 | x4.25 | yes | 38.6 |
+| python | `yamllint sample.yaml` | 52.6 | 9.9 | x5.31 | yes | 32.4 |
+| python | `pip list` | 135.7 | 17.8 | x7.62 | yes | 49.6 |
+| ruby | `rubocop --version` | 441.7 | 114.1 | x3.87 | yes | 33.5 |
+| ruby | `rubocop sample.rb` | 723.6 | 183.1 | x3.95 | yes | 82.1 |
+| ruby | `rake --version` | 76.6 | 6.6 | x11.66 | yes | 17.9 |
+| ruby | `bundle --version` | 92.0 | 7.3 | x12.55 | yes | 20.6 |
+| ruby | `gem list` | 200.3 | 48.5 | x4.13 | yes | 25.5 |
+| ruby | `rails --version` | 174.0 | 30.4 | x5.72 | yes | 19.1 |
+| ruby | `rspec sample_spec.rb` | 122.2 | 14.2 | x8.58 | yes | 20.9 |
+| ruby | `pod --version` | 358.4 | 42.7 | x8.39 | yes | 37.7 |
+| ruby | `solargraph --version` | 743.3 | 61.7 | x12.04 | yes | 56.5 |
+| ruby | `rdoc --version` | 225.6 | 14.1 | x15.99 | yes | 28.8 |
+| php | `composer --version` | 33.1 | 13.4 | x2.48 | yes | 26.1 |
+| php | `composer show` | 96.0 | 45.7 | x2.1 | yes | 25.5 |
+| php | `php artisan --version` | 100.7 | 25.8 | x3.91 | yes | 29.0 |
+| php | `php artisan list` | 111.5 | 29.1 | x3.83 | yes | 27.0 |
+| php | `phpcs Greeter.php` | 45.3 | 14.7 | x3.09 | yes | 25.7 |
+| php | `phpunit --version` | 24.4 | 6.4 | x3.81 | yes | 27.8 |
+| php | `phploc --version` | 23.3 | 7.2 | x3.23 | yes | 28.5 |
+| php | `phpstan analyse` | 642.7 | 650.9 | x0.99 | yes | 29.7 |
+| php | `php-cs-fixer --version` | 105.4 | 34.4 | x3.06 | yes | 29.5 |
+| php | `psalm --version` | 25.8 | 7.1 | x3.66 | yes | 28.4 |
+| php | `rector --version` | 229.7 | 113.9 | x2.02 | yes | 25.2 |

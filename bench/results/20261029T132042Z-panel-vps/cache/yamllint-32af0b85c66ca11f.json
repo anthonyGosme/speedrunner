@@ -1,0 +1,15 @@
+{
+ "modules": [
+  "pkgutil",
+  "shutil",
+  "zlib",
+  "bz2",
+  "_compression",
+  "_bz2",
+  "lzma",
+  "_lzma"
+ ],
+ "paths": [],
+ "blacklist": {},
+ "files": []
+}
