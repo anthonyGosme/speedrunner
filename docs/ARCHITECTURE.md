@@ -288,6 +288,7 @@ Elles sont listées dans le brief §5 (« Limites connues »). Les principales :
 | P1 Démon PHP | fait | artisan x3,7–x3,9, phpunit x3,6, composer x2,1–x3, phpcs x2,8 ; 33 tests PHP verts |
 | Perl | à évaluer | si aussi simple que PHP |
 | Panel étendu (Python, Ruby, PHP) | fait | 36 CLI, 36 sorties identiques ; ansible x16, poetry x14, solargraph x13, aws x5,8 ; 145 tests verts |
+| L0 CLI à lanceur : az, gcloud, `./manage.py` | mesuré | GO : Django x4,8–x7,7 (bug du chemin relatif corrigé) ; az x3,6–x4,1 et gcloud x3,8–x4,4 une fois le lanceur suivi (à faire) |
 | 4 bis Instantané du driver (niveau 4) | reporté | propre à aws |
 | 5 Bench comparatif et vidéo (vhs ou asciinema) | à faire | |
 

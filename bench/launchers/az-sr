@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+# What az's pip launcher execs: python -m azure.cli. Run with the az venv's
+# python first on PATH; the launcher's env (AZ_INSTALLER) is set by the bench.
+import runpy
+
+if __name__ == "__main__":
+    runpy.run_module("azure.cli", run_name="__main__", alter_sys=True)

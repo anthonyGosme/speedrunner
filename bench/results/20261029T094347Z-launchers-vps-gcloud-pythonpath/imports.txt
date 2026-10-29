@@ -1,0 +1,10 @@
+az version: imports 93 ms
+az vm create --help: imports 279 ms
+az group list: imports 269 ms
+gcloud --version: imports 391 ms
+gcloud config list: imports 266 ms
+gcloud compute instances create --help: imports 1127 ms
+django --version: imports 145 ms
+django check: imports 130 ms
+django help: imports 130 ms
+django showmigrations: imports 146 ms
