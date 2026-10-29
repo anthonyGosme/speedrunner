@@ -29,6 +29,12 @@ if it is not there yet; `SPEEDRUNNER_NO_MODIFY_PATH=1` to leave them alone). Rat
 Each tool's daemon runs on that tool's own interpreter: nothing else to install
 (PHP tools need PHP's FFI extension; without it they simply run natively).
 
+Then see what it gains on your machine, with the tools you have:
+
+```bash
+speedrunner demo
+```
+
 ## Results
 
 <!-- panel:start -->

@@ -4,6 +4,12 @@ require "securerandom"
 require "rbtest"
 
 module Rbtest
+  # Its message comes from an overridden #message, with colour codes in it,
+  # as CocoaPods' CLAide::Help does.
+  class ColourMessage < StandardError
+    def message = "\e[31m[!] You cannot do that.\e[39m\n\n\e[4mUsage:\e[24m rbtest"
+  end
+
   module CLI
     KEEP = []
 
@@ -24,6 +30,9 @@ module Rbtest
       when /\Aabort:(.*)\z/ then abort($1)
       when /\Abang:(\d+)\z/ then exit!(Integer($1))
       when "raise" then raise ArgumentError, "rbtest failure"
+      # As CocoaPods does: colour codes, and more, in the message.
+      when "raise-escapes" then raise "\e[31m[!] red\e[39m \\ a\tb \x01\x7f é\nsecond line"
+      when "raise-message" then raise Rbtest::ColourMessage
       when "kbint" then raise Interrupt
       else Integer(kind)
       end

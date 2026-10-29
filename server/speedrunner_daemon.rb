@@ -759,6 +759,37 @@ module Speedrunner
 
   # Natively, the backtrace starts in the script, whose frames are <main>:
   # drop ours, and rename the script's frames from <top (required)>.
+  # What Ruby's own error printer does to an uncaught exception's message,
+  # and full_message does not: backslashes and control characters escaped,
+  # tab and newline aside (CocoaPods raises messages with colour codes).
+  MESSAGE_ESCAPES = { "\\" => "\\\\", "\a" => "\\a", "\b" => "\\b", "\v" => "\\v", "\f" => "\\f",
+                      "\r" => "\\r", "\e" => "\\e", "\x7F" => "\\c?" }.freeze
+
+  def self.escape(text)
+    text.gsub(/[\x00-\x08\x0B-\x1F\x7F\\]/n) { |c| MESSAGE_ESCAPES[c] || format("\\x%02X", c.ord) }
+  end
+
+  # full_message, with the message escaped in place, line by line: the
+  # message may come from an overridden #message (CocoaPods' CLAide::Help),
+  # and on a terminal each of its lines is wrapped in highlighting.
+  def self.error_text(err)
+    full = err.full_message
+    message = err.message
+    return full unless message.is_a?(String)
+
+    out = full.b
+    pos = 0
+    message.b.split("\n").each do |line|
+      escaped = escape(line)
+      next if escaped == line
+
+      i = out.index(line, pos) or next
+      out[i, line.bytesize] = escaped
+      pos = i + escaped.bytesize
+    end
+    out.force_encoding(full.encoding)
+  end
+
   def self.clean_backtrace(err, script)
     bt = err.backtrace or return
     err.set_backtrace(bt.reject { |f| f.start_with?("#{DAEMON_FILE}:") }.map do |f|
@@ -787,7 +818,7 @@ module Speedrunner
            when SignalException then return # Ruby prints it and dies by it: W
            else
              # Ruby prints an uncaught exception after the at_exit handlers.
-             STDERR.write(err.full_message)
+             STDERR.write(error_text(err))
              1
            end
     begin

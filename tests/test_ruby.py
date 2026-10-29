@@ -54,7 +54,7 @@ class Outputs(m.Matrix):
     def test_exit_variants(self):
         for kind, expected in [("noarg", 0), ("true", 0), ("false", 1), ("int:3", 3),
                                ("int:300", 44), ("abort:bye", 1), ("bang:5", 5),
-                               ("raise", 1), ("7", 7)]:
+                               ("raise", 1), ("raise-escapes", 1), ("raise-message", 1), ("7", 7)]:
             with self.subTest(kind=kind):
                 rc, _, _ = self.assertSame(["rbtest", "exit", kind])
                 self.assertEqual(rc, expected)
@@ -76,6 +76,12 @@ class Terminal(m.Matrix):
 
     def test_interleave_tty(self):
         self.assertSame(["rbtest", "interleave"], tty=True)
+
+    def test_escaped_message_on_tty(self):
+        # Highlighted, each line of the message in its own escape codes.
+        for kind in ("raise-escapes", "raise-message"):
+            with self.subTest(kind=kind):
+                self.assertSame(["rbtest", "exit", kind], tty=True)
 
     @unittest.skipUnless(m.HS_BIN, "needs the speedrunner client")
     def test_terminal_state_read_at_import(self):

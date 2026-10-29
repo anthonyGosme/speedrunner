@@ -84,6 +84,7 @@ fn main() {
         Some(b"status") => with_tool(&args[2..], |t| control(t, b'P')),
         Some(b"stop") => with_tool(&args[2..], |t| control(t, b'S')),
         Some(b"init") => cmd_init(&args[2..]),
+        Some(b"demo") => cmd_demo(&args[2..]),
         Some(b"--version") | Some(b"version") => {
             println!("speedrunner {}", env!("CARGO_PKG_VERSION"));
             0
@@ -104,8 +105,138 @@ fn usage() {
          speedrunner enroll [<tool>...]\n       \
          speedrunner prewarm|status|stop <tool>   (or: php <script>)\n       \
          eval \"$(speedrunner init zsh)\"     (in ~/.zshrc: wrappers, warm-up while typing)\n       \
+         speedrunner demo [--runs N]     (the gain on this machine, with the tools it has)\n       \
          speedrunner --version"
     );
+}
+
+/// Well-known tools and a command of theirs with no side effect, for
+/// `speedrunner demo`: only these run, never whatever else is on PATH.
+const DEMO_TOOLS: &[&str] = &[
+    "aws", "pip", "pip3", "ansible", "black", "poetry", "http", "mypy", "pytest", "flake8", "yamllint",
+    "pre-commit", "tox", "pipx", "django-admin", "jupyter", "ipython", "sphinx-build",
+    "rubocop", "rspec", "rake", "bundle", "gem", "rails", "solargraph", "pod", "jekyll",
+    "composer", "phpunit", "phpstan", "psalm", "php-cs-fixer", "phpcs", "rector", "laravel",
+];
+const DEMO_ARGS: &[&str] = &["--version"];
+
+/// `speedrunner demo`: for each of DEMO_TOOLS installed here, its median time
+/// natively and through speedrunner (the fast path required: a native
+/// fallback is reported, not counted), and whether both print the same.
+/// Daemons it started are stopped after; those already running are left.
+fn cmd_demo(rest: &[OsString]) -> i32 {
+    let runs = match rest {
+        [] => Some(3),
+        [flag, n] if flag == "--runs" => n.to_str().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 0),
+        _ => None,
+    };
+    let runs = match runs {
+        Some(r) => r,
+        None => {
+            eprintln!("usage: speedrunner demo [--runs N]");
+            return 2;
+        }
+    };
+    let me = match env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("speedrunner demo: {}", e);
+            return 1;
+        }
+    };
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+    let mut found: Vec<&str> = Vec::new();
+    for name in DEMO_TOOLS {
+        if let Some(tool) = Tool::resolve(OsStr::new(name)) {
+            // A script some daemon can preload, and not one already listed (pip, pip3).
+            if read_shebang(&tool.path).is_ok() && !seen.contains(&tool.path) {
+                seen.push(tool.path.clone());
+                found.push(*name);
+            }
+        }
+    }
+    if found.is_empty() {
+        eprintln!("speedrunner demo: none of the tools it knows is installed here: {}", DEMO_TOOLS.join(", "));
+        return 1;
+    }
+    println!("speedrunner demo: {} tool{} found here, {} runs each, median time\n", found.len(),
+             if found.len() > 1 { "s" } else { "" }, runs);
+    println!("  {:<24} {:>9} {:>12} {:>7}  {}", "command", "native", "speedrunner", "gain", "same output");
+    let quiet = |mut c: process::Command| {
+        c.stdin(process::Stdio::null()).stdout(process::Stdio::null()).stderr(process::Stdio::null());
+        c
+    };
+    let mut gains = Vec::new();
+    for name in &found {
+        let tool = match Tool::resolve(OsStr::new(name)) {
+            Some(t) => t,
+            None => continue,
+        };
+        print!("  {:<24} ", format!("{} {}", name, DEMO_ARGS.join(" ")));
+        let _ = io::stdout().flush();
+        let native = || {
+            let mut c = process::Command::new(OsStr::from_bytes(&tool.path));
+            c.args(DEMO_ARGS);
+            c
+        };
+        let fast = |required: bool| {
+            let mut c = process::Command::new(&me);
+            c.arg("run").arg(name).arg("--").args(DEMO_ARGS);
+            if required {
+                c.env("SPEEDRUNNER_REQUIRE_FAST", "1");
+            }
+            c
+        };
+        let was_running = matches!(request(&tool, b'P'), Ok((b'P', ref t)) if t.starts_with(b"ready"));
+        let _ = quiet(native()).status(); // warm the page cache, as the daemon runs will be
+        let native_ms = median_ms(runs, || quiet(native()).status().is_ok());
+        if !was_running {
+            let _ = spawn_daemon_with(&tool, "demo", "0"); // on /dev/null, as the runs below
+        }
+        wait_ready(&tool);
+        for _ in 0..2 {
+            // What the first calls import lazily, the daemon learns and preloads.
+            let _ = quiet(fast(false)).status();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        wait_ready(&tool);
+        let a = native().stdin(process::Stdio::null()).output();
+        let b = fast(true).stdin(process::Stdio::null()).output();
+        let refused = matches!(&b, Ok(o) if o.status.code() == Some(EXIT_NOT_FAST));
+        let same = match (&a, &b) {
+            (Ok(a), Ok(b)) => a.status.code() == b.status.code() && a.stdout == b.stdout && a.stderr == b.stderr,
+            _ => false,
+        };
+        if refused {
+            println!("{:>6.0} ms {:>12}", native_ms, "runs natively here");
+        } else {
+            let fast_ms = median_ms(runs, || quiet(fast(true)).status().map_or(false, |s| s.success()));
+            gains.push(native_ms / fast_ms);
+            println!("{:>6.0} ms {:>9.0} ms {:>6.1}x  {}", native_ms, fast_ms, native_ms / fast_ms,
+                     if same { "yes" } else { "NO" });
+        }
+        if !was_running {
+            let _ = request(&tool, b'S');
+        }
+    }
+    if !gains.is_empty() {
+        gains.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!("\n  median gain x{:.1}, from x{:.1} to x{:.1}. Daemons the demo started are stopped.",
+                 gains[gains.len() / 2], gains[0], gains[gains.len() - 1]);
+        println!("  Try it on your own commands:  srr <tool> [args...]   or   speedrunner exec ./script.sh");
+    }
+    0
+}
+
+/// Median wall time of `runs` runs of `f`, in milliseconds.
+fn median_ms(runs: usize, mut f: impl FnMut() -> bool) -> f64 {
+    let mut times: Vec<f64> = (0..runs).map(|_| {
+        let t0 = Instant::now();
+        f();
+        t0.elapsed().as_secs_f64() * 1000.0
+    }).collect();
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    times[times.len() / 2]
 }
 
 /// `eval "$(speedrunner init zsh)"` in ~/.zshrc: the built-in hook.

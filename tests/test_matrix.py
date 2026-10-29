@@ -790,6 +790,20 @@ class Distribution(Matrix):
                                       env={**full, "SPEEDRUNNER_REQUIRE_FAST": "1"}))
         self.assertEqual(native, fast)
 
+    def test_demo_measures_the_tools_here_and_stops_its_daemons(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(stop, "aws", env)
+        p = subprocess.run([HS_BIN, "demo", "--runs", "1"], capture_output=True, timeout=300,
+                           env={**BASE_ENV, **env})
+        self.assertEqual(p.returncode, 0, p.stderr)
+        out = p.stdout.decode()
+        [aws] = [line for line in out.splitlines() if line.strip().startswith("aws --version")]
+        self.assertRegex(aws, r"\d+ ms +\d+ ms +[\d.]+x  yes$")
+        self.assertIn("median gain", out)
+        self.assertEqual(status("aws", env), "down")
+
     def test_init_zsh_prints_the_hook(self):
         p = subprocess.run([HS_BIN, "init", "zsh"], capture_output=True)
         with open(os.path.join(self.REPO, "shell", "speedrunner.zsh"), "rb") as f:
