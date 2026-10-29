@@ -3,8 +3,10 @@ from a forked child.
 
 Started by the client, with the tool's own interpreter and shebang flags:
 
-    <python> [flag] speedrunner_daemon.py --tool NAME --script PATH --socket PATH [--lock-fd N]
-        [--tty MASK[:ROWSxCOLS]]
+    <python> [flags] speedrunner_daemon.py --tool NAME (--script PATH | --module NAME)
+        --socket PATH [--lock-fd N] [--tty MASK[:ROWSxCOLS]]
+
+--module: the tool is `python -m NAME`, as a launcher execs it (az).
 
 --lock-fd: the client already holds the startup lock on fd N for us.
 --tty: which of fds 0-2 were terminals for the client that started us (bit
@@ -40,6 +42,8 @@ import fcntl
 import gc
 import hashlib
 import importlib
+import importlib.machinery
+import importlib.util
 import io
 import json
 import os
@@ -53,6 +57,7 @@ import sys
 import termios
 import threading
 import time
+import types
 
 MAGIC = b"HS1"
 N_FDS = 5  # stdin, stdout, stderr, cwd, and the client's /dev/tty if any
@@ -161,12 +166,15 @@ class Request:
 # --- daemon state ----------------------------------------------------------
 
 class State:
-    def __init__(self, tool, script, sock_path, lock_fd=None):
+    def __init__(self, tool, script, sock_path, lock_fd=None, module=None):
         self.lock_fd = lock_fd
         self.origin = "hand"  # which client command started us, for the log
         self.bound_ino = None
         self.tool = tool
-        self.script = script
+        self.script = script  # with --module, the file `python -m` runs, once found
+        self.module = module
+        self.cwd_first = False  # `python -m` puts the client's cwd first on sys.path
+        self.top_names = frozenset()  # top-level modules a file in that cwd could shadow
         self.sock_path = sock_path
         self.disabled = None  # reason string when the fast path is off
         self.start_env = dict(os.environ)
@@ -184,6 +192,8 @@ class State:
         self.tty = None  # TtyStandIn: the starting client's terminals, during imports
         self.import_tty_read = {}  # fd -> whether a terminal, as module-level code found it
         self.learned = []    # level 2: modules imported because children did
+        self.learned_paths = []  # sys.path entries the tool added itself, to import them with
+        self.pending_origins = {}  # module -> the file a child imported it from
         self.blacklist = {}  # module -> why it is never preloaded
         self.pending = {}    # ordered set: learned from children, not yet vetted
         self.pending_files = {}  # level 3: data files children loaded
@@ -213,6 +223,46 @@ def script_imports(script):
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             names.append(node.module)
     return names
+
+
+def module_main(name):
+    """The file `python -m name` runs. Found as runpy does natively, which
+    imports its parent packages, and the package itself to run its __main__."""
+    spec = importlib.util.find_spec(name)
+    if spec is not None and spec.submodule_search_locations is not None:
+        importlib.import_module(name)
+        spec = importlib.util.find_spec(f"{name}.__main__")
+    if spec is None or not spec.has_location or not spec.origin:
+        raise ImportError(f"No runnable module named {name}")
+    return spec.origin
+
+
+def module_top_names():
+    return frozenset(name for name, module in list(sys.modules.items())
+                     if "." not in name and isinstance(getattr(module, "__file__", None), str))
+
+
+IMPORT_SUFFIXES = tuple(importlib.machinery.all_suffixes())
+
+
+def shadowed(state, cwd_fd):
+    """A preloaded module that `python -m`, with the cwd first on sys.path,
+    would import from a file in the cwd instead: its name, or None."""
+    cwd = f"/proc/self/fd/{cwd_fd}"
+    try:
+        entries = os.listdir(cwd)
+    except OSError:
+        return None  # natively unreadable too: nothing found there
+    for entry in entries:
+        stem, dot, rest = entry.partition(".")
+        if stem not in state.top_names:
+            continue
+        if dot:
+            if "." + rest in IMPORT_SUFFIXES:
+                return stem
+        elif any(os.path.isfile(os.path.join(cwd, entry, "__init__" + s)) for s in IMPORT_SUFFIXES):
+            return stem
+    return None
 
 
 def capture_fds_during(fn, tty=None):
@@ -381,7 +431,7 @@ def native_thread_count():
 
 
 def fingerprint_paths(script):
-    paths = [script, sys.executable]
+    paths = [p for p in (script, sys.executable) if p]
     for entry in sys.path:
         if entry and os.path.isdir(entry):
             paths.append(entry)
@@ -543,18 +593,30 @@ def threads_running():
 def preload(state):
     """Level 1: import what the script imports at top level. Level 2: what
     earlier runs imported lazily, from the cache."""
-    if not (getattr(sys.flags, "safe_path", False) or sys.flags.isolated):
-        # Natively sys.path[0] is the script's directory, not ours.
-        sys.path[0] = os.path.dirname(os.path.realpath(state.script))
-    sys.argv = ArgvProbe([state.script])
+    first = not (getattr(sys.flags, "safe_path", False) or sys.flags.isolated)
+    if state.module:
+        if first:
+            # Natively the client's cwd, which differs per run: put in each child.
+            del sys.path[0]
+            state.cwd_first = True
+        sys.argv = ArgvProbe(["-m"])  # natively, while the module is found
+    else:
+        if first:
+            # Natively sys.path[0] is the script's directory, not ours.
+            sys.path[0] = os.path.dirname(os.path.realpath(state.script))
+        sys.argv = ArgvProbe([state.script])
 
-    names = script_imports(state.script) if 1 in state.levels else []
     skip = load_skip(state)
-    names = [n for n in names if n not in skip]
     state.pre_import_env = dict(os.environ)
 
     def do_imports():
-        for name in names:
+        if state.module:
+            # Natively done before the module runs: whatever it reads, it
+            # reads with any command line, so it cannot be skipped.
+            if reads_argv(lambda: setattr(state, "script", module_main(state.module)))[1]:
+                raise ImportError(f"{state.module}'s packages read the command line at import")
+        names = script_imports(state.script) if 1 in state.levels else []
+        for name in [n for n in names if n not in skip]:
             if reads_argv(lambda: importlib.import_module(name))[1]:
                 # Already run with the daemon's command line, which cannot
                 # be undone: skip it from now on, in a fresh daemon.
@@ -591,6 +653,9 @@ def preload(state):
                            if isinstance(k, str)}
         learned = [n for n in cached.get("modules") or []
                    if isinstance(n, str) and n not in state.blacklist]
+        state.learned_paths = [p for p in cached.get("paths") or []
+                               if isinstance(p, str) and os.path.isabs(p)]
+        extend_fingerprint(state, [p for p in state.learned_paths if os.path.isdir(p)])
         # Vetted when they were learned: imported directly, but checked again.
         why = import_in_daemon(state, learned)
         if why or len(state.learned) != len(learned):
@@ -600,7 +665,23 @@ def preload(state):
     install_memo(state)
     if state.memo is not None:
         state.memo.refresh([p for p in load_cache(state).get("files") or [] if isinstance(p, str)])
+    state.top_names = module_top_names()
     state.preload_s = time.perf_counter() - t0
+
+
+class ExtraPath:
+    """sys.path with the entries the tool adds itself in front, for the
+    duration of an import: our own sys.path is left as it was."""
+
+    def __init__(self, paths):
+        self.paths = paths
+
+    def __enter__(self):
+        self.saved = sys.path[:]
+        sys.path[:0] = [p for p in self.paths if p not in sys.path]
+
+    def __exit__(self, *exc):
+        sys.path[:] = self.saved
 
 
 def import_in_daemon(state, names):
@@ -610,7 +691,7 @@ def import_in_daemon(state, names):
         if name not in sys.modules:
             before = dict(os.environ)
             try:
-                with EnvReads() as reads, TtyReads() as ttys:
+                with EnvReads() as reads, TtyReads() as ttys, ExtraPath(state.learned_paths):
                     output, argv_read = reads_argv(
                         lambda: capture_fds_during(lambda: importlib.import_module(name), state.tty))
             except Exception as exc:
@@ -632,15 +713,18 @@ def import_in_daemon(state, names):
     return None
 
 
-def probe_imports(names, tty=None):
-    """Import names one by one in a throwaway child; sort them into ok, bad
-    (with the reason) and retry."""
+def probe_imports(names, tty=None, paths=(), origins=None):
+    """Import names one by one in a throwaway child, with paths in front of
+    sys.path; sort them into ok, bad (with the reason) and retry. A module
+    found elsewhere than in the child that imported it (origins) is bad."""
+    origins = origins or {}
     r, w = os.pipe2(os.O_CLOEXEC)
     pid = os.fork()
     if pid == 0:
         try:
             signal.set_wakeup_fd(-1)
             os.close(r)
+            sys.path[:0] = [p for p in paths if p not in sys.path]
             verdict = {"ok": [], "bad": {}, "retry": []}
             for i, name in enumerate(names):
                 if name in sys.modules:
@@ -654,6 +738,8 @@ def probe_imports(names, tty=None):
                            else "reads the command line at import" if argv_read
                            else "changes the env at import" if dict(os.environ) != env_before
                            else "starts a thread at import" if threads_running()
+                           else "found in another file than at run time"
+                           if origins.get(name, file_of(name)) != file_of(name)
                            else None)
                 except BaseException as exc:
                     why = f"import failed: {type(exc).__name__}: {exc}"
@@ -685,6 +771,12 @@ def probe_imports(names, tty=None):
         return json.loads(b"".join(chunks))
     except ValueError:
         return {"ok": [], "bad": dict.fromkeys(names, "probe crashed or hung"), "retry": []}
+
+
+def file_of(name):
+    module = sys.modules.get(name)
+    path = getattr(module, "__file__", None)
+    return path if isinstance(path, str) else None
 
 
 def stat_key(path):
@@ -784,7 +876,7 @@ def load_cache(state):
 
 
 def save_cache(state):
-    data = {"modules": state.learned, "blacklist": state.blacklist,
+    data = {"modules": state.learned, "paths": state.learned_paths, "blacklist": state.blacklist,
             "files": list(state.memo.entries) if state.memo is not None else []}
     tmp = f"{state.cache_path}.{os.getpid()}.tmp"
     try:
@@ -800,7 +892,8 @@ def skip_file(state):
     """Level-1 imports never to preload. Keyed by the script alone: they are
     known before the import that computes the fingerprint."""
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    key = repr((state.script, stat_key(state.script), sys.executable, sys.version))
+    script = state.script or state.module  # a module's file is found by importing
+    key = repr((script, stat_key(script), sys.executable, sys.version))
     return os.path.join(base, "speedrunner",
                         f"{state.tool}.skip-{hashlib.sha256(key.encode()).hexdigest()[:16]}.json")
 
@@ -841,10 +934,18 @@ def names_script(state, argv0, cwd_fd):
         return False
 
 
+def names_entry(state, argv, cwd_fd):
+    """The request runs what we preloaded: [script, args...], or for a
+    module [-m, name, args...]."""
+    if state.module:
+        return len(argv) >= 2 and argv[0] == b"-m" and os.fsdecode(argv[1]) == state.module
+    return bool(argv) and names_script(state, os.fsdecode(argv[0]), cwd_fd)
+
+
 def why_not_fast(state, req, peer_gid, fds):
     if state.disabled:
         return state.disabled
-    if not req.argv or not names_script(state, os.fsdecode(req.argv[0]), fds[3]):
+    if not names_entry(state, req.argv, fds[3]):
         return "script path mismatch"
     if is_stale(state):
         return "stale: installed files changed"
@@ -861,6 +962,13 @@ def why_not_fast(state, req, peer_gid, fds):
     for fd, was in sorted(state.import_tty_read.items()):
         if _os_isatty(fds[fd]) != was:
             return f"import-time terminal state differs: fd {fd}"
+    if state.cwd_first:
+        # The child puts os.getcwd() first on sys.path, after go.
+        if os.readlink(f"/proc/self/fd/{fds[3]}").endswith(" (deleted)"):
+            return "the cwd is deleted"
+        name = shadowed(state, fds[3])
+        if name:
+            return f"the cwd has its own {name}"
     return None
 
 
@@ -933,20 +1041,38 @@ def apply_request(state, req, fds):
         if stream is not None:
             stream.reconfigure(line_buffering=buffered and stream.isatty())
 
-    # sys.argv[0] as natively: the script as the client ran it.
+    # sys.argv[0] as natively: the script as the client ran it, or for a
+    # module "-m" while it is found (runpy then sets it to its file).
     args = [os.fsdecode(a) for a in req.argv]
+    entry = ["-m", args[1]] if state.module else args[:1]
+    if state.module:
+        args = args[:1] + args[2:]
+        if state.cwd_first:
+            sys.path.insert(0, os.getcwd())
     CHILD["argv0"] = args[0]
+    CHILD["base_path"] = list(sys.path)
     if isinstance(sys.argv, list):
         sys.argv[:] = args  # in place: see ArgvProbe
     else:
         sys.argv = args
     if hasattr(sys, "orig_argv"):
-        sys.orig_argv = [sys.executable] + args
+        sys.orig_argv = ORIG_ARGV0 + INTERP_FLAGS + entry + args[1:]
 
 
+def interpreter_options():
+    """How we were started, up to our own script: the interpreter as named,
+    and its options, which are the tool's."""
+    argv = list(getattr(sys, "orig_argv", None) or [sys.executable])
+    i = 1
+    while i < len(argv) and argv[i].startswith("-"):
+        i += 2 if argv[i] in ("-X", "-W") else 1
+    return argv[:1], argv[1:i]
+
+
+ORIG_ARGV0, INTERP_FLAGS = interpreter_options()
 EXIT = {"code": None, "signal": None}
 CHILD = {"conn": None, "ctl": None, "base_modules": None, "base_finders": (), "import_order": [],
-         "memo": None}
+         "memo": None, "base_path": None}
 # Loaders a fresh interpreter has: a module another one loaded (a finder the
 # run installed, as pytest's assertion rewriting) must not be preloaded.
 STANDARD_LOADER_MODULES = {"importlib._bootstrap", "importlib._bootstrap_external",
@@ -1018,17 +1144,27 @@ def send_learned():
             if standard_loader(sys.modules[name]):
                 modules.append(name)
     files = CHILD["memo"].loaded if CHILD["memo"] is not None else []
+    # Entries the tool put on sys.path itself (gcloud): its modules are found there.
+    base = CHILD["base_path"] or []
+    paths = [p for p in sys.path if isinstance(p, str) and os.path.isabs(p) and p not in base]
+    origins = {name: file_of(name) for name in modules if file_of(name)}
     if modules or files:
+        data = {"modules": modules, "files": files, "paths": paths, "origins": origins}
         try:
-            send_msg(CHILD["ctl"], b"L", json.dumps({"modules": modules, "files": files}).encode())
+            send_msg(CHILD["ctl"], b"L", json.dumps(data).encode())
         except OSError:
             pass
 
 
-def script_traceback(tb, script):
-    """Drop our frames so the traceback starts in the script, as natively."""
+def script_traceback(tb, state):
+    """Drop our frames so the traceback starts in the script, or for a
+    module in runpy's _run_module_as_main, as natively."""
+    def first(code):
+        if state.module:
+            return code is runpy._run_module_as_main.__code__
+        return code.co_filename == state.script
     t = tb
-    while t is not None and t.tb_frame.f_code.co_filename != script:
+    while t is not None and not first(t.tb_frame.f_code):
         t = t.tb_next
     return t if t is not None else tb
 
@@ -1071,15 +1207,24 @@ def run_tool(state, conn):
     write_all(1, state.import_output[0])
     write_all(2, state.import_output[1])
     CHILD["conn"] = conn
-    keep_argv0(CHILD.get("argv0", state.script), state.script)
     try:
-        runpy.run_path(state.script, run_name="__main__")
+        if state.module:
+            # As `python -m`: run in a __main__ module of its own, through the
+            # same runpy function, so that a traceback shows the same frames.
+            main = types.ModuleType("__main__")
+            main.__builtins__ = builtins
+            CHILD["daemon_main"] = sys.modules["__main__"]  # our functions' globals
+            sys.modules["__main__"] = main
+            runpy._run_module_as_main(state.module)
+        else:
+            keep_argv0(CHILD.get("argv0", state.script), state.script)
+            runpy.run_path(state.script, run_name="__main__")
         code = 0
     except SystemExit as exc:
         code = system_exit_code(exc)
     except BaseException as exc:
         # The display uses exc.__traceback__, not the tb argument (3.11+).
-        tb = script_traceback(exc.__traceback__, state.script)
+        tb = script_traceback(exc.__traceback__, state)
         sys.excepthook(type(exc), exc.with_traceback(tb), tb)
         if isinstance(exc, KeyboardInterrupt):
             EXIT["signal"] = signal.SIGINT
@@ -1340,6 +1485,14 @@ class Parent:
         for name in data.get("modules") or []:
             if isinstance(name, str) and name not in sys.modules and name not in state.blacklist:
                 state.pending[name] = None
+        for path in data.get("paths") or []:
+            if isinstance(path, str) and os.path.isabs(path) and path not in state.learned_paths:
+                state.learned_paths.append(path)
+                extend_fingerprint(state, [path] if os.path.isdir(path) else [])
+        origins = data.get("origins")
+        if isinstance(origins, dict):
+            state.pending_origins.update((k, v) for k, v in origins.items()
+                                         if isinstance(k, str) and isinstance(v, str))
         if 3 in state.levels:
             for path in data.get("files") or []:
                 if isinstance(path, str):
@@ -1351,11 +1504,13 @@ class Parent:
         state = self.state
         names = [n for n in state.pending if n not in sys.modules and n not in state.blacklist]
         files, before = list(state.pending_files), self.snapshot()
+        origins = dict(state.pending_origins)
         state.pending.clear()
         state.pending_files.clear()
+        state.pending_origins.clear()
         t0 = time.perf_counter()
         while names:
-            verdict = probe_imports(names, state.tty)
+            verdict = probe_imports(names, state.tty, state.learned_paths, origins)
             state.blacklist.update(verdict["bad"])
             why = import_in_daemon(state, verdict["ok"])
             if why:
@@ -1368,6 +1523,7 @@ class Parent:
             state.memo.refresh(files)
         if self.snapshot() == before:
             return None  # nothing new: keep the spare
+        state.top_names = module_top_names()
         state.gen += 1
         save_cache(state)
         log(f"learned in {(time.perf_counter() - t0) * 1000:.0f} ms; {status_text(state)}")
@@ -1541,10 +1697,13 @@ def parse_args(argv):
     opts = {}
     it = iter(argv)
     for flag in it:
-        if flag not in ("--tool", "--script", "--socket", "--lock-fd", "--origin", "--tty"):
+        if flag not in ("--tool", "--script", "--module", "--socket", "--lock-fd", "--origin",
+                        "--tty"):
             raise SystemExit(f"speedrunner_daemon: unknown argument {flag!r}")
         opts[flag[2:]] = next(it)
-    missing = {"tool", "script", "socket"} - set(opts)
+    if ("script" in opts) == ("module" in opts):
+        raise SystemExit("speedrunner_daemon: one of --script and --module")
+    missing = {"tool", "socket"} - set(opts)
     if missing:
         raise SystemExit(f"speedrunner_daemon: missing {', '.join(sorted(missing))}")
     return opts
@@ -1567,7 +1726,7 @@ def main():
     opts = parse_args(sys.argv[1:])
     atexit.register(report_exit)  # before any import can register its own
     lock_fd = int(opts["lock-fd"]) if "lock-fd" in opts else None
-    state = State(opts["tool"], opts["script"], opts["socket"], lock_fd)
+    state = State(opts["tool"], opts.get("script"), opts["socket"], lock_fd, opts.get("module"))
     state.origin = opts.get("origin", state.origin)
     state.tty = tty_stand_in(opts.get("tty", "0"))
     return serve(state)

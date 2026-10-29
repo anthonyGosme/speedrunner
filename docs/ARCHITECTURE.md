@@ -17,6 +17,7 @@ server/speedrunner_daemon.py  le démon Python, bibliothèque standard uniquemen
 server/speedrunner_daemon.rb  le démon Ruby, même protocole, bibliothèque standard uniquement
 server/speedrunner_daemon.php le démon PHP, même protocole (pcntl, posix, FFI)
 client/src/main.rs        le client, Rust, seule dépendance : libc (=0.2.175)
+client/src/launcher.rs    suivi des lanceurs (az, gcloud) sous ptrace
 shell/speedrunner.zsh       wrappers et anticipation pour zsh ≥ 5.3
 tests/
   test_matrix.py          matrice de non-régression (brief §5), natif contre speedrunner
@@ -34,6 +35,7 @@ bench/
   anticipation.py         démon arrêté, puis prewarm, puis D ms de frappe, puis exécution
   keystroke.zsh           coût du hook zsh par frappe
   script.sh               boucles scriptées avec `srr`
+  launchers.sh            CLI à lanceur (az, gcloud) et `./manage.py`
   results/<date>-<étape>-vps/   chaque mesure, avec un ANALYSE.md
 ```
 
@@ -58,6 +60,21 @@ Le client lit le shebang de l'outil et choisit le démon de son runtime : `serve
 - **Forme `php script args`.** Le client la reconnaît quand l'outil est l'interpréteur PHP et que son premier argument est un fichier. Il sert alors le script, avec son propre démon. `$argv[0]` vaut le chemin tel qu'il a été tapé, et le démon le résout par rapport au cwd du client. `speedrunner status|stop php <script>` vise ce démon. En mode automatique, `activate` crée aussi un raccourci `php`.
 
 Pour un nouveau runtime : un démon `server/speedrunner_daemon.<ext>` qui parle ce protocole, une entrée dans `Runtime` (client), un outil de test et une matrice `tests/test_<runtime>.py` qui réutilise le harnais de `test_matrix.py`.
+
+## 2 ter. Lanceurs
+
+Un lanceur prépare un environnement, puis exécute l'interpréteur sur le vrai outil. gcloud est un script shell qui finit par `exec "$CLOUDSDK_PYTHON" … lib/gcloud.py "$@"` ; az, installé par pip, un script Python qui finit par `os.execl(sys.executable, …, "-m", "azure.cli", …)`. Précharger le lanceur ne sert à rien : il faut servir ce qu'il exécute ([client/src/launcher.rs](../client/src/launcher.rs)).
+
+- **Reconnaissance.** Un script shell (`sh`, `bash`, `dash`, `ksh`, `zsh`, directement ou par `env`) dont la dernière commande commence par `exec `, ou un script Python dont la dernière ligne de haut niveau commence par `os.exec`. Tout ce qui précède ne fait que préparer cet exec.
+- **Suivi.** Le client lance le lanceur avec ses arguments, sous ptrace (`PTRACE_TRACEME`, puis `PTRACE_O_TRACEEXEC | PTRACE_O_EXITKILL`). Il ne s'arrête qu'aux exec, et transmet au lanceur les signaux qu'il reçoit. Il passe le premier exec (le lanceur lui-même) et ceux d'un shell ou d'`env`. À l'exec d'un `python*`, le noyau arrête le processus avant la première instruction de l'interpréteur. Le client lit alors `/proc/<pid>/cmdline`, `environ`, `status` (umask, `SigIgn`) et vérifie que le cwd et les fd 0 à 2 sont les siens, puis tue le processus. Rien de l'outil n'a tourné, et le préambule a tourné une fois, comme en natif : 6,6 ms pour gcloud, un démarrage de Python (7,5 ms) pour az.
+- **Interpréteur.** C'est `argv[0]` tel que le lanceur l'a donné, cherché dans *son* `PATH` s'il est nu, et qui doit se résoudre en `/proc/<pid>/exe`. Le fichier résolu ne convient pas : un python de venv se reconnaît au chemin par lequel on l'appelle.
+- **Cible.** Des options sans effet propre à chaque appel (`-B -E -I -O -P -R -S -b -q -s -u`, `-X …`, `-W …`), puis un script ou `-m module`. Sinon (`-c`, `-`, une autre option), le client exécute la commande lue telle quelle. La cible a son propre démon, nommé d'après le lanceur et haché sur interpréteur, options et script ou module. Ce démon est lancé avec l'env construit par le lanceur. La requête porte l'env, l'umask et les signaux ignorés que le lanceur a laissés, pas ceux du client.
+- **Repli.** Le client exécute (`execve`) exactement la commande lue : le préambule ne tourne pas une seconde fois.
+- **Lanceur qui n'exécute pas Python** (gcloud avec `CLOUDSDK_USE_GOCLOUD`, ou tout autre exec). Le client le détache et l'attend en parent : il ignore SIGINT et SIGQUIT, que le terminal envoie au lanceur dans le même groupe, relaie SIGTERM et SIGHUP, puis sort comme lui.
+- **`status`, `stop`, `prewarm`.** Chaque suivi réussi écrit le nom du socket de la cible dans `<socket du lanceur>.target`, dans le dossier runtime. `status` et `stop` visent ce démon. `prewarm` l'interroge. S'il est absent, `prewarm` relance le préambule sans argument, avec les fd 0 à 2 sur `/dev/null`, le tue à l'exec, puis démarre le démon, seulement si la cible est la même. `prewarm` ne fait rien pour un lanceur dont aucun appel n'a encore été suivi.
+- **Mode automatique d'`activate`.** Il ne crée de lien que pour les scripts Python ou Ruby : az y est, gcloud non. Beaucoup de scripts shell du système finissent par un `exec` qui n'a rien à voir avec Python, et chacun tournerait alors sous le client. Pour gcloud, il faut le nommer (`activate gcloud`, `exec -t gcloud`), l'inscrire, ou passer par `srr`.
+- **`-m module` dans le démon** (`--module`). Le fichier exécuté est trouvé comme le fait runpy : en important les paquets parents, et le paquet lui-même s'il a un `__main__`. Cet import vient en tête du niveau 1, sous les mêmes garde-fous. Natif, `sys.path[0]` est le cwd : le démon le retire, et chaque enfant met le cwd du client. Un fichier du cwd qui masquerait un module préchargé (`json.py`, ou un paquet avec `__init__`) fait partir l'appel en natif. L'enfant exécute par `runpy._run_module_as_main` dans un `__main__` neuf : une trace montre les mêmes frames qu'en natif.
+- **Entrées de `sys.path` ajoutées par l'outil** (gcloud ajoute `lib/third_party`). L'enfant les envoie avec ses imports appris, et le cache les garde (`"paths"`). La sonde et le parent importent avec ces entrées en tête de `sys.path`, puis le restaurent. Un module trouvé dans un autre fichier que chez l'enfant est refusé.
 
 ## 3. Vue d'ensemble des processus
 
@@ -124,7 +141,7 @@ Socket de contrôle parent ↔ enfant : `A` (+ fd client : « j'ai accepté »),
 | 3 | fichiers botocore parsés d'avance | Enveloppe `botocore.loaders.JSONFileLoader._load_file`. Un enfant prend chaque entrée au plus une fois, et seulement si le `stat` correspond. Même message de debug qu'en natif. Budget LRU de 16 Mo de JSON source (`SPEEDRUNNER_MEMO_MB`). Actif seulement si botocore est déjà importé. |
 | 4 | instantané du driver (étape 4 bis) | pas commencé |
 
-Persistance : `$XDG_CACHE_HOME/speedrunner/<outil>-<sha256 de l'empreinte>.json` = `{"modules", "blacklist", "files"}`, rechargé au démarrage. Une installation modifiée change l'empreinte, donc le fichier de cache.
+Persistance : `$XDG_CACHE_HOME/speedrunner/<outil>-<sha256 de l'empreinte>.json` = `{"modules", "paths", "blacklist", "files"}`, rechargé au démarrage. Une installation modifiée change l'empreinte, donc le fichier de cache.
 
 Avant chaque fork, `gc.freeze()` : le GC de l'enfant ne parcourt pas le tas hérité, et n'en recopie donc pas les pages.
 
@@ -133,7 +150,7 @@ Avant chaque fork, `gc.freeze()` : le GC de l'enfant ne parcourt pas le tas hér
 Avant de répondre `R` (`why_not_fast`), sinon `N` et exécution native :
 
 - l'UID du pair (`SO_PEERCRED`), le gid et les groupes du client identiques à ceux du démon ;
-- le chemin du script, tel que le client l'a lancé : absolu, ou relatif à son cwd (`./manage.py`) s'il désigne le même fichier ;
+- le chemin du script, tel que le client l'a lancé : absolu, ou relatif à son cwd (`./manage.py`) s'il désigne le même fichier ; pour un module, `-m` suivi de son nom, et aucun fichier du cwd qui masque un module préchargé ;
 - l'empreinte : `stat` du script, de l'interpréteur, des dossiers de `sys.path` et des `RECORD`, plus un `select()` sur la file inotify des fichiers de modules ;
 - l'env de démarrage : `PYTHON*`, `LC_ALL`, `LC_CTYPE`, `LANG` identiques à ceux du démon ;
 - l'env figé à l'import : les clés modifiées *ou lues* par le code de haut niveau doivent avoir la même valeur qu'au démarrage du démon. Exemples réels : botocore fige `AWS_NEW_RETRIES_2026` et un chemin dérivé de `HOME`, et gettext fige la langue.
@@ -145,7 +162,8 @@ Après `G` (`apply_request`, puis `run_tool`) :
 - dispositions de signaux natives : SIGINT → KeyboardInterrupt, SIG_IGN hérités, masque vide ;
 - buffering de stdout/stdin selon `isatty()`, sans recréer les objets ;
 - pont `/dev/tty` : `os.open`, `open` et `io.open` de `/dev/tty` rendent une copie du fd du client ;
-- sortie de l'import rejouée, puis `runpy.run_path(script, run_name="__main__")` ;
+- `sys.orig_argv` : l'interpréteur et les options du démon (ceux de l'outil), puis le script ou `-m module`, puis les arguments ;
+- sortie de l'import rejouée, puis `runpy.run_path(script, run_name="__main__")`, ou pour un module `runpy._run_module_as_main` ;
 - sortie à la manière de CPython (`SystemExit` None/int/autre, exception affichée avec la trace limitée aux frames du script, KeyboardInterrupt qui se termine par SIGINT) ;
 - dernier `atexit` (enregistré en premier) : vidage des écrivains bufferisés et de stdout/stderr, puis `X`, puis fd 0/1/2 vers `/dev/null`, puis `L`. Si vider stdout échoue, pas de X : la destruction sort en 120, comme en natif.
 
@@ -162,7 +180,7 @@ Après `G` (`apply_request`, puis `run_tool`) :
     - **`--eager`** démarre tout outil cité.
     - **Ordre et cadence.** `command_counts` rend les outils dans l'ordre de leur première utilisation : un appel dans une fonction compte au premier appel de celle-ci. `start_daemons` en démarre au plus un par CPU (`SPEEDRUNNER_START_JOBS`). Au-delà, un lanceur détaché, avec ses propres fd, enchaîne : un processus par démon lance `spawn_daemon`, puis attend que son ping réponde, c'est-à-dire que son premier spare existe. L'état du terminal (`--tty`) est calculé avant le fork, sur les fd du script. Un outil atteint avant le démarrage de son démon tourne en natif, et le verrou empêche tout doublon. Sur 2 vCPU, le premier outil a son démon trois fois plus tôt, mais le total reste le même : le CPU de préchargement ne change pas.
 - Préfixe, sans inscription : `srr aws s3 ls`. `srr` est un lien vers le client ; appelé sous ce nom, il équivaut à `speedrunner run aws -- s3 ls`. Il marche pour tout outil Python ou Ruby, scripts compris, et le hook zsh préchauffe aussi l'outil qui suit `srr`.
-- `speedrunner enroll` refuse ce qui n'est pas un script Python. `status`, `stop` et `prewarm` attendent un démon en cours de démarrage.
+- `speedrunner enroll` refuse ce qui n'est ni un script d'un runtime servi, ni un lanceur (§2 ter). `status`, `stop` et `prewarm` attendent un démon en cours de démarrage.
 
 ## 9. Variables d'environnement
 
@@ -255,6 +273,8 @@ Une release est un seul fichier : le client embarque les trois démons et le hoo
   - L'enfant refuse le chemin rapide si un fd lu n'a pas le même état chez le client.
 - **Le message d'une exception Ruby non rattrapée.** L'afficheur natif de Ruby 3.1 échappe le message : il double les barres obliques inverses, nomme les caractères de contrôle (`\e`, `\r`…, sinon `\x1F`), écrit DEL `\c?`, et laisse tels quels la tabulation, le retour à la ligne et les octets non ASCII. `full_message`, qu'utilise le démon, ne l'échappe pas. Le démon échappe donc le message dans le texte de `full_message`, ligne par ligne, parce que le message peut venir d'une méthode `message` redéfinie (le `CLAide::Help` de CocoaPods), et que sur un terminal chaque ligne est entourée de codes de mise en forme. Trouvé par `speedrunner demo` sur `pod --version`.
 - **Un script nommé relativement au cwd** (`./manage.py`). Le client le passait tel quel au démon, qui ne tourne pas dans le même dossier : le démon s'arrêtait au démarrage, et deux projets Django auraient eu le même nom de démon. Le client passe donc au démon le chemin absolu (sans résoudre les liens), d'où un démon par projet, mais garde le chemin tapé pour `argv[0]`. Il faut aussi le défaire de `runpy.run_path`, qui remet le chemin du script dans `sys.argv[0]` : l'enfant remplace `runpy._ModifiedArgv0` pour ce seul appel, puis le restaure. En Ruby et PHP, un tel appel part en natif.
+- **Un lanceur Python laisse SIGPIPE et SIGXFSZ ignorés** : CPython les ignore au démarrage, et l'exec le transmet. Exiger les mêmes signaux ignorés que le client faisait donc partir az en natif. La requête porte maintenant les signaux ignorés et l'umask du lanceur.
+- **Trouver le fichier de `-m` sans rien importer** échoue sur les paquets espaces de noms. `PathFinder.find_spec("azure.cli", …)` lève `KeyError: 'azure'`, parce que `_NamespacePath` cherche son parent dans `sys.modules`. Le démon importe donc les paquets parents, comme runpy le fait en natif.
 - **`subprocess` avec `timeout`** attend par paliers croissants, plafonnés à 50 ms : une mesure de temps doit attendre sans timeout.
 - **Faux serveurs dans les tests.** Un processus forké depuis le lanceur de tests doit finir par `os._exit` quoi qu'il arrive, sinon il exécute le reste de la suite en parallèle. Un faux serveur qui écrit à un client parti meurt de `BrokenPipe`. Dans les deux cas, on obtient un démon fantôme.
 
@@ -270,6 +290,8 @@ Elles sont listées dans le brief §5 (« Limites connues »). Les principales :
 - l'enfant va jusqu'au bout si le client est tué par `kill -9`.
 - un outil qui lit l'état du terminal à l'import part en natif quand on l'appelle dans un autre état que celui du client qui a lancé son démon (par exemple `outil | less` après un appel au terminal) ; la taille du terminal lue à l'import n'est pas suivie ;
 - une horloge lue au chargement est celle du démon ; pour rspec seul, un adaptateur la remet à l'heure du début du run.
+- un lanceur n'est suivi que jusqu'à un interpréteur Python, et seulement par son `exec` final ; sans ptrace (conteneur restrictif, Yama `ptrace_scope` 3), il part en natif ;
+- pour un lanceur, `prewarm` exécute le préambule sans argument : sans effet pour az et gcloud, mais un lanceur qui ferait autre chose que préparer son exec le ferait aussi à chaque préchauffage.
 
 ## 13. État et suite
 
@@ -288,7 +310,8 @@ Elles sont listées dans le brief §5 (« Limites connues »). Les principales :
 | P1 Démon PHP | fait | artisan x3,7–x3,9, phpunit x3,6, composer x2,1–x3, phpcs x2,8 ; 33 tests PHP verts |
 | Perl | à évaluer | si aussi simple que PHP |
 | Panel étendu (Python, Ruby, PHP) | fait | 36 CLI, 36 sorties identiques ; ansible x16, poetry x14, solargraph x13, aws x5,8 ; 145 tests verts |
-| L0 CLI à lanceur : az, gcloud, `./manage.py` | mesuré | GO : Django x4,8–x7,7 (bug du chemin relatif corrigé) ; az x3,6–x4,1 et gcloud x3,8–x4,4 une fois le lanceur suivi (à faire) |
+| L0 CLI à lanceur : az, gcloud, `./manage.py` | fait | GO : Django x4,8–x7,7 (bug du chemin relatif corrigé) |
+| L1 Suivi des lanceurs, `-m module`, `sys.path` appris | fait | az x1,9–x4,3, gcloud x3,5–x4,2, sans réglage ; matrice de 67 tests verte |
 | 4 bis Instantané du driver (niveau 4) | reporté | propre à aws |
 | 5 Bench comparatif et vidéo (vhs ou asciinema) | à faire | |
 

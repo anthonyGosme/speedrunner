@@ -441,6 +441,166 @@ class RelativeScript(Matrix):
                 self.assertEqual(out, b"%s ['./manage.py', 'check'] manage.py True\n" % name)
 
 
+SH_LAUNCHER = """#!/bin/sh
+# gcloud's shape: set up, then exec the interpreter on a script.
+echo launcher >> "$TOOL_LOG"
+LAUNCHED_BY=sh
+export LAUNCHED_BY
+trap '' USR2
+exec {python} -s "$(dirname "$0")/../lib/tool.py" "$@"
+"""
+TOOL_PY = """import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "third"))
+
+def main():
+    import signal
+    import thirdmod  # lazily, from the entry added above: learned with it
+    with open(os.environ["TOOL_LOG"], "a") as f:
+        f.write("tool\\n")
+    print(sys.argv, os.environ.get("LAUNCHED_BY"), sys.flags.no_user_site, thirdmod.VALUE,
+          signal.getsignal(signal.SIGUSR2), sys.orig_argv[1:2], os.umask(0o22))
+    sys.exit(3 if sys.argv[1:] == ["fail"] else 0)
+
+if __name__ == "__main__":
+    main()
+"""
+PY_LAUNCHER = """#!{python}
+# az's shape: set up, then exec this same interpreter on -m module.
+import os
+import sys
+
+with open(os.environ["TOOL_LOG"], "a") as f:
+    f.write("launcher\\n")
+os.environ["LAUNCHED_BY"] = "py"
+os.environ["PYTHONPATH"] = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "lib")
+os.execl(sys.executable, sys.executable, "-m", "lmod", *sys.argv[1:])
+"""
+LMOD_MAIN = """import json, os, sys
+
+def main():
+    from lmod import lazy
+    print(sys.argv[0] == __file__, os.path.basename(sys.argv[0]), sys.argv[1:], __name__,
+          __spec__.name, sys.path[0] == os.getcwd(), os.environ.get("LAUNCHED_BY"), lazy.VALUE,
+          getattr(json, "VALUE", "stdlib json"), sys.orig_argv[1:3])
+    if sys.argv[1:] == ["boom"]:
+        raise ValueError("boom")
+    sys.exit(int(sys.argv[1]) if sys.argv[1:2] and sys.argv[1].isdigit() else 0)
+
+main()
+"""
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class Launchers(Matrix):
+    """A launcher sets up an env, then execs the interpreter on the tool:
+    gcloud, a shell script, on a script; az, a Python script, on -m module.
+    The launcher runs natively once per call, and what it execs is served."""
+
+    @classmethod
+    def setUpClass(cls):
+        python = shutil.which("python3", path=os.environ["HS_PATH"])
+        cls.root = d = tempfile.mkdtemp(dir=ROOT, prefix="launchers-")
+        files = {"bin/sh-tool": SH_LAUNCHER.format(python=python),
+                 "bin/py-tool": PY_LAUNCHER.format(python=python),
+                 "bin/cat-tool": "#!/bin/sh\necho launcher >> \"$TOOL_LOG\"\nexec cat \"$@\"\n",
+                 "lib/tool.py": TOOL_PY, "lib/third/thirdmod.py": "VALUE = 'third'\n",
+                 "lib/lmod/__init__.py": "", "lib/lmod/__main__.py": LMOD_MAIN,
+                 "lib/lmod/lazy.py": "VALUE = 'lazy'\n", "shadow/json.py": "VALUE = 'cwd json'\n"}
+        for name, text in files.items():
+            path = os.path.join(d, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+            if name.startswith("bin/"):
+                os.chmod(path, 0o755)
+        cls.env = {"PATH": os.path.join(d, "bin") + ":" + BASE_ENV["PATH"],
+                   "TOOL_LOG": os.path.join(d, "log")}
+        cls.work = os.path.join(d, "work")
+        os.makedirs(cls.work)
+
+    @classmethod
+    def tearDownClass(cls):
+        for tool in ("sh-tool", "py-tool"):
+            stop(tool, cls.env)
+
+    def warm(self, tool, timeout=30.0):
+        deadline = time.monotonic() + timeout
+        while run("hs", [tool], cwd=self.work, env=self.env).returncode == EXIT_NOT_FAST:
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"no daemon for {tool}")
+            time.sleep(0.1)
+
+    def log(self):
+        try:
+            with open(self.env["TOOL_LOG"]) as f:
+                return f.read().split()
+        except FileNotFoundError:
+            return []
+
+    def test_shell_launcher_on_a_script(self):
+        self.warm("sh-tool")
+        for argv in (["sh-tool", "a b", "--x"], ["sh-tool", "fail"]):
+            with self.subTest(argv=argv):
+                code, out, err = self.assertSame(argv, cwd=self.work, env=self.env)
+                self.assertEqual(err, b"")
+        _, out, _ = self.assertSame(["sh-tool", "a b"], cwd=self.work, env=self.env, umask=0o077)
+        self.assertEqual(out, b"['%s/bin/../lib/tool.py', 'a b'] sh 1 third 1 ['-s'] 63\n" % self.root.encode())
+
+    def test_python_launcher_on_a_module(self):
+        self.warm("py-tool")
+        for argv in (["py-tool", "x", "y"], ["py-tool", "7"], ["py-tool", "boom"]):
+            with self.subTest(argv=argv):
+                self.assertSame(argv, cwd=self.work, env=self.env)
+        _, out, _ = self.assertSame(["py-tool", "x"], cwd=self.work, env=self.env)
+        self.assertEqual(out, b"True __main__.py ['x'] __main__ lmod.__main__ True py lazy"
+                              b" stdlib json ['-m', 'lmod']\n")
+
+    def test_launcher_and_tool_run_once_per_call(self):
+        for tool in ("sh-tool", "py-tool"):
+            with self.subTest(tool=tool):
+                self.warm(tool)
+                before = len(self.log())
+                for _ in range(3):
+                    self.assertEqual(run("hs", [tool], cwd=self.work, env=self.env).returncode, 0)
+                self.assertEqual(self.log()[before:], ["launcher", "tool"] * 3 if tool == "sh-tool"
+                                 else ["launcher"] * 3)
+
+    def test_learns_imports_from_the_entries_the_tool_adds(self):
+        self.warm("sh-tool")
+        deadline = time.monotonic() + 30
+        while True:
+            run("hs", ["sh-tool"], cwd=self.work, env=self.env)
+            text = status("sh-tool", self.env)
+            if int(status_field(text, "learned") or 0) >= 1 or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        self.assertGreaterEqual(int(status_field(text, "learned")), 1, text)
+        self.assertEqual(status_field(text, "blacklisted"), "0", text)
+
+    def test_cwd_module_shadows_a_preloaded_one(self):
+        self.warm("py-tool")
+        shadow = os.path.join(self.root, "shadow")
+        _, out, _ = self.assertSame(["py-tool", "x"], cwd=shadow, env=self.env, require_fast=False)
+        self.assertIn(b"cwd json", out)
+        self.assertEqual(run("hs", ["py-tool", "x"], cwd=shadow, env=self.env).returncode,
+                         EXIT_NOT_FAST)
+
+    def test_launcher_that_execs_no_python_runs_natively(self):
+        self.assertSame(["cat-tool"], input=b"some input\n", cwd=self.work, env=self.env,
+                        require_fast=False)
+        self.assertSame(["cat-tool", "/nonexistent"], cwd=self.work, env=self.env,
+                        require_fast=False)
+
+    def test_status_stop_and_prewarm(self):
+        self.warm("sh-tool")
+        self.assertTrue(status("sh-tool", self.env).startswith("ready"))
+        stop("sh-tool", self.env)
+        self.assertEqual(status("sh-tool", self.env), "down")
+        subprocess.run([HS_BIN, "prewarm", "sh-tool"], env={**BASE_ENV, **self.env}, check=True)
+        wait_ready("sh-tool", self.env)
+        self.assertEqual(run("hs", ["sh-tool", "q"], cwd=self.work, env=self.env).returncode, 0)
+
+
 class Teardown(Matrix):
     def test_unclosed_file_flushed_before_exit(self):
         for mode in ("native", "hs"):

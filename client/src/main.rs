@@ -5,6 +5,7 @@
 //! has been told to go (b"G"). After that, errors are reported, never retried,
 //! so a command can never run twice. Wire format: see server/speedrunner_daemon.py.
 
+mod launcher;
 mod script;
 
 use std::env;
@@ -38,6 +39,7 @@ const RELAYED: [libc::c_int; 5] =
     [libc::SIGINT, libc::SIGQUIT, libc::SIGWINCH, libc::SIGHUP, libc::SIGTERM];
 
 static CHILD_PID: AtomicI32 = AtomicI32::new(0);
+static NATIVE_PID: AtomicI32 = AtomicI32::new(0);
 static CHILD_PIDFD: AtomicI32 = AtomicI32::new(-1);
 
 // The daemons and the zsh hook, built in: a release is this one file.
@@ -264,12 +266,59 @@ struct Tool<'a> {
     sock: PathBuf,
     dir: PathBuf,
     form: Option<ScriptForm>,
+    target: Option<Target>,
+    learned: bool, // a launcher, seen as the daemon it last execed
 }
 
 /// `php script args`: the interpreter on PATH, the script as an argument.
 struct ScriptForm {
     interp: Vec<u8>,
     typed: OsString, // the script as typed, for argv and for the native run
+}
+
+/// What a launcher execs, when a daemon can serve it: a Python interpreter,
+/// with options of its own that change nothing per run, on a script or on
+/// `-m module`.
+struct Target {
+    launch: launcher::Launch,
+    flags: Vec<Vec<u8>>,
+    module: Option<Vec<u8>>,
+    argv0: Vec<u8>,      // of the request: the script as named, or -m
+    args: Vec<OsString>, // the rest; for a module, its name first
+}
+
+impl Target {
+    fn parse(launch: launcher::Launch) -> Result<Target, launcher::Launch> {
+        let argv = &launch.argv;
+        let mut i = 1;
+        while i < argv.len() {
+            let a = &argv[i][..];
+            if a == b"-X" || a == b"-W" {
+                i += 2;
+            } else if a.len() > 1 && a[0] == b'-' && a[1..].iter().all(|c| b"BEIOPRSbqsu".contains(c)) {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let entry = match argv.get(i) {
+            Some(a) if &a[..] == b"-m" && i + 1 < argv.len() => Some(true),
+            Some(a) if !a.starts_with(b"-") && i < argv.len() => Some(false),
+            _ => None, // -c, -, or nothing to run: as is
+        };
+        let module = match entry {
+            Some(module) => module,
+            None => return Err(launch),
+        };
+        let flags = argv[1.min(i)..i].to_vec();
+        let rest = |from: usize| argv[from..].iter().map(|a| OsString::from_vec(a.clone()));
+        let (argv0, module_name, args) = if module {
+            (b"-m".to_vec(), Some(argv[i + 1].clone()), rest(i + 1).collect())
+        } else {
+            (argv[i].clone(), None, rest(i + 1).collect())
+        };
+        Ok(Target { flags, module: module_name, argv0, args, launch })
+    }
 }
 
 impl<'a> Tool<'a> {
@@ -280,7 +329,71 @@ impl<'a> Tool<'a> {
         let path = absolute(&found)?;
         let dir = runtime_dir();
         let sock = dir.join(socket_name(name, &path));
-        Some(Tool { name, path, found, sock, dir, form: None })
+        Some(Tool { name, path, found, sock, dir, form: None, target: None, learned: false })
+    }
+
+    /// The tool a launcher named `name` execs. Its daemon is the target's:
+    /// another interpreter, options or script is another daemon.
+    fn for_target(name: &'a OsStr, target: Target) -> Tool<'a> {
+        let mut identity = target.launch.exe.clone();
+        for f in &target.flags {
+            identity.push(0);
+            identity.extend_from_slice(f);
+        }
+        identity.push(0);
+        let (path, found) = match &target.module {
+            Some(m) => {
+                identity.extend_from_slice(b"-m\0");
+                (m.clone(), m.clone())
+            }
+            None => {
+                // Relative to the launcher's cwd, which is ours (read_launch).
+                (absolute(&target.argv0).unwrap_or_else(|| target.argv0.clone()), target.argv0.clone())
+            }
+        };
+        identity.extend_from_slice(&path);
+        let dir = runtime_dir();
+        let sock = dir.join(socket_name(name, &identity));
+        Tool { name, path, found, sock, dir, form: None, target: Some(target), learned: false }
+    }
+
+    fn is_launcher(&self) -> bool {
+        self.form.is_none() && self.target.is_none() && !self.learned
+            && launcher::looks_like_launcher(&self.path)
+    }
+
+    /// Where a launcher keeps the socket name of the daemon it was last
+    /// seen to exec, for status, stop and prewarm.
+    fn learned_path(&self) -> PathBuf {
+        self.sock.with_extension("target")
+    }
+
+    fn remember(&self, target: &Tool) {
+        let name = match target.sock.file_name() {
+            Some(n) => n.as_bytes(),
+            None => return,
+        };
+        let path = self.learned_path();
+        if std::fs::read(&path).ok().as_deref() == Some(name) {
+            return;
+        }
+        let tmp = path.with_extension(format!("target.{}", process::id()));
+        if std::fs::write(&tmp, name).and_then(|_| std::fs::rename(&tmp, &path)).is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+    }
+
+    /// The launcher as status and stop see it: the daemon it last execed.
+    fn learned(&self) -> Option<Tool<'a>> {
+        let name = std::fs::read(self.learned_path()).ok()?;
+        let plain = !name.is_empty() && name.ends_with(b".sock")
+            && name.iter().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(c));
+        if !plain {
+            return None;
+        }
+        Some(Tool { name: self.name, path: self.path.clone(), found: self.found.clone(),
+                    sock: self.dir.join(OsStr::from_bytes(&name)), dir: self.dir.clone(),
+                    form: None, target: None, learned: true })
     }
 
     /// The tool as `php script args` runs it, when it is the PHP interpreter
@@ -302,11 +415,15 @@ impl<'a> Tool<'a> {
         let dir = runtime_dir();
         let sock = dir.join(socket_name(OsStr::from_bytes(basename(&path)), &path));
         Some(Tool { name: self.name, found: path.clone(), path, sock, dir,
-                    form: Some(ScriptForm { interp: self.path.clone(), typed: typed.clone() }) })
+                    form: Some(ScriptForm { interp: self.path.clone(), typed: typed.clone() }),
+                    target: None, learned: false })
     }
 
     /// argv[0] the tool sees: the script as typed, or as execvp found it.
     fn argv0(&self) -> &[u8] {
+        if let Some(t) = &self.target {
+            return &t.argv0;
+        }
         self.form.as_ref().map_or(&self.found[..], |f| f.typed.as_bytes())
     }
 
@@ -329,6 +446,12 @@ fn with_tool(rest: &[OsString], f: impl Fn(&Tool) -> i32) -> i32 {
         }
     };
     if rest.len() == 1 {
+        if tool.is_launcher() {
+            return match tool.learned() {
+                Some(target) => f(&target),
+                None => f(&tool), // never seen to exec: nothing of its own
+            };
+        }
         return f(&tool);
     }
     match tool.script_form(&rest[1..]) {
@@ -366,36 +489,63 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
     if let Some(script) = tool.script_form(args) {
         tool = script;
         args = &args[1..];
+    } else if tool.is_launcher() {
+        return run_launcher(&tool, args, lazy);
     } else if read_shebang(&tool.path).is_err() {
         fall_back(&tool, args, "not a script of a runtime speedrunner serves");
     }
+    serve(&tool, args, lazy)
+}
+
+/// Run a launcher natively until it execs the interpreter, then serve that.
+fn run_launcher(tool: &Tool, args: &[OsString], lazy: Option<&Path>) -> i32 {
+    let argv: Vec<Vec<u8>> = std::iter::once(tool.name.as_bytes().to_vec())
+        .chain(args.iter().map(|a| a.as_bytes().to_vec()))
+        .collect();
+    match launcher::trace(&tool.found, &argv, false) {
+        Err(e) => fall_back(tool, args, &format!("cannot follow the launcher: {}", e)),
+        Ok(launcher::Traced::Done(status)) => exit_like(status),
+        Ok(launcher::Traced::Native(pid)) => wait_native(pid),
+        Ok(launcher::Traced::Python(launch)) => match Target::parse(launch) {
+            Err(launch) => fall_back_launch(tool, &launch, "the launcher execs no script or module"),
+            Ok(target) => {
+                let args = target.args.clone();
+                let target = Tool::for_target(tool.name, target);
+                tool.remember(&target);
+                serve(&target, &args, lazy)
+            }
+        },
+    }
+}
+
+fn serve(tool: &Tool, args: &[OsString], lazy: Option<&Path>) -> i32 {
     let start = |tool: &Tool| {
         if lazy.map_or(true, called_again) {
             autostart(tool);
         }
     };
     if let Err(e) = check_runtime_dir(&tool.dir) {
-        start(&tool);
-        fall_back(&tool, args, &format!("runtime dir: {}", e));
+        start(tool);
+        fall_back(tool, args, &format!("runtime dir: {}", e));
     }
     let sock = match connect(&tool.sock) {
         Ok(s) => s,
         Err(e) => {
             if e.kind() != io::ErrorKind::PermissionDenied {
-                start(&tool);
+                start(tool);
             }
-            fall_back(&tool, args, &format!("connect: {}", e));
+            fall_back(tool, args, &format!("connect: {}", e));
         }
     };
-    let pid = match handshake(&sock, &tool, args) {
+    let pid = match handshake(&sock, tool, args) {
         Ok(pid) => pid,
         Err(Refused::Native(reason)) => {
             if reason.starts_with("stale") {
-                autostart(&tool); // the old daemon is exiting; the new one waits for its lock
+                autostart(tool); // the old daemon is exiting; the new one waits for its lock
             }
-            fall_back(&tool, args, &reason);
+            fall_back(tool, args, &reason);
         }
-        Err(Refused::Io(e)) => fall_back(&tool, args, &format!("handshake: {}", e)),
+        Err(Refused::Io(e)) => fall_back(tool, args, &format!("handshake: {}", e)),
     };
 
     CHILD_PIDFD.store(pidfd_open(pid), Ordering::SeqCst);
@@ -404,9 +554,9 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
     // Sending G commits. If it cannot be sent, the child never runs the tool.
     let mut w: &UnixStream = &sock;
     if let Err(e) = w.write_all(b"G") {
-        fall_back(&tool, args, &format!("go: {}", e));
+        fall_back(tool, args, &format!("go: {}", e));
     }
-    wait_for_child(&sock, &tool, pid)
+    wait_for_child(&sock, tool, pid)
 }
 
 enum Refused {
@@ -428,7 +578,7 @@ fn handshake(sock: &UnixStream, tool: &Tool, args: &[OsString]) -> Result<i32, R
     if cwd < 0 {
         return Err(Refused::Io(io::Error::last_os_error()));
     }
-    let msg = frame(b'R', &run_body(tool.argv0(), args));
+    let msg = frame(b'R', &run_body(tool.argv0(), args, tool.target.as_ref().map(|t| &t.launch)));
     // Our controlling terminal, if any: the child has none, and tools open
     // /dev/tty for passwords.
     let tty = unsafe {
@@ -493,7 +643,85 @@ fn fall_back(tool: &Tool, args: &[OsString], reason: &str) -> ! {
     exec_native(tool, args)
 }
 
+/// What the launcher execed, which we stopped before it ran: exec it.
+fn fall_back_launch(tool: &Tool, launch: &launcher::Launch, reason: &str) -> ! {
+    if env::var_os("SPEEDRUNNER_REQUIRE_FAST").map_or(false, |v| v == "1") {
+        eprintln!("speedrunner: fast path unavailable: {}", reason);
+        process::exit(EXIT_NOT_FAST);
+    }
+    if env::var_os("SPEEDRUNNER_DEBUG").is_some() {
+        eprintln!("speedrunner: running {} natively: {}", tool.display(), reason);
+    }
+    exec_launch(tool, launch)
+}
+
+fn exec_launch(tool: &Tool, launch: &launcher::Launch) -> ! {
+    let argv: Vec<CString> = launch.argv.iter().map(|a| cstring(a)).collect();
+    let envp: Vec<CString> = launch.env.iter().map(|e| cstring(e)).collect();
+    let mut argv_p: Vec<*const libc::c_char> = argv.iter().map(|c| c.as_ptr()).collect();
+    argv_p.push(ptr::null());
+    let mut envp_p: Vec<*const libc::c_char> = envp.iter().map(|c| c.as_ptr()).collect();
+    envp_p.push(ptr::null());
+    let path = cstring(&launch.exe);
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+        libc::execve(path.as_ptr(), argv_p.as_ptr(), envp_p.as_ptr());
+    }
+    let err = io::Error::last_os_error();
+    eprintln!("speedrunner: {}: {}", tool.display(), err);
+    process::exit(if err.kind() == io::ErrorKind::NotFound { 127 } else { 126 });
+}
+
+/// Exit as a process with wait status `status` did.
+fn exit_like(status: i32) -> i32 {
+    if libc::WIFSIGNALED(status) {
+        die_by_signal(libc::WTERMSIG(status));
+    }
+    libc::WEXITSTATUS(status)
+}
+
+extern "C" fn relay_native(sig: libc::c_int) {
+    let pid = NATIVE_PID.load(Ordering::SeqCst);
+    if pid > 0 {
+        unsafe {
+            let errno = *libc::__errno_location();
+            libc::kill(pid, sig);
+            *libc::__errno_location() = errno;
+        }
+    }
+}
+
+/// The launcher went on natively, as our child, in our process group: the
+/// terminal's signals reach it as they would have; others sent to us are
+/// passed on. Exit as it does.
+fn wait_native(pid: i32) -> i32 {
+    NATIVE_PID.store(pid, Ordering::SeqCst);
+    unsafe {
+        libc::signal(libc::SIGINT, libc::SIG_IGN);
+        libc::signal(libc::SIGQUIT, libc::SIG_IGN);
+        for sig in [libc::SIGTERM, libc::SIGHUP] {
+            let mut sa: libc::sigaction = mem::zeroed();
+            sa.sa_sigaction = relay_native as extern "C" fn(libc::c_int) as usize;
+            sa.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut sa.sa_mask);
+            libc::sigaction(sig, &sa, ptr::null_mut());
+        }
+    }
+    let mut status = 0;
+    loop {
+        if unsafe { libc::waitpid(pid, &mut status, 0) } == pid {
+            return exit_like(status);
+        }
+        if io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
+            return EXIT_LOST;
+        }
+    }
+}
+
 fn exec_native(tool: &Tool, args: &[OsString]) -> ! {
+    if let Some(t) = &tool.target {
+        exec_launch(tool, &t.launch);
+    }
     // argv[0] as the shell would set it; the kernel hands the path to the interpreter.
     let typed = tool.form.as_ref().map(|f| f.typed.as_os_str());
     let argv: Vec<CString> = std::iter::once(tool.name)
@@ -614,32 +842,37 @@ fn frame(kind: u8, body: &[u8]) -> Vec<u8> {
     msg
 }
 
-fn run_body(script: &[u8], args: &[OsString]) -> Vec<u8> {
+/// `launch`: what a launcher execed, whose env, umask and ignored signals
+/// the tool has instead of ours.
+fn run_body(script: &[u8], args: &[OsString], launch: Option<&launcher::Launch>) -> Vec<u8> {
     let mut b = Vec::with_capacity(8192);
     put_u32(&mut b, args.len() as u32 + 1);
     put_blob(&mut b, script);
     for a in args {
         put_blob(&mut b, a.as_bytes());
     }
-    let env: Vec<Vec<u8>> = env::vars_os()
-        .map(|(k, v)| {
-            let mut e = k.into_vec();
-            e.push(b'=');
-            e.extend_from_slice(v.as_bytes());
-            e
-        })
-        .collect();
+    let env: Vec<Vec<u8>> = match launch {
+        Some(l) => l.env.clone(),
+        None => env::vars_os()
+            .map(|(k, v)| {
+                let mut e = k.into_vec();
+                e.push(b'=');
+                e.extend_from_slice(v.as_bytes());
+                e
+            })
+            .collect(),
+    };
     put_u32(&mut b, env.len() as u32);
     for e in &env {
         put_blob(&mut b, e);
     }
-    let umask = unsafe {
+    let umask = launch.map_or_else(|| unsafe {
         let m = libc::umask(0o022);
         libc::umask(m);
-        m
-    };
-    put_u32(&mut b, umask as u32);
-    b.extend_from_slice(&ignored_signals().to_le_bytes());
+        m as u32
+    }, |l| l.umask);
+    put_u32(&mut b, umask);
+    b.extend_from_slice(&launch.map_or_else(ignored_signals, |l| l.ignored).to_le_bytes());
     let groups = unsafe {
         let n = libc::getgroups(0, ptr::null_mut()).max(0);
         let mut g = vec![0 as libc::gid_t; n as usize];
@@ -791,6 +1024,12 @@ fn autostart(tool: &Tool) {
 /// Make sure a daemon is up and still matches the installed tool, so that
 /// the next run finds a spare ready. Called by the shell while typing.
 fn cmd_prewarm(tool: &Tool) -> i32 {
+    if tool.is_launcher() {
+        return 0; // never seen to exec a daemon's tool: its first run will tell
+    }
+    if tool.learned {
+        return prewarm_launcher(tool);
+    }
     match request(tool, b'P') {
         // A stale daemon is exiting; its replacement waits for the lock.
         Ok((b'P', text)) if text.starts_with(b"stale") => {}
@@ -801,6 +1040,37 @@ fn cmd_prewarm(tool: &Tool) -> i32 {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("speedrunner: cannot start {} daemon: {}", tool.display(), e);
+            1
+        }
+    }
+}
+
+/// A launcher's daemon, as its last run found it: up, or started from what
+/// the launcher execs when run without arguments, if that is the same.
+fn prewarm_launcher(learned: &Tool) -> i32 {
+    match request(learned, b'P') {
+        Ok((b'P', text)) if !text.starts_with(b"stale") => return 0,
+        _ => {}
+    }
+    let launcher = match Tool::resolve(learned.name) {
+        Some(t) => t,
+        None => return 1,
+    };
+    let argv = vec![learned.name.as_bytes().to_vec()];
+    let target = match launcher::trace(&launcher.found, &argv, true) {
+        Ok(launcher::Traced::Python(launch)) => match Target::parse(launch) {
+            Ok(target) => Tool::for_target(learned.name, target),
+            Err(_) => return 1,
+        },
+        _ => return 1,
+    };
+    if target.sock != learned.sock {
+        return 0; // execs another daemon's tool without arguments: leave it to the run
+    }
+    match spawn_daemon(&target, "prewarm") {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("speedrunner: cannot start {} daemon: {}", target.display(), e);
             1
         }
     }
@@ -997,9 +1267,15 @@ fn wait_ready(tool: &Tool) {
 
 fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     ensure_runtime_dir(&tool.dir)?;
-    let (interp, flag, runtime) = match &tool.form {
-        Some(f) => (f.interp.clone(), None, Runtime::Php),
-        None => read_shebang(&tool.path)?,
+    // The interpreter as named (argv[0]), the file to exec, and its options.
+    let (named, interp, flags, runtime) = match (&tool.form, &tool.target) {
+        (Some(f), _) => (f.interp.clone(), f.interp.clone(), vec![], Runtime::Php),
+        (None, Some(t)) => (t.launch.argv[0].clone(), t.launch.exe.clone(), t.flags.clone(),
+                            Runtime::Python),
+        (None, None) => {
+            let (interp, flag, runtime) = read_shebang(&tool.path)?;
+            (interp.clone(), interp, flag.into_iter().collect(), runtime)
+        }
     };
     let daemon = locate_daemon(runtime)?;
     let lock = lock_path(tool);
@@ -1008,9 +1284,9 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
         LockState::Exiting(holder) => Some(holder),
         LockState::Held => return Ok(()),
     };
-    let mut argv = vec![cstring(&interp)];
-    if let Some(f) = flag {
-        argv.push(cstring(&f));
+    let mut argv = vec![cstring(&named)];
+    for f in &flags {
+        argv.push(cstring(f));
     }
     for a in runtime.daemon_args() {
         argv.push(cstring(a.as_bytes()));
@@ -1018,7 +1294,8 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     argv.push(cstring(&daemon));
     // For `php script`, the daemon is the script's: name it after it.
     let tool_name = if tool.form.is_some() { basename(&tool.path) } else { tool.name.as_bytes() };
-    for (k, v) in [("--tool", tool_name), ("--script", &tool.path[..]),
+    let entry = if tool.target.as_ref().map_or(false, |t| t.module.is_some()) { "--module" } else { "--script" };
+    for (k, v) in [("--tool", tool_name), (entry, &tool.path[..]),
                    ("--socket", tool.sock.as_os_str().as_bytes()), ("--lock-fd", b"3"),
                    ("--origin", format!("{} pid={}", origin, process::id()).as_bytes()),
                    ("--tty", tty.as_bytes())] {
@@ -1027,6 +1304,12 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     }
     let mut ptrs: Vec<*const libc::c_char> = argv.iter().map(|c| c.as_ptr()).collect();
     ptrs.push(ptr::null());
+    let interp = cstring(&interp);
+    // A launcher's tool runs with the env the launcher made: so does its daemon.
+    let envp: Option<Vec<CString>> = tool.target.as_ref()
+        .map(|t| t.launch.env.iter().map(|e| cstring(e)).collect());
+    let mut envp_p: Vec<*const libc::c_char> = envp.iter().flatten().map(|c| c.as_ptr()).collect();
+    envp_p.push(ptr::null());
     let log = cstring(tool.sock.with_extension("log").as_os_str().as_bytes());
     let devnull = cstring(b"/dev/null");
     let polls = (LOCK_WAIT.as_millis() / 10) as u32;
@@ -1076,7 +1359,11 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
                 libc::close(fd);
             }
             libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-            libc::execv(argv[0].as_ptr(), ptrs.as_ptr());
+            if envp.is_some() {
+                libc::execve(interp.as_ptr(), ptrs.as_ptr(), envp_p.as_ptr());
+            } else {
+                libc::execv(interp.as_ptr(), ptrs.as_ptr());
+            }
             libc::_exit(127);
         }
         let mut status = 0;
@@ -1495,8 +1782,10 @@ fn cmd_enroll(rest: &[OsString]) -> i32 {
             }
         };
         if let Err(e) = read_shebang(&tool.path) {
-            eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", name, e);
-            return 1;
+            if !tool.is_launcher() {
+                eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", name, e);
+                return 1;
+            }
         }
         if !tools.iter().any(|t| *t == name) {
             tools.push(name.into_owned());

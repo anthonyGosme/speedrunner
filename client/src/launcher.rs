@@ -1,0 +1,340 @@
+//! Launchers: scripts that set up an environment, then exec a Python
+//! interpreter on the real tool. gcloud is a shell script that ends in
+//! `exec "$CLOUDSDK_PYTHON" ... lib/gcloud.py "$@"`; az, from pip, a Python
+//! script that ends in `os.execl(sys.executable, ..., "-m", "azure.cli", ...)`.
+//!
+//! The launcher runs natively, under ptrace. When it execs the interpreter,
+//! the kernel stops it before the interpreter runs a single instruction: its
+//! command line and environment are read, then it is killed. What it would
+//! have run is served by a daemon, or execed as is. The tool itself has not
+//! started, so following a launcher never runs anything twice.
+
+use std::ffi::{CString, OsStr};
+use std::fs::{self, File};
+use std::io::{self, Read, Seek, SeekFrom};
+use std::mem;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::Path;
+use std::ptr;
+
+// The shebang is in the head, the last command in the tail.
+const HEAD: usize = 256;
+const TAIL: u64 = 4096;
+// Programs a launcher may exec on its way to the interpreter.
+const SHELLS: [&[u8]; 6] = [b"sh", b"bash", b"dash", b"ksh", b"zsh", b"env"];
+
+/// What the launcher execs: the program as it named it, argv and env, and
+/// the umask and ignored signals (1 << signal) it leaves it.
+pub struct Launch {
+    pub exe: Vec<u8>,
+    pub argv: Vec<Vec<u8>>,
+    pub env: Vec<Vec<u8>>,
+    pub umask: u32,
+    pub ignored: u64,
+}
+
+pub enum Traced {
+    /// Stopped as it execed a Python interpreter, and killed.
+    Python(Launch),
+    /// Exited while traced: its wait status.
+    Done(i32),
+    /// Left to run natively, untraced: its pid, ours to wait for.
+    Native(i32),
+}
+
+fn is_shell(name: &[u8]) -> bool {
+    SHELLS.contains(&name)
+}
+
+fn basename(path: &[u8]) -> &[u8] {
+    path.rsplit(|b| *b == b'/').next().unwrap_or(path)
+}
+
+fn trim(b: &[u8]) -> &[u8] {
+    let start = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
+    let end = b.iter().rposition(|c| !c.is_ascii_whitespace()).map_or(start, |e| e + 1);
+    &b[start..end]
+}
+
+/// A script whose last command execs: a shell script ending in `exec ...`,
+/// or a Python script whose last top-level line is `os.exec...(...)`.
+/// Everything before it only prepares that exec.
+pub fn looks_like_launcher(script: &[u8]) -> bool {
+    let (head, tail) = match head_and_tail(script) {
+        Ok(parts) => parts,
+        Err(_) => return false,
+    };
+    if !head.starts_with(b"#!") {
+        return false;
+    }
+    let first = match head.iter().position(|b| *b == b'\n') {
+        Some(end) => &head[..end],
+        None => return false,
+    };
+    let words: Vec<&[u8]> = first[2..]
+        .split(|b| *b == b' ' || *b == b'\t')
+        .filter(|w| !w.is_empty())
+        .collect();
+    let mut interp = match words.first() {
+        Some(w) => basename(w),
+        None => return false,
+    };
+    if interp == b"env" {
+        interp = match words.get(1) {
+            Some(w) => basename(w),
+            None => return false,
+        };
+    }
+    // Lines of the tail after the shebang's; the first may be cut short.
+    let body = if tail.0 == 0 { &tail.1[first.len()..] } else { &tail.1[..] };
+    let mut lines: Vec<&[u8]> = body.split(|b| *b == b'\n').collect();
+    if tail.0 > 0 {
+        lines.remove(0);
+    }
+    let last = lines
+        .into_iter()
+        .filter(|l| {
+            let t = trim(l);
+            !t.is_empty() && !t.starts_with(b"#")
+        })
+        .last()
+        .unwrap_or(b"");
+    if is_shell(interp) && interp != b"env" {
+        trim(last).starts_with(b"exec ")
+    } else if interp.starts_with(b"python") {
+        last.starts_with(b"os.exec")
+    } else {
+        false
+    }
+}
+
+/// The file's first HEAD bytes, and its last TAIL bytes with their offset.
+fn head_and_tail(path: &[u8]) -> io::Result<(Vec<u8>, (u64, Vec<u8>))> {
+    let mut f = File::open(OsStr::from_bytes(path))?;
+    let mut head = vec![0u8; HEAD];
+    let n = f.read(&mut head)?;
+    head.truncate(n);
+    let size = f.metadata()?.len();
+    let from = size.saturating_sub(TAIL);
+    f.seek(SeekFrom::Start(from))?;
+    let mut tail = Vec::new();
+    f.take(TAIL).read_to_end(&mut tail)?;
+    Ok((head, (from, tail)))
+}
+
+fn wait(pid: i32) -> io::Result<i32> {
+    let mut status = 0;
+    loop {
+        if unsafe { libc::waitpid(pid, &mut status, libc::__WALL) } == pid {
+            return Ok(status);
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
+}
+
+unsafe fn ptrace(request: libc::c_uint, pid: i32, data: usize) -> libc::c_long {
+    libc::ptrace(request, pid as libc::pid_t, ptr::null_mut::<libc::c_void>(), data as *mut libc::c_void)
+}
+
+fn kill(pid: i32) {
+    unsafe {
+        libc::kill(pid, libc::SIGKILL);
+    }
+    let _ = wait(pid);
+}
+
+/// Run the launcher at `path` with `argv`, until it execs an interpreter.
+/// `quiet`: a run of our own (to learn what it execs, for prewarm), with
+/// /dev/null for fds 0-2, killed rather than left to run natively.
+pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
+    let path_c = CString::new(path)?;
+    let argv_c: Vec<CString> = argv.iter().map(|a| CString::new(&a[..])).collect::<Result<_, _>>()?;
+    let mut ptrs: Vec<*const libc::c_char> = argv_c.iter().map(|c| c.as_ptr()).collect();
+    ptrs.push(ptr::null());
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if pid == 0 {
+        unsafe {
+            if quiet {
+                let null = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
+                for fd in 0..3 {
+                    libc::dup2(null, fd);
+                }
+            }
+            if ptrace(libc::PTRACE_TRACEME, 0, 0) != 0 {
+                libc::_exit(127); // seen before the stop below: not traceable
+            }
+            libc::raise(libc::SIGSTOP);
+            // Rust ignores SIGPIPE at startup; the launcher must inherit the default.
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+            libc::execv(path_c.as_ptr(), ptrs.as_ptr());
+            libc::_exit(127);
+        }
+    }
+    let status = wait(pid)?;
+    let unavailable = || io::Error::new(io::ErrorKind::Unsupported, "ptrace unavailable");
+    if !libc::WIFSTOPPED(status) {
+        return Err(unavailable());
+    }
+    let opts = libc::PTRACE_O_TRACEEXEC | libc::PTRACE_O_EXITKILL;
+    if unsafe { ptrace(libc::PTRACE_SETOPTIONS, pid, opts as usize) } != 0 {
+        kill(pid);
+        return Err(unavailable());
+    }
+    let mut deliver = 0;
+    let mut execs = 0;
+    loop {
+        unsafe {
+            ptrace(libc::PTRACE_CONT, pid, deliver as usize);
+        }
+        deliver = 0;
+        let status = wait(pid)?;
+        if !libc::WIFSTOPPED(status) {
+            return Ok(Traced::Done(status));
+        }
+        let sig = libc::WSTOPSIG(status);
+        if sig != libc::SIGTRAP || status >> 16 != libc::PTRACE_EVENT_EXEC {
+            if execs == 0 && sig == libc::SIGSTOP {
+                continue; // our own stop, before the exec
+            }
+            deliver = sig; // a signal for the launcher: let it have it
+            continue;
+        }
+        execs += 1;
+        if execs == 1 {
+            continue; // the launcher itself starting
+        }
+        let exe = fs::read_link(format!("/proc/{}/exe", pid))?;
+        let name = basename(exe.as_os_str().as_bytes());
+        if name.starts_with(b"python") {
+            let launch = read_launch(pid, &exe, !quiet);
+            match launch {
+                Some(launch) => {
+                    kill(pid);
+                    return Ok(Traced::Python(launch));
+                }
+                None if quiet => {
+                    kill(pid);
+                    return Err(io::Error::new(io::ErrorKind::Other, "unreadable launch"));
+                }
+                None => return Ok(detach(pid)),
+            }
+        }
+        if !is_shell(name) {
+            if quiet {
+                kill(pid);
+                return Err(io::Error::new(io::ErrorKind::Other, "execs no Python interpreter"));
+            }
+            return Ok(detach(pid));
+        }
+    }
+}
+
+fn detach(pid: i32) -> Traced {
+    unsafe {
+        ptrace(libc::PTRACE_DETACH, pid, 0);
+    }
+    Traced::Native(pid)
+}
+
+fn split0(data: Vec<u8>) -> Vec<Vec<u8>> {
+    let mut items: Vec<Vec<u8>> = data.split(|b| *b == 0).map(|s| s.to_vec()).collect();
+    if items.last().map_or(false, |l| l.is_empty()) {
+        items.pop();
+    }
+    items
+}
+
+/// The stopped process's command line, environment, umask and ignored
+/// signals. With `ours`, None unless it has our cwd and fds 0-2, which a
+/// request passes from us.
+fn read_launch(pid: i32, exe: &Path, ours: bool) -> Option<Launch> {
+    let proc = format!("/proc/{}", pid);
+    let argv = split0(fs::read(format!("{}/cmdline", proc)).ok()?);
+    let env = split0(fs::read(format!("{}/environ", proc)).ok()?);
+    // The program as the launcher named it, searched on its PATH if bare:
+    // a venv's python is found by that name, not by its resolved file.
+    let named = argv.first()?.clone();
+    let program = if named.contains(&b'/') {
+        named
+    } else {
+        let path = env.iter().find(|e| e.starts_with(b"PATH=")).map(|e| e[5..].to_vec())?;
+        path.split(|b| *b == b':').filter(|d| !d.is_empty()).find_map(|d| {
+            let mut cand = d.to_vec();
+            cand.push(b'/');
+            cand.extend_from_slice(&named);
+            fs::canonicalize(OsStr::from_bytes(&cand)).ok().filter(|r| r == exe).map(|_| cand)
+        })?
+    };
+    if fs::canonicalize(OsStr::from_bytes(&program)).ok()? != exe {
+        return None;
+    }
+    let status = fs::read_to_string(format!("{}/status", proc)).ok()?;
+    let field = |key: &str| {
+        status.lines().find_map(|l| l.strip_prefix(key)).map(|v| v.trim().to_string())
+    };
+    let umask = u32::from_str_radix(&field("Umask:")?, 8).ok()?;
+    // Bit n-1 for signal n. A Python launcher leaves SIGPIPE and SIGXFSZ
+    // ignored, as CPython does anyway.
+    let ignored = u64::from_str_radix(&field("SigIgn:")?, 16).ok()? << 1;
+    if ours {
+        if fs::read_link(format!("{}/cwd", proc)).ok()? != std::env::current_dir().ok()? {
+            return None;
+        }
+        for fd in 0..3 {
+            let theirs = fs::metadata(format!("{}/fd/{}", proc, fd)).ok()?;
+            let mine = unsafe {
+                let mut st: libc::stat = mem::zeroed();
+                if libc::fstat(fd, &mut st) != 0 {
+                    return None;
+                }
+                st
+            };
+            if theirs.dev() != mine.st_dev as u64 || theirs.ino() != mine.st_ino as u64 {
+                return None;
+            }
+        }
+    }
+    Some(Launch { exe: program, argv, env, umask, ignored })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn launcher(text: &str) -> bool {
+        // Tests run in parallel: a file of its own for each call.
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("sr-launcher-{}-{}", std::process::id(), n));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tool");
+        File::create(&path).unwrap().write_all(text.as_bytes()).unwrap();
+        let found = looks_like_launcher(path.as_os_str().as_bytes());
+        fs::remove_dir_all(&dir).unwrap();
+        found
+    }
+
+    #[test]
+    fn shell_launchers() {
+        assert!(launcher("#!/bin/sh\nX=1\nexport X\nexec \"$PY\" lib/tool.py \"$@\"\n"));
+        assert!(launcher("#!/usr/bin/env bash\nexec python3 -m tool \"$@\"   \n# end\n\n"));
+        assert!(!launcher("#!/bin/sh\nexec python3 tool.py \"$@\"\necho done\n"));
+        assert!(!launcher("#!/bin/sh\npython3 -m tool \"$@\"\n"));
+    }
+
+    #[test]
+    fn python_launchers() {
+        assert!(launcher("#!/usr/bin/python3\nimport os, sys\nos.execl(sys.executable, sys.executable, '-m', 'tool', *sys.argv[1:])\n"));
+        assert!(!launcher("#!/usr/bin/python3\nimport os\nif True:\n    os.execv('/bin/true', ['true'])\n"));
+        assert!(!launcher("#!/usr/bin/python3\nimport tool\ntool.main()\n"));
+        assert!(!launcher("#!/usr/bin/ruby\nexec 'python3'\n"));
+    }
+}
