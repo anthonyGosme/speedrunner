@@ -1,0 +1,28 @@
+none     composer --version                       median   25.7 ms ±  2.0  RSS 27 MB
+         check: 23 lines from 23 children, 1 per native run
+opcache  composer --version                       median   13.5 ms ±  2.1  RSS 30 MB
+         check: 24 lines from 24 children, 1 per native run
+none     composer show                            median   81.5 ms ±  5.6  RSS 27 MB
+         check: 2576 lines from 23 children, 112 per native run
+opcache  composer show                            median   41.6 ms ±  3.0  RSS 30 MB
+         check: 2688 lines from 24 children, 112 per native run
+none     artisan --version                        median   87.6 ms ± 10.3  RSS 27 MB
+         check: 23 lines from 23 children, 1 per native run
+opcache  artisan --version                        median   19.5 ms ±  1.9  RSS 30 MB
+         check: 24 lines from 24 children, 1 per native run
+none     artisan list                             median   98.0 ms ±  8.2  RSS 27 MB
+         check: 3703 lines from 23 children, 161 per native run
+opcache  artisan list                             median   25.5 ms ±  2.8  RSS 30 MB
+         check: 3864 lines from 24 children, 161 per native run
+none     phpcs --version                          median    5.4 ms ±  0.4  RSS 27 MB
+         check: 23 lines from 23 children, 1 per native run
+opcache  phpcs --version                          median    4.4 ms ±  0.5  RSS 30 MB
+         check: 24 lines from 24 children, 1 per native run
+none     phpcs --standard=PSR12 /tmp/tmp.493zXaua4p/Greeter.php median   25.0 ms ±  1.6  RSS 27 MB
+         check: 0 lines from 23 children, 0 per native run
+opcache  phpcs --standard=PSR12 /tmp/tmp.493zXaua4p/Greeter.php median    9.5 ms ±  0.6  RSS 30 MB
+         check: 0 lines from 24 children, 0 per native run
+none     phpunit --version                        median    6.8 ms ±  0.7  RSS 27 MB
+         check: 46 lines from 23 children, 2 per native run
+opcache  phpunit --version                        median    2.7 ms ±  0.2  RSS 30 MB
+         check: 48 lines from 24 children, 2 per native run

@@ -1,0 +1,1 @@
+ready pid=2323747 preload_ms=218 modules=659 levels=1,2,3 learned=263 blacklisted=0 memo=6 gen=0

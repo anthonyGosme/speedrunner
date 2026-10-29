@@ -1,0 +1,71 @@
+Benchmark 1: composer --version
+  Time (mean ± σ):      52.9 ms ±   3.8 ms    [User: 32.5 ms, System: 21.3 ms]
+  Range (min … max):    47.5 ms …  63.9 ms    20 runs
+ 
+Benchmark 2: env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run composer -- --version
+  Time (mean ± σ):      20.1 ms ±   6.1 ms    [User: 1.1 ms, System: 0.6 ms]
+  Range (min … max):    15.2 ms …  36.9 ms    20 runs
+ 
+Benchmark 3: composer show
+  Time (mean ± σ):     106.9 ms ±   6.5 ms    [User: 68.8 ms, System: 39.8 ms]
+  Range (min … max):    97.3 ms … 123.8 ms    20 runs
+ 
+Benchmark 4: env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run composer -- show
+  Time (mean ± σ):      52.1 ms ±   3.5 ms    [User: 1.2 ms, System: 0.5 ms]
+  Range (min … max):    47.1 ms …  59.2 ms    20 runs
+ 
+Benchmark 5: php artisan --version
+  Time (mean ± σ):     111.1 ms ±   5.8 ms    [User: 71.6 ms, System: 38.1 ms]
+  Range (min … max):   101.0 ms … 128.6 ms    20 runs
+ 
+Benchmark 6: env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run php -- artisan --version
+  Time (mean ± σ):      29.5 ms ±   3.6 ms    [User: 1.4 ms, System: 0.5 ms]
+  Range (min … max):    26.4 ms …  42.0 ms    20 runs
+ 
+Benchmark 7: php artisan list
+  Time (mean ± σ):     122.8 ms ±   6.9 ms    [User: 85.4 ms, System: 35.6 ms]
+  Range (min … max):   112.5 ms … 134.1 ms    20 runs
+ 
+Benchmark 8: env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run php -- artisan list
+  Time (mean ± σ):      33.6 ms ±   4.0 ms    [User: 1.3 ms, System: 0.5 ms]
+  Range (min … max):    29.1 ms …  42.3 ms    20 runs
+ 
+Benchmark 9: phpcs --version
+  Time (mean ± σ):      25.4 ms ±   1.5 ms    [User: 14.4 ms, System: 10.7 ms]
+  Range (min … max):    22.9 ms …  28.5 ms    20 runs
+ 
+Benchmark 10: env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run phpcs -- --version
+  Time (mean ± σ):       8.8 ms ±   0.3 ms    [User: 1.1 ms, System: 0.4 ms]
+  Range (min … max):     8.2 ms …   9.3 ms    20 runs
+ 
+Benchmark 11: phpcs --standard=PSR12 /tmp/tmp.jJny85gxY4/Greeter.php
+  Time (mean ± σ):      44.7 ms ±   2.3 ms    [User: 31.2 ms, System: 13.0 ms]
+  Range (min … max):    41.4 ms …  49.4 ms    20 runs
+ 
+Benchmark 12: env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run phpcs -- --standard=PSR12 /tmp/tmp.jJny85gxY4/Greeter.php
+  Time (mean ± σ):      15.9 ms ±   1.3 ms    [User: 1.1 ms, System: 0.6 ms]
+  Range (min … max):    13.8 ms …  18.2 ms    20 runs
+ 
+Benchmark 13: phpunit --version
+  Time (mean ± σ):      24.9 ms ±   1.5 ms    [User: 11.1 ms, System: 13.3 ms]
+  Range (min … max):    22.5 ms …  26.8 ms    20 runs
+ 
+Benchmark 14: env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run phpunit -- --version
+  Time (mean ± σ):       6.9 ms ±   0.3 ms    [User: 0.9 ms, System: 0.5 ms]
+  Range (min … max):     6.2 ms …   7.6 ms    20 runs
+ 
+Summary
+  'env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run phpunit -- --version' ran
+    1.28 ± 0.08 times faster than 'env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run phpcs -- --version'
+    2.31 ± 0.22 times faster than 'env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run phpcs -- --standard=PSR12 /tmp/tmp.jJny85gxY4/Greeter.php'
+    2.92 ± 0.90 times faster than 'env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run composer -- --version'
+    3.62 ± 0.28 times faster than 'phpunit --version'
+    3.70 ± 0.28 times faster than 'phpcs --version'
+    4.29 ± 0.56 times faster than 'env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run php -- artisan --version'
+    4.89 ± 0.63 times faster than 'env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run php -- artisan list'
+    6.51 ± 0.46 times faster than 'phpcs --standard=PSR12 /tmp/tmp.jJny85gxY4/Greeter.php'
+    7.58 ± 0.63 times faster than 'env SPEEDRUNNER_REQUIRE_FAST=1 /root/speedrunner/repo/client/target/release/speedrunner run composer -- show'
+    7.70 ± 0.67 times faster than 'composer --version'
+   15.55 ± 1.21 times faster than 'composer show'
+   16.17 ± 1.16 times faster than 'php artisan --version'
+   17.87 ± 1.34 times faster than 'php artisan list'

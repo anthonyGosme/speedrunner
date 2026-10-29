@@ -1,0 +1,13 @@
+# bench/phase_client.py, N=40, aws --version, levels 1,2,3 after learning. before = 0ae3f21 (stage 3), repo = module files watched by inotify
+== before
+connect..R  median    1.8 ms
+G..X        median   36.1 ms
+== repo
+connect..R  median    1.8 ms
+G..X        median   32.4 ms
+== before
+connect..R  median    1.8 ms
+G..X        median   30.6 ms
+== repo
+connect..R  median    1.6 ms
+G..X        median   33.5 ms

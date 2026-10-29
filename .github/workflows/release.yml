@@ -1,0 +1,68 @@
+# On a version tag (v0.1.0): static Linux binaries for x86_64 and aarch64,
+# their SHA-256 sums and install.sh, published as the GitHub release that
+# `curl -fsSL .../install.sh | sh` downloads from.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm  # native: no cross linker needed
+    runs-on: ${{ matrix.runner }}
+    env:
+      TARGET: ${{ matrix.arch }}-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag is the crate's version
+        run: test "${GITHUB_REF_NAME#v}" = "$(sed -n 's/^version = "\(.*\)"/\1/p' client/Cargo.toml)"
+      - name: Toolchain
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+          rustup target add "$TARGET"
+      - name: Build
+        run: cargo build --release --locked --manifest-path client/Cargo.toml --target "$TARGET"
+      - name: Static, and runs
+        run: |
+          bin=client/target/$TARGET/release/speedrunner
+          file "$bin"
+          if ldd "$bin" 2>/dev/null | grep -q '=>'; then echo "not static"; exit 1; fi
+          "$bin" --version
+          "$bin" init zsh > /dev/null
+      - name: Package
+        run: |
+          name=speedrunner-$TARGET
+          mkdir "$name"
+          cp "client/target/$TARGET/release/speedrunner" LICENSE-MIT LICENSE-APACHE README.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.arch }}
+          path: speedrunner-*.tar.gz*
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp install.sh dist/
+          gh release create "$GITHUB_REF_NAME" dist/* --title "speedrunner $GITHUB_REF_NAME" --generate-notes

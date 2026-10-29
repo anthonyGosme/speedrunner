@@ -1,0 +1,61 @@
+Benchmark 1: ruby --disable-gems -e 0
+  Time (mean ± σ):       6.7 ms ±   0.3 ms    [User: 3.1 ms, System: 3.4 ms]
+  Range (min … max):     6.2 ms …   7.2 ms    20 runs
+ 
+Benchmark 2: ruby -e 0
+  Time (mean ± σ):      40.0 ms ±   5.1 ms    [User: 28.9 ms, System: 10.0 ms]
+  Range (min … max):    32.7 ms …  50.1 ms    20 runs
+ 
+Benchmark 3: /root/headstart/gems-rb/bin/rubocop --version
+  Time (mean ± σ):     420.7 ms ±  27.4 ms    [User: 359.0 ms, System: 57.9 ms]
+  Range (min … max):   382.3 ms … 500.9 ms    20 runs
+ 
+Benchmark 4: ruby -e 'require "rubocop"'
+  Time (mean ± σ):     355.0 ms ±  25.3 ms    [User: 295.0 ms, System: 57.4 ms]
+  Range (min … max):   305.3 ms … 399.0 ms    20 runs
+ 
+Benchmark 5: /root/headstart/gems-rb/bin/rubocop --cache false /tmp/tmp.x7gG3Uxv7H/sample.rb
+  Time (mean ± σ):     736.9 ms ±  27.5 ms    [User: 635.3 ms, System: 96.6 ms]
+  Range (min … max):   698.5 ms … 805.1 ms    20 runs
+ 
+Benchmark 6: ruby -e 'require "rubocop"'
+  Time (mean ± σ):     352.9 ms ±  23.9 ms    [User: 288.3 ms, System: 58.3 ms]
+  Range (min … max):   317.3 ms … 390.1 ms    20 runs
+ 
+Benchmark 7: /root/headstart/gems-rb/bin/rake --version
+  Time (mean ± σ):      78.6 ms ±   4.5 ms    [User: 62.8 ms, System: 15.4 ms]
+  Range (min … max):    71.1 ms …  88.4 ms    20 runs
+ 
+Benchmark 8: ruby -e 'require "rake"'
+  Time (mean ± σ):      62.8 ms ±   6.2 ms    [User: 47.8 ms, System: 14.2 ms]
+  Range (min … max):    55.1 ms …  78.9 ms    20 runs
+ 
+Benchmark 9: /root/headstart/gems-rb/bin/bundle --version
+  Time (mean ± σ):      96.1 ms ±   6.5 ms    [User: 78.7 ms, System: 16.9 ms]
+  Range (min … max):    85.8 ms … 106.8 ms    20 runs
+ 
+Benchmark 10: ruby -e 'require "bundler"'
+  Time (mean ± σ):      71.8 ms ±   6.5 ms    [User: 54.5 ms, System: 16.9 ms]
+  Range (min … max):    64.2 ms …  93.4 ms    20 runs
+ 
+Benchmark 11: /usr/bin/gem --version
+  Time (mean ± σ):      57.0 ms ±   3.5 ms    [User: 44.6 ms, System: 11.3 ms]
+  Range (min … max):    52.2 ms …  66.3 ms    20 runs
+ 
+Benchmark 12: ruby -e 'require "rubygems"'
+  Time (mean ± σ):      36.8 ms ±   2.7 ms    [User: 27.3 ms, System: 9.1 ms]
+  Range (min … max):    33.4 ms …  45.2 ms    20 runs
+ 
+Summary
+  'ruby --disable-gems -e 0' ran
+    5.53 ± 0.46 times faster than 'ruby -e 'require "rubygems"''
+    6.02 ± 0.80 times faster than 'ruby -e 0'
+    8.57 ± 0.62 times faster than '/usr/bin/gem --version'
+    9.45 ± 1.01 times faster than 'ruby -e 'require "rake"''
+   10.79 ± 1.06 times faster than 'ruby -e 'require "bundler"''
+   11.82 ± 0.83 times faster than '/root/headstart/gems-rb/bin/rake --version'
+   14.45 ± 1.14 times faster than '/root/headstart/gems-rb/bin/bundle --version'
+   53.07 ± 4.17 times faster than 'ruby -e 'require "rubocop"''
+   53.38 ± 4.35 times faster than 'ruby -e 'require "rubocop"''
+   63.26 ± 4.82 times faster than '/root/headstart/gems-rb/bin/rubocop --version'
+  110.80 ± 6.04 times faster than '/root/headstart/gems-rb/bin/rubocop --cache false /tmp/tmp.x7gG3Uxv7H/sample.rb'

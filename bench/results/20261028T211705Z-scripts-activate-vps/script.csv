@@ -1,0 +1,10 @@
+scenario,round,native_ms,srr_ms,explicit_ms,auto_ms
+seq_version,1,11571,2277,2324,2378
+par_version,1,7330,2407,2376,2412
+seq_skeleton,1,6409,1720,1782,1985
+seq_version,2,11153,2333,2180,2250
+par_version,2,7365,2471,2558,2450
+seq_skeleton,2,6585,1696,1659,1910
+seq_version,3,10623,2594,3658,2377
+par_version,3,7979,2455,2413,2602
+seq_skeleton,3,6712,1868,1887,2098

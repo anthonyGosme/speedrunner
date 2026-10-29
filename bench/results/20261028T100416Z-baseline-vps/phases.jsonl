@@ -1,0 +1,90 @@
+{"args": ["--version"], "rc": 0, "import_s": 0.10620354861021042, "create_driver_s": 0.058251162990927696, "run_s": 0.016346918419003487}
+{"args": ["--version"], "rc": 0, "import_s": 0.09920043870806694, "create_driver_s": 0.0503876619040966, "run_s": 0.016391560435295105}
+{"args": ["--version"], "rc": 0, "import_s": 0.09851628728210926, "create_driver_s": 0.04791366122663021, "run_s": 0.015249738469719887}
+{"args": ["--version"], "rc": 0, "import_s": 0.09702753089368343, "create_driver_s": 0.04768287390470505, "run_s": 0.01494537852704525}
+{"args": ["--version"], "rc": 0, "import_s": 0.09985427744686604, "create_driver_s": 0.04891280457377434, "run_s": 0.017049692571163177}
+{"args": ["--version"], "rc": 0, "import_s": 0.09933024644851685, "create_driver_s": 0.0546684879809618, "run_s": 0.015779737383127213}
+{"args": ["--version"], "rc": 0, "import_s": 0.09883998334407806, "create_driver_s": 0.049275634810328484, "run_s": 0.01637299172580242}
+{"args": ["--version"], "rc": 0, "import_s": 0.10913985595107079, "create_driver_s": 0.04731886275112629, "run_s": 0.015428904443979263}
+{"args": ["--version"], "rc": 0, "import_s": 0.1066824458539486, "create_driver_s": 0.04812491126358509, "run_s": 0.015827422961592674}
+{"args": ["--version"], "rc": 0, "import_s": 0.10086515732109547, "create_driver_s": 0.048146480694413185, "run_s": 0.015474217012524605}
+{"args": ["--version"], "rc": 0, "import_s": 0.09789319336414337, "create_driver_s": 0.048343339934945107, "run_s": 0.015204846858978271}
+{"args": ["--version"], "rc": 0, "import_s": 0.11227373406291008, "create_driver_s": 0.061061348766088486, "run_s": 0.01509186066687107}
+{"args": ["--version"], "rc": 0, "import_s": 0.09473763406276703, "create_driver_s": 0.051554273813962936, "run_s": 0.01523144356906414}
+{"args": ["--version"], "rc": 0, "import_s": 0.10719496197998524, "create_driver_s": 0.0577164888381958, "run_s": 0.016406547278165817}
+{"args": ["--version"], "rc": 0, "import_s": 0.10127263888716698, "create_driver_s": 0.051368068903684616, "run_s": 0.01583055779337883}
+{"args": ["--version"], "rc": 0, "import_s": 0.11049870401620865, "create_driver_s": 0.049412209540605545, "run_s": 0.015313476324081421}
+{"args": ["--version"], "rc": 0, "import_s": 0.09815841540694237, "create_driver_s": 0.049150651320815086, "run_s": 0.015131205320358276}
+{"args": ["--version"], "rc": 0, "import_s": 0.0937418919056654, "create_driver_s": 0.0548335462808609, "run_s": 0.015668252483010292}
+{"args": ["--version"], "rc": 0, "import_s": 0.1036579068750143, "create_driver_s": 0.05241164565086365, "run_s": 0.016603218391537666}
+{"args": ["--version"], "rc": 0, "import_s": 0.10235744901001453, "create_driver_s": 0.05034659616649151, "run_s": 0.01517682895064354}
+{"args": ["--version"], "rc": 0, "import_s": 0.09957296214997768, "create_driver_s": 0.04816090874373913, "run_s": 0.014681078493595123}
+{"args": ["--version"], "rc": 0, "import_s": 0.10706530325114727, "create_driver_s": 0.0510048009455204, "run_s": 0.015442533418536186}
+{"args": ["--version"], "rc": 0, "import_s": 0.11318173259496689, "create_driver_s": 0.04955906234681606, "run_s": 0.015467947348952293}
+{"args": ["--version"], "rc": 0, "import_s": 0.09948080405592918, "create_driver_s": 0.0551325473934412, "run_s": 0.015036113560199738}
+{"args": ["--version"], "rc": 0, "import_s": 0.09216456487774849, "create_driver_s": 0.0433806162327528, "run_s": 0.014207595959305763}
+{"args": ["--version"], "rc": 0, "import_s": 0.11923499591648579, "create_driver_s": 0.05157202109694481, "run_s": 0.015538252890110016}
+{"args": ["--version"], "rc": 0, "import_s": 0.09638816304504871, "create_driver_s": 0.04841453768312931, "run_s": 0.014551518484950066}
+{"args": ["--version"], "rc": 0, "import_s": 0.09492441080510616, "create_driver_s": 0.04643898271024227, "run_s": 0.014623576775193214}
+{"args": ["--version"], "rc": 0, "import_s": 0.11422647908329964, "create_driver_s": 0.05431998893618584, "run_s": 0.015832580626010895}
+{"args": ["--version"], "rc": 0, "import_s": 0.10842822678387165, "create_driver_s": 0.05802837759256363, "run_s": 0.01628969796001911}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10566088184714317, "create_driver_s": 0.054306549951434135, "run_s": 0.020155703648924828}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11006320640444756, "create_driver_s": 0.05874867923557758, "run_s": 0.02395177260041237}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.12117205001413822, "create_driver_s": 0.05466572381556034, "run_s": 0.01907454803586006}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11257643066346645, "create_driver_s": 0.052752574905753136, "run_s": 0.020311295986175537}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11420504003763199, "create_driver_s": 0.060707392171025276, "run_s": 0.022105233743786812}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11349397338926792, "create_driver_s": 0.056868623942136765, "run_s": 0.019760901108384132}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.124540189281106, "create_driver_s": 0.06387864239513874, "run_s": 0.021769242361187935}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11593594029545784, "create_driver_s": 0.07679123617708683, "run_s": 0.026501068845391273}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.12377702072262764, "create_driver_s": 0.07110202498733997, "run_s": 0.020895300433039665}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11623564176261425, "create_driver_s": 0.05511314980685711, "run_s": 0.019649246707558632}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.1167970634996891, "create_driver_s": 0.054032664746046066, "run_s": 0.020154152065515518}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10735597275197506, "create_driver_s": 0.05267721973359585, "run_s": 0.01993110589683056}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.1061206441372633, "create_driver_s": 0.0518800038844347, "run_s": 0.020107638090848923}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11816023848950863, "create_driver_s": 0.06299351528286934, "run_s": 0.02638503909111023}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.1100564356893301, "create_driver_s": 0.054952530190348625, "run_s": 0.019603753462433815}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10858671367168427, "create_driver_s": 0.04849909618496895, "run_s": 0.020183240994811058}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.09899414516985416, "create_driver_s": 0.0477630440145731, "run_s": 0.01966402679681778}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10441308654844761, "create_driver_s": 0.060419125482439995, "run_s": 0.025335757061839104}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.12584587559103966, "create_driver_s": 0.05592015013098717, "run_s": 0.022102288901805878}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10971168242394924, "create_driver_s": 0.05485629662871361, "run_s": 0.019672948867082596}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10152657702565193, "create_driver_s": 0.04732000455260277, "run_s": 0.019739381968975067}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10827021114528179, "create_driver_s": 0.06019742973148823, "run_s": 0.02048729918897152}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11573673598468304, "create_driver_s": 0.05944994278252125, "run_s": 0.020230796188116074}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.09444277733564377, "create_driver_s": 0.0472512599080801, "run_s": 0.01945299655199051}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.09899728000164032, "create_driver_s": 0.05364937707781792, "run_s": 0.019173134118318558}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10394304990768433, "create_driver_s": 0.0520413052290678, "run_s": 0.01913207583129406}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11083701066672802, "create_driver_s": 0.05101027712225914, "run_s": 0.019498219713568687}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11417124234139919, "create_driver_s": 0.05689006298780441, "run_s": 0.019263427704572678}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.10880212113261223, "create_driver_s": 0.05240040086209774, "run_s": 0.019872603937983513}
+{"args": ["configure", "list"], "rc": 0, "import_s": 0.11172692477703094, "create_driver_s": 0.05696272291243076, "run_s": 0.022116078063845634}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10909321159124374, "create_driver_s": 0.057943521067500114, "run_s": 0.09495523199439049}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10116207599639893, "create_driver_s": 0.049485551193356514, "run_s": 0.09096196107566357}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.11582730151712894, "create_driver_s": 0.04993562027812004, "run_s": 0.08768117986619473}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10004228726029396, "create_driver_s": 0.05320299230515957, "run_s": 0.08457113429903984}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.11033387668430805, "create_driver_s": 0.049132635816931725, "run_s": 0.0849604494869709}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09663045592606068, "create_driver_s": 0.04726047068834305, "run_s": 0.08312198333442211}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09833646006882191, "create_driver_s": 0.050583431497216225, "run_s": 0.1043890230357647}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10208074003458023, "create_driver_s": 0.04911741614341736, "run_s": 0.0837911106646061}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10454953275620937, "create_driver_s": 0.05340237729251385, "run_s": 0.08594151958823204}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.0973625835031271, "create_driver_s": 0.04699511639773846, "run_s": 0.09058587439358234}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09537133388221264, "create_driver_s": 0.046577801927924156, "run_s": 0.08392787165939808}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09519213624298573, "create_driver_s": 0.04669303260743618, "run_s": 0.08562314137816429}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09631391242146492, "create_driver_s": 0.049538563936948776, "run_s": 0.08988713286817074}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09775195643305779, "create_driver_s": 0.055984657257795334, "run_s": 0.08838044293224812}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09443147107958794, "create_driver_s": 0.047864532098174095, "run_s": 0.0848183948546648}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09805236011743546, "create_driver_s": 0.05110390856862068, "run_s": 0.09146102517843246}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10108925774693489, "create_driver_s": 0.05097576044499874, "run_s": 0.09020735509693623}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10483713075518608, "create_driver_s": 0.0515192374587059, "run_s": 0.09363257326185703}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10183827765285969, "create_driver_s": 0.04739999398589134, "run_s": 0.08683791011571884}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09532084502279758, "create_driver_s": 0.045937854796648026, "run_s": 0.08183497004210949}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.0925915502011776, "create_driver_s": 0.04436833597719669, "run_s": 0.08051438815891743}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09516768530011177, "create_driver_s": 0.045574063435196877, "run_s": 0.08328776061534882}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.10158590786159039, "create_driver_s": 0.0473696943372488, "run_s": 0.0874568298459053}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.0944732092320919, "create_driver_s": 0.04621650651097298, "run_s": 0.09001963585615158}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09282080829143524, "create_driver_s": 0.04755895212292671, "run_s": 0.08519287966191769}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.11707926169037819, "create_driver_s": 0.04546518437564373, "run_s": 0.08465558104217052}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09706070646643639, "create_driver_s": 0.04645107872784138, "run_s": 0.08427244424819946}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09751217812299728, "create_driver_s": 0.047141507267951965, "run_s": 0.08332020416855812}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.09620657190680504, "create_driver_s": 0.04667920432984829, "run_s": 0.08331276290118694}
+{"args": ["ec2", "run-instances", "--generate-cli-skeleton"], "rc": 0, "import_s": 0.1035630889236927, "create_driver_s": 0.0624666903167963, "run_s": 0.08511283062398434}

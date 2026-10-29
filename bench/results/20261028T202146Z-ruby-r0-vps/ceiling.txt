@@ -1,0 +1,15 @@
+none     rubocop --version                        median  393.4 ms ± 20.4  codes=[0]  RSS 13 MB
+lib      rubocop --version                        median   87.0 ms ±  7.0  codes=[0]  RSS 38 MB
+learned  rubocop --version                        median   87.1 ms ±  7.7  codes=[0]  RSS 38 MB
+none     rubocop --cache false /tmp/tmp.x7gG3Uxv7H/sample.rb median  699.2 ms ± 61.2  codes=[0]  RSS 13 MB
+lib      rubocop --cache false /tmp/tmp.x7gG3Uxv7H/sample.rb median  397.1 ms ± 17.8  codes=[0]  RSS 38 MB
+learned  rubocop --cache false /tmp/tmp.x7gG3Uxv7H/sample.rb median  151.6 ms ± 12.9  codes=[0]  RSS 52 MB
+none     rake --version                           median   28.1 ms ±  0.9  codes=[0]  RSS 14 MB
+lib      rake --version                           median    3.6 ms ±  0.2  codes=[0]  RSS 16 MB
+learned  rake --version                           median    3.5 ms ±  0.1  codes=[0]  RSS 16 MB
+none     bundle --version                         median   56.6 ms ±  5.2  codes=[0]  RSS 13 MB
+lib      bundle --version                         median   22.2 ms ±  1.2  codes=[0]  RSS 17 MB
+learned  bundle --version                         median    3.9 ms ±  0.2  codes=[0]  RSS 20 MB
+none     gem --version                            median   20.3 ms ±  1.4  codes=[0]  RSS 13 MB
+lib      gem --version                            median   19.9 ms ±  1.2  codes=[0]  RSS 13 MB
+learned  gem --version                            median    2.9 ms ±  0.1  codes=[0]  RSS 16 MB

@@ -1,0 +1,51 @@
+Benchmark 1: /root/headstart/gems-rb/bin/rubocop --version
+  Time (mean ± σ):     442.8 ms ±  35.9 ms    [User: 375.9 ms, System: 62.1 ms]
+  Range (min … max):   395.0 ms … 537.4 ms    20 runs
+ 
+Benchmark 2: /root/headstart/repo/client/target/release/headstart run rubocop -- --version
+  Time (mean ± σ):     355.6 ms ±  17.2 ms    [User: 0.8 ms, System: 0.3 ms]
+  Range (min … max):   322.2 ms … 392.0 ms    20 runs
+ 
+Benchmark 3: /root/headstart/gems-rb/bin/rubocop --cache false /tmp/tmp.1EE0qrCPQG/sample.rb
+  Time (mean ± σ):     726.4 ms ±  46.2 ms    [User: 630.7 ms, System: 90.8 ms]
+  Range (min … max):   666.7 ms … 836.0 ms    20 runs
+ 
+Benchmark 4: /root/headstart/repo/client/target/release/headstart run rubocop -- --cache false /tmp/tmp.1EE0qrCPQG/sample.rb
+  Time (mean ± σ):     667.2 ms ±  28.2 ms    [User: 0.8 ms, System: 0.3 ms]
+  Range (min … max):   622.1 ms … 760.8 ms    20 runs
+ 
+Benchmark 5: /root/headstart/gems-rb/bin/rake --version
+  Time (mean ± σ):      74.2 ms ±   3.0 ms    [User: 59.8 ms, System: 13.3 ms]
+  Range (min … max):    69.8 ms …  81.0 ms    20 runs
+ 
+Benchmark 6: /root/headstart/repo/client/target/release/headstart run rake -- --version
+  Time (mean ± σ):       6.9 ms ±   2.6 ms    [User: 0.6 ms, System: 0.2 ms]
+  Range (min … max):     5.2 ms …  17.3 ms    20 runs
+ 
+Benchmark 7: /root/headstart/gems-rb/bin/bundle --version
+  Time (mean ± σ):      88.2 ms ±   3.9 ms    [User: 69.6 ms, System: 18.1 ms]
+  Range (min … max):    83.2 ms …  99.7 ms    20 runs
+ 
+Benchmark 8: /root/headstart/repo/client/target/release/headstart run bundle -- --version
+  Time (mean ± σ):      21.1 ms ±   1.5 ms    [User: 0.8 ms, System: 0.3 ms]
+  Range (min … max):    19.5 ms …  25.1 ms    20 runs
+ 
+Benchmark 9: /usr/bin/gem --version
+  Time (mean ± σ):      56.3 ms ±   1.7 ms    [User: 41.5 ms, System: 14.3 ms]
+  Range (min … max):    53.6 ms …  59.1 ms    20 runs
+ 
+Benchmark 10: /root/headstart/repo/client/target/release/headstart run gem -- --version
+  Time (mean ± σ):      16.7 ms ±   0.8 ms    [User: 0.7 ms, System: 0.2 ms]
+  Range (min … max):    14.8 ms …  18.1 ms    20 runs
+ 
+Summary
+  '/root/headstart/repo/client/target/release/headstart run rake -- --version' ran
+    2.42 ± 0.90 times faster than '/root/headstart/repo/client/target/release/headstart run gem -- --version'
+    3.05 ± 1.15 times faster than '/root/headstart/repo/client/target/release/headstart run bundle -- --version'
+    8.13 ± 3.01 times faster than '/usr/bin/gem --version'
+   10.71 ± 3.98 times faster than '/root/headstart/gems-rb/bin/rake --version'
+   12.73 ± 4.73 times faster than '/root/headstart/gems-rb/bin/bundle --version'
+   51.34 ± 19.11 times faster than '/root/headstart/repo/client/target/release/headstart run rubocop -- --version'
+   63.93 ± 24.16 times faster than '/root/headstart/gems-rb/bin/rubocop --version'
+   96.33 ± 35.79 times faster than '/root/headstart/repo/client/target/release/headstart run rubocop -- --cache false /tmp/tmp.1EE0qrCPQG/sample.rb'
+  104.87 ± 39.28 times faster than '/root/headstart/gems-rb/bin/rubocop --cache false /tmp/tmp.1EE0qrCPQG/sample.rb'

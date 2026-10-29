@@ -1,0 +1,9 @@
+# bench/phase_client.py, N=20, warm daemon with the early exit, stdio on /dev/null
+== --version
+connect..R  median    2.1 ms
+G..X        median   78.7 ms
+X..W        median   43.1 ms
+== configure list
+connect..R  median    2.4 ms
+G..X        median   87.6 ms
+X..W        median   47.1 ms

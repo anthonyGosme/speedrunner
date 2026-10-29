@@ -1,0 +1,15 @@
+{
+  "level": "learned",
+  "runs": 20,
+  "rss_boot_mb": 13.37890625,
+  "learned_features": 53,
+  "failed": [
+
+  ],
+  "rss_preloaded_mb": 15.50390625,
+  "median_s": 0.0028894320130348206,
+  "stdev_s": 0.00012490559754777536,
+  "codes": [
+    0
+  ]
+}

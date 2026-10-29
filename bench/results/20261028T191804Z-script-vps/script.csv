@@ -1,0 +1,10 @@
+scenario,round,native_ms,headstart_ms
+seq_version,1,12072,2140
+par_version,1,7530,2615
+seq_skeleton,1,6631,1795
+seq_version,2,11307,2309
+par_version,2,8152,2631
+seq_skeleton,2,6639,1878
+seq_version,3,12595,2470
+par_version,3,7790,2420
+seq_skeleton,3,6296,1802

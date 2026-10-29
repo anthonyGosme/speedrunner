@@ -1,0 +1,10 @@
+{
+    "level": "opcache",
+    "runs": 20,
+    "rss_boot_mb": 29.53515625,
+    "opcache": true,
+    "learned_files": 591,
+    "rss_preloaded_mb": 30.1640625,
+    "median_s": 0.019480822,
+    "stdev_s": 0.001941092154052658
+}

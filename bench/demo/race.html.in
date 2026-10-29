@@ -1,0 +1,307 @@
+<title>Pre-flight Race</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: a short intro, two real terminals side by side (stacked on a phone) replaying in real time, then the script and where the time goes. */
+  :root {
+    --bg: #f3f4f1; --fg: #1d211c; --muted: #5f675d; --line: #d6dad2; --panel: #ffffff;
+    --accent: #c77700; --accent-ink: #ffffff;
+    /* The terminals keep one dark look in both themes. */
+    --term: #101310; --term-fg: #d4dbd1; --term-edge: #2a302a;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #171a17; --fg: #e6ebe3; --muted: #9aa496; --line: #2f352e; --panel: #1f231f;
+      --accent: #ffb238; --accent-ink: #1a1405; --term: #0b0d0b; --term-edge: #2f352e; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #171a17; --fg: #e6ebe3; --muted: #9aa496; --line: #2f352e; --panel: #1f231f;
+    --accent: #ffb238; --accent-ink: #1a1405; --term: #0b0d0b; --term-edge: #2f352e; color-scheme: dark;
+  }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 28px 40px;
+  }
+  .wrap { max-width: 1400px; margin: 0 auto; display: grid; gap: 22px; }
+  header { display: grid; gap: 6px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  h1 { margin: 0; font-size: clamp(22px, 3.2vw, 32px); font-weight: 600; line-height: 1.2; text-wrap: balance; }
+  h1 em { font-style: normal; color: var(--accent); }
+  h2 { margin: 0; font-size: 18px; font-weight: 600; }
+  .lede { margin: 0; color: var(--muted); max-width: 75ch; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel); }
+  .seg button { font: 500 14px var(--sans); color: var(--fg); background: transparent; border: 0; padding: 8px 14px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  .play { font: 600 14px var(--sans); background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 8px;
+    padding: 9px 18px; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .note { font-size: 13px; color: var(--muted); margin: 0; max-width: 90ch; }
+  .race { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 900px) { .race { grid-template-columns: 1fr; } }
+  .pane { min-width: 0; display: grid; gap: 8px; }
+  .pane-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .who { font-weight: 600; }
+  .clock { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 600; }
+  .pane.fast .clock { color: var(--accent); }
+  .done { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .pane.fast .done.on { border-color: var(--accent); color: var(--accent); }
+  .term { background: var(--term); color: var(--term-fg); border: 1px solid var(--term-edge); border-radius: 10px;
+    padding: 10px 12px; overflow: hidden; font-family: var(--mono); line-height: 1.25; white-space: pre; }
+  .term .cmd { color: #8b968a; }
+  .cur { background: var(--term-fg); color: var(--term); }
+  .b { font-weight: 600; } .d { opacity: .62; } .u { text-decoration: underline; } .i { font-style: italic; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; min-width: 0; }
+  .two { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+  pre.src { margin: 0; font-family: var(--mono); font-size: 12.5px; line-height: 1.45; overflow-x: auto; }
+  pre.src .c { color: var(--muted); }
+  pre.src .k { color: var(--accent); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 500; }
+  td.n, th.n { text-align: right; }
+  td code { font-family: var(--mono); font-size: 13px; }
+  .tablebox { overflow-x: auto; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">speedrunner · demo</div>
+    <h1 id="headline">nightly.sh</h1>
+    <p class="lede">A plain bash script runs the nightly checks of a small shop: Python, Ruby and PHP services, then a release to S3, HTTP and Ansible. Left, the script as is. Right, the same script started with <code>speedrunner exec</code>. Both are real recordings, replayed in real time.</p>
+  </header>
+
+  <div class="controls">
+    <div class="seg" role="group" aria-label="speedrunner daemons">
+      <button id="m-cold" type="button" aria-pressed="true">Daemons stopped at start</button>
+      <button id="m-warm" type="button" aria-pressed="false">Daemons already running</button>
+    </div>
+    <button class="play" id="play" type="button">▶ Start the race</button>
+  </div>
+
+  <div class="race">
+    <section class="pane">
+      <div class="pane-head"><span class="who">$ ./nightly.sh</span><span class="done" id="done-native">finished</span><span class="clock" id="clock-native">0.0 s</span></div>
+      <div class="term" id="term-native"></div>
+    </section>
+    <section class="pane fast">
+      <div class="pane-head"><span class="who">$ speedrunner exec ./nightly.sh</span><span class="done" id="done-fast">finished</span><span class="clock" id="clock-fast">0.0 s</span></div>
+      <div class="term" id="term-fast"></div>
+    </section>
+  </div>
+  <p class="note" id="mode-note"></p>
+
+  <div class="two">
+    <section class="box">
+      <h2>The script</h2>
+      <pre class="src" id="src"></pre>
+    </section>
+    <section class="box">
+      <h2>Where the time goes</h2>
+      <div class="tablebox">
+        <table>
+          <thead><tr><th>Tool</th><th class="n">Calls</th><th class="n">Native</th><th class="n">Cold</th><th class="n">Warm</th></tr></thead>
+          <tbody id="tools"></tbody>
+          <tfoot id="total"></tfoot>
+        </table>
+      </div>
+      <p class="note">Time from each command's prompt to the next, summed per tool. Every output is identical to the native run: exit codes, text and colours; only Ansible's host order varies, natively too, as it runs hosts in parallel.</p>
+    </section>
+  </div>
+  <p class="note">Recorded on a 2-vCPU Debian 12 VPS (Python 3.11, Ruby 3.1, PHP 8.2), 80×32 terminal. S3 is a local moto server, so the uploads are real but need no AWS account. "Stopped at start": the daemons start during the run, with what earlier runs taught them; "already running": a second run.</p>
+</div>
+
+<script>
+const DATA = /*DATA*/null;
+const $ = (id) => document.getElementById(id);
+const COLS = DATA.width, ROWS = DATA.height;
+
+// The 16 ANSI colours, then xterm's 256-colour cube and greys.
+const ANSI = ["#1c1f1c", "#ef6b6b", "#7ccf6b", "#e7c45e", "#6aa9ff", "#d38bf0", "#5fcfd6", "#d4dbd1",
+              "#6b7569", "#ff8f8f", "#9fe68e", "#ffd97a", "#8fc0ff", "#e4a9ff", "#86e3e8", "#ffffff"];
+function color(n) {
+  if (n < 16) return ANSI[n];
+  if (n < 232) { n -= 16; const v = (x) => (x ? x * 40 + 55 : 0);
+    return `rgb(${v(Math.floor(n / 36))},${v(Math.floor(n / 6) % 6)},${v(n % 6)})`; }
+  const g = 8 + (n - 232) * 10; return `rgb(${g},${g},${g})`;
+}
+
+// A small terminal: the escapes these recordings use (SGR colours, \r, wrap).
+class Term {
+  constructor() { this.reset(); }
+  reset() { this.lines = [[]]; this.row = 0; this.col = 0; this.st = {}; this.key = ""; this.pending = ""; }
+  setKey() { const s = this.st; this.key = [s.fg ?? "", s.bg ?? "", s.b ? 1 : "", s.d ? 1 : "", s.u ? 1 : "", s.i ? 1 : ""].join("|"); }
+  sgr(params) {
+    const p = params === "" ? [0] : params.split(";").map((x) => (x === "" ? 0 : +x));
+    const s = this.st;
+    for (let k = 0; k < p.length; k++) {
+      const n = p[k];
+      if (n === 0) { this.st = {}; continue; }
+      if (n === 1) s.b = true; else if (n === 2) s.d = true; else if (n === 22) s.b = s.d = false;
+      else if (n === 3) s.i = true; else if (n === 23) s.i = false;
+      else if (n === 4) s.u = true; else if (n === 24) s.u = false;
+      else if (n >= 30 && n <= 37) s.fg = n - 30; else if (n === 39) delete s.fg;
+      else if (n >= 40 && n <= 47) s.bg = n - 40; else if (n === 49) delete s.bg;
+      else if (n >= 90 && n <= 97) s.fg = n - 82; else if (n >= 100 && n <= 107) s.bg = n - 92;
+      else if ((n === 38 || n === 48) && p[k + 1] === 5) { s[n === 38 ? "fg" : "bg"] = p[k + 2]; k += 2; }
+      else if ((n === 38 || n === 48) && p[k + 1] === 2) {
+        s[n === 38 ? "fg" : "bg"] = `rgb(${p[k + 2]},${p[k + 3]},${p[k + 4]})`; k += 4; }
+    }
+    this.st = this.st === s ? s : this.st;
+    this.setKey();
+  }
+  line() { return this.lines[this.row] || (this.lines[this.row] = []); }
+  write(text) {
+    const s = Array.from(this.pending + text);
+    this.pending = "";
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "\x1b") {
+        if (i + 1 >= s.length) { this.pending = s.slice(i).join(""); return; }
+        if (s[i + 1] === "[") {
+          let j = i + 2;
+          while (j < s.length && !/[@-~]/.test(s[j])) j++;
+          if (j >= s.length) { this.pending = s.slice(i).join(""); return; }
+          const params = s.slice(i + 2, j).join(""), fin = s[j];
+          if (fin === "m") this.sgr(params);
+          else if (fin === "K") this.line().length = Math.min(this.line().length, this.col);
+          else if (fin === "G") this.col = Math.max(0, (+params || 1) - 1);
+          else if (fin === "C") this.col += +params || 1;
+          else if (fin === "D") this.col = Math.max(0, this.col - (+params || 1));
+          i = j; continue;
+        }
+        if (s[i + 1] === "(" || s[i + 1] === ")") { if (i + 2 >= s.length) { this.pending = s.slice(i).join(""); return; } i += 2; continue; }
+        i += 1; continue;
+      }
+      if (ch === "\r") { this.col = 0; continue; }
+      if (ch === "\n") { this.row++; this.line(); continue; }
+      if (ch === "\b") { this.col = Math.max(0, this.col - 1); continue; }
+      if (ch < " ") continue;
+      if (this.col >= COLS) { this.row++; this.col = 0; }
+      const ln = this.line();
+      while (ln.length < this.col) ln.push([" ", ""]);
+      ln[this.col++] = [ch, this.key];
+    }
+  }
+  html(cursor) {
+    const first = Math.max(0, this.lines.length - ROWS);
+    let out = "";
+    for (let r = first; r < first + ROWS; r++) {
+      const ln = this.lines[r] || [];
+      let cur = null, buf = "";
+      const flush = () => { if (buf) out += cur ? span(cur, buf) : esc(buf); buf = ""; };
+      for (let c = 0; c < ln.length; c++) {
+        if (cursor && r === this.row && c === this.col) { flush(); out += `<span class="cur">${esc(ln[c][0])}</span>`; continue; }
+        if (ln[c][1] !== cur) { flush(); cur = ln[c][1]; }
+        buf += ln[c][0];
+      }
+      flush();
+      if (cursor && r === this.row && this.col >= ln.length) out += " ".repeat(this.col - ln.length) + '<span class="cur"> </span>';
+      out += "\n";
+    }
+    return out;
+  }
+}
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function span(key, text) {
+  const [fg, bg, b, d, u, i] = key.split("|");
+  const cls = [b && "b", d && "d", u && "u", i && "i"].filter(Boolean).join(" ");
+  let style = "";
+  if (fg !== "") style += `color:${isNaN(fg) ? fg : color(+fg)};`;
+  if (bg !== "") style += `background:${isNaN(bg) ? bg : color(+bg)};`;
+  return `<span${cls ? ` class="${cls}"` : ""}${style ? ` style="${style}"` : ""}>${esc(text)}</span>`;
+}
+
+const panes = {
+  native: { term: new Term(), el: $("term-native"), clock: $("clock-native"), done: $("done-native") },
+  fast: { term: new Term(), el: $("term-fast"), clock: $("clock-fast"), done: $("done-fast") },
+};
+let mode = "cold", raf = 0;
+
+function castFor(side) { return side === "native" ? DATA.native : DATA[mode]; }
+
+function seek(t) {
+  for (const [side, p] of Object.entries(panes)) {
+    const cast = castFor(side);
+    if (p.cast !== cast || t < p.t) { p.term.reset(); p.cast = cast; p.i = 0; }
+    const before = p.i;
+    while (p.i < cast.events.length && cast.events[p.i][0] <= t) p.term.write(cast.events[p.i++][1]);
+    const running = t < cast.duration;
+    if (p.i !== before || p.running !== running || p.t === undefined) p.el.innerHTML = p.term.html(running);
+    p.t = t; p.running = running;
+    p.clock.textContent = Math.min(t, cast.duration).toFixed(1) + " s";
+    p.done.textContent = running ? "running" : "finished";
+    p.done.classList.toggle("on", !running);
+  }
+}
+
+function fit() {
+  for (const p of Object.values(panes)) {
+    const w = p.el.clientWidth - 26;
+    const size = Math.max(5, Math.min(14, w / (COLS * 0.6)));
+    p.el.style.fontSize = size + "px";
+    p.el.style.height = `calc(${ROWS} * 1.25em + 22px)`;
+  }
+}
+
+function setMode(m) {
+  mode = m;
+  cancelAnimationFrame(raf);
+  $("m-cold").setAttribute("aria-pressed", String(m === "cold"));
+  $("m-warm").setAttribute("aria-pressed", String(m === "warm"));
+  const n = DATA.native.duration, f = DATA[m].duration;
+  $("headline").innerHTML = `nightly.sh: <em>${n.toFixed(1)} s</em> natively, <em>${f.toFixed(1)} s</em> with speedrunner (x${(n / f).toFixed(1)})`;
+  $("mode-note").textContent = m === "cold"
+    ? "The daemons are stopped when the script starts: speedrunner starts one per tool the script calls more than once, while the first commands run."
+    : "The daemons are still running from the previous run, as for the next nightly, or in an interactive session.";
+  $("play").textContent = "▶ Start the race";
+  seek(Infinity);
+}
+
+function play() {
+  cancelAnimationFrame(raf);
+  const t0 = performance.now();
+  for (const p of Object.values(panes)) p.t = Infinity;  // restart from the top
+  $("play").textContent = "↻ Restart";
+  const tick = () => {
+    const t = (performance.now() - t0) / 1000;
+    seek(t);
+    if (t < DATA.native.duration) raf = requestAnimationFrame(tick);
+    else $("play").textContent = "▶ Replay";
+  };
+  tick();
+}
+
+function source() {
+  const lines = DATA.script.split("\n").map((l) => {
+    if (/^\s*#/.test(l)) return `<span class="c">${esc(l)}</span>`;
+    return esc(l).replace(/\b(for|in|do|done)\b/g, '<span class="k">$1</span>');
+  });
+  $("src").innerHTML = lines.join("\n");
+}
+
+function tools() {
+  const rows = DATA.tools;
+  const fmt = (x) => x.toFixed(1) + " s";
+  $("tools").innerHTML = rows.map((r) =>
+    `<tr><td><code>${esc(r.tool)}</code></td><td class="n">${r.calls}</td><td class="n">${fmt(r.native)}</td>` +
+    `<td class="n">${fmt(r.cold)}</td><td class="n"><strong>${fmt(r.warm)}</strong></td></tr>`).join("");
+  $("total").innerHTML = `<tr><td><strong>Whole script</strong></td><td class="n">${rows.reduce((a, r) => a + r.calls, 0)}</td>` +
+    `<td class="n"><strong>${fmt(DATA.native.duration)}</strong></td><td class="n"><strong>${fmt(DATA.cold.duration)}</strong></td>` +
+    `<td class="n"><strong>${fmt(DATA.warm.duration)}</strong></td></tr>`;
+}
+
+$("m-cold").addEventListener("click", () => setMode("cold"));
+$("m-warm").addEventListener("click", () => setMode("warm"));
+$("play").addEventListener("click", play);
+window.addEventListener("resize", fit);
+fit();
+source();
+tools();
+setMode("cold");
+</script>

@@ -1,0 +1,84 @@
+date: 2026-10-28T10:04:16Z
+git: be91c41+wip
+runs: 30
+--- uname
+Linux my-vps 6.1.0-50-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.176-1 (2026-07-02) x86_64 GNU/Linux
+--- os-release
+PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"
+NAME="Debian GNU/Linux"
+VERSION_ID="12"
+VERSION="12 (bookworm)"
+VERSION_CODENAME=bookworm
+ID=debian
+HOME_URL="https://www.debian.org/"
+SUPPORT_URL="https://www.debian.org/support"
+BUG_REPORT_URL="https://bugs.debian.org/"
+--- lscpu
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           40 bits physical, 48 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  2
+On-line CPU(s) list:                     0,1
+Vendor ID:                               AuthenticAMD
+BIOS Vendor ID:                          QEMU
+Model name:                              AMD EPYC-Milan Processor
+BIOS Model name:                         pc-i440fx-6.1  CPU @ 2.0GHz
+BIOS CPU family:                         1
+CPU family:                              25
+Model:                                   1
+Thread(s) per core:                      2
+Core(s) per socket:                      1
+Socket(s):                               1
+Stepping:                                1
+BogoMIPS:                                3999.99
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm rep_good nopl cpuid extd_apicid tsc_known_freq pni pclmulqdq ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand hypervisor lahf_lm cmp_legacy svm cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw topoext perfctr_core invpcid_single ssbd ibrs ibpb stibp vmmcall fsgsbase bmi1 avx2 smep bmi2 invpcid rdseed adx smap clflushopt clwb sha_ni xsaveopt xsavec xgetbv1 xsaves clzero xsaveerptr wbnoinvd arat npt nrip_save umip pku ospke vaes vpclmulqdq rdpid
+Virtualization:                          AMD-V
+Hypervisor vendor:                       KVM
+Virtualization type:                     full
+L1d cache:                               32 KiB (1 instance)
+L1i cache:                               32 KiB (1 instance)
+L2 cache:                                512 KiB (1 instance)
+L3 cache:                                32 MiB (1 instance)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0,1
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Mitigation; safe RET
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Retpolines; IBPB conditional; IBRS_FW; STIBP always-on; RSB filling; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Vulnerable: Clear CPU buffers attempted, no microcode
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Not affected
+--- memory
+               total        used        free      shared  buff/cache   available
+Mem:           1.8Gi       1.3Gi       101Mi        17Mi       590Mi       497Mi
+Swap:          3.0Gi       2.1Gi       905Mi
+--- loadavg
+0.69 0.52 0.30 1/1321 755456
+--- python
+Python 3.11.2 (main, Oct  7 2026, 12:35:07) [GCC 12.2.0]
+--- aws
+aws-cli/1.46.2 Python/3.11.2 Linux/6.1.0-50-amd64 botocore/1.43.62
+--- hyperfine
+hyperfine 1.15.0
+--- pip freeze
+awscli==1.46.2
+colorama==0.4.6
+docutils==0.19
+jmespath==1.1.0
+pyasn1==0.6.5
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+rsa==4.7.2
+six==1.17.0
+urllib3==2.8.0

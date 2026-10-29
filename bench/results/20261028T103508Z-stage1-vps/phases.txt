@@ -1,0 +1,12 @@
+== aws --version
+connect..R  median    2.2 ms
+G..X        median   75.3 ms
+X..W        median   56.9 ms
+== aws configure list
+connect..R  median    2.3 ms
+G..X        median   83.1 ms
+X..W        median   53.4 ms
+== aws ec2 run-instances --generate-cli-skeleton
+connect..R  median    2.2 ms
+G..X        median  157.9 ms
+X..W        median   79.7 ms

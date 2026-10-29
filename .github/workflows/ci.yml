@@ -1,0 +1,22 @@
+# The client's unit tests, then the five regression suites in the
+# Debian image of docker/, as they run on the dev VPS.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo test --locked --manifest-path client/Cargo.toml
+
+  suites:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t speedrunner-dev docker
+      - run: docker run --rm -t -v "$PWD:/src" speedrunner-dev tests

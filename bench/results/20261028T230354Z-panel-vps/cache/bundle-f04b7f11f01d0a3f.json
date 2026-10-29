@@ -1,0 +1,28 @@
+{
+  "modules": [
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/cli.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/cli/common.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/cli/install.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/feature_flag.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/settings.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/shared_helpers.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/cli/config.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/cli/doctor.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/cli/plugin.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/vendor/thor/lib/thor/shell/color.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/vendor/thor/lib/thor/shell/basic.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/vendor/thor/lib/thor/shell/column_printer.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/vendor/thor/lib/thor/shell/terminal.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/vendor/thor/lib/thor/shell/table_printer.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/vendor/thor/lib/thor/shell/wrapped_printer.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/self_manager.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/ui.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/ui/shell.rb",
+    "/root/headstart/gems-rb/gems/bundler-2.6.9/lib/bundler/ui/rg_proxy.rb"
+  ],
+  "gems": [
+
+  ],
+  "blacklist": {
+  }
+}

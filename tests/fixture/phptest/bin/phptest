@@ -1,0 +1,7 @@
+#!/usr/bin/env php
+<?php
+// phptest: one subcommand per behaviour the regression matrix compares.
+require __DIR__ . '/../src/autoload.php';
+$phptest_top = true;
+
+exit(Phptest\Cli::main($argv));

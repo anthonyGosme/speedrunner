@@ -1,0 +1,9 @@
+# bench/phase_client.py, N=30, stdio on /dev/null. before = fork on demand (567836a), repo = prefork spare + gc.freeze
+== before --version
+connect..R  median    2.2 ms
+G..X        median   84.4 ms
+X..W        median   46.3 ms
+== repo --version
+connect..R  median    0.8 ms
+G..X        median   79.4 ms
+X..W        median   23.0 ms

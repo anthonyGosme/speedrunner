@@ -1,0 +1,5 @@
+#!/usr/bin/env php
+<?php
+// Options read with getopt(), as psalm does.
+var_export(getopt('v', ['flag:', 'version']));
+echo PHP_EOL;

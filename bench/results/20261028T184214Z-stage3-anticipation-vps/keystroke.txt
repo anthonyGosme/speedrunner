@@ -1,0 +1,6 @@
+baseline: empty function, same loop                10.01 µs/keystroke
+first word not complete: 'aw'                      11.71 µs/keystroke
+another command: 'ls -la /tmp/some/dir'            21.97 µs/keystroke
+assignments, another command                       30.72 µs/keystroke
+line already warmed (long line)                    11.90 µs/keystroke
+enrolled tool, fires the background prewarm       506.56 µs/keystroke

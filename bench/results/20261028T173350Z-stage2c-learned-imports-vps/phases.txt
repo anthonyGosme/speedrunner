@@ -1,0 +1,9 @@
+# bench/phase_client.py, N=30, HEADSTART_PRELOAD=1,2 after learning from one --version run, stdio on /dev/null
+== level 2: --version
+connect..R  median    1.6 ms
+G..X        median   33.6 ms
+X..W        median   20.6 ms
+== level 2: ec2 run-instances --generate-cli-skeleton
+connect..R  median    1.5 ms
+G..X        median   96.2 ms
+X..W        median   30.1 ms

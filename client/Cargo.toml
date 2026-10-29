@@ -1,0 +1,17 @@
+[package]
+name = "speedrunner"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.63"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Newer libc releases need rustc 1.65; Debian 12 ships 1.63.
+libc = "=0.2.175"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

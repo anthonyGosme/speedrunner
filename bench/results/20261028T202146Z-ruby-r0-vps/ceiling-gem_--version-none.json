@@ -1,0 +1,11 @@
+{
+  "level": "none",
+  "runs": 20,
+  "rss_boot_mb": 13.4375,
+  "rss_preloaded_mb": 13.4921875,
+  "median_s": 0.02034081146121025,
+  "stdev_s": 0.00139425198914225,
+  "codes": [
+    0
+  ]
+}

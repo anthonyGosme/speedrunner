@@ -1,0 +1,4 @@
+#!/usr/bin/env ruby
+require "rbtest/cli"
+
+exit(Rbtest::CLI.main(ARGV))

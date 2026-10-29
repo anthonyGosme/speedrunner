@@ -1,0 +1,23 @@
+ansible                                                      modules=  619 pss=  43.8 MB fork=2.59 ms failed=0
+ansible-doc                                                  modules=  608 pss=  43.4 MB fork=2.43 ms failed=0
+black                                                        modules=  249 pss=  21.8 MB fork=1.76 ms failed=0
+poetry                                                       modules=  861 pss=  48.0 MB fork=3.20 ms failed=0
+http                                                         modules=  500 pss=  35.5 MB fork=2.19 ms failed=0
+pre-commit                                                   modules=  294 pss=  21.2 MB fork=1.51 ms failed=0
+mypy                                                         modules=  311 pss=  36.2 MB fork=1.67 ms failed=0
+pytest                                                       modules=  357 pss=  26.9 MB fork=1.75 ms failed=0
+flake8                                                       modules=  222 pss=  16.1 MB fork=1.42 ms failed=0
+yamllint                                                     modules=  217 pss=  13.8 MB fork=1.37 ms failed=0
+pip                                                          modules=  589 pss=  34.7 MB fork=2.16 ms failed=10
+ansible+ansible-doc+black+poetry+http+pre-commit+mypy+pytest modules= 2204 pss= 131.1 MB fork=6.79 ms failed=10
+sum of the 11 daemons: 341.4 MB; one daemon: 131.1 MB
+  failed: pip:pip._vendor.packaging._elffile: ModuleNotFoundError
+  failed: pip:pip._vendor.packaging._parser: ModuleNotFoundError
+  failed: pip:pip._vendor.packaging._tokenizer: ModuleNotFoundError
+  failed: pip:pip._vendor.rich._fileno: ModuleNotFoundError
+  failed: pip:pip._vendor.platformdirs._xdg: ModuleNotFoundError
+  failed: pip:pip._vendor.pygments.styles._mapping: ModuleNotFoundError
+  failed: pip:pip._internal.utils.retry: ModuleNotFoundError
+  failed: pip:pip._internal.models.release_control: ModuleNotFoundError
+  failed: pip:pip._internal.cli.index_command: ModuleNotFoundError
+  failed: pip:pip._vendor.packaging.direct_url: ModuleNotFoundError

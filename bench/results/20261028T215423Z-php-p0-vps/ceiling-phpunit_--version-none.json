@@ -1,0 +1,9 @@
+{
+    "level": "none",
+    "runs": 20,
+    "rss_boot_mb": 26.72265625,
+    "opcache": false,
+    "rss_preloaded_mb": 26.72265625,
+    "median_s": 0.006765118,
+    "stdev_s": 0.0007086591169884353
+}

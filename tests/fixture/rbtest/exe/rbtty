@@ -1,0 +1,3 @@
+#!/usr/bin/env ruby
+require "rbtest/tty_frozen"
+puts "frozen #{RbtestTty::FROZEN.inspect} live #{[$stdin.tty?, $stdout.tty?, $stderr.tty?].inspect}"
