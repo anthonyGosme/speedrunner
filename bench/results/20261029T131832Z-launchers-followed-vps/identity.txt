@@ -1,0 +1,10 @@
+az version: same output, rc=0
+az vm create --help: same output, rc=0
+az group list: same output, rc=1
+gcloud --version: same output, rc=0
+gcloud config list: same output, rc=0
+gcloud compute instances create --help: same output, rc=0
+django --version: same output, rc=0
+django check: same output, rc=0
+django help: same output, rc=0
+django showmigrations: same output, rc=0

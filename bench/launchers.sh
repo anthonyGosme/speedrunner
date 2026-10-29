@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
-# Step-0 bench for CLIs that start Python through a launcher: az (its pip
+# Bench for CLIs that start Python through a launcher: az (its pip
 # launcher execs `python -m azure.cli`), gcloud (a shell script that execs
-# `python -S lib/gcloud.py`) and Django's `./manage.py`.
+# python on lib/gcloud.py) and Django's `./manage.py`.
 #
-# speedrunner does not follow those launchers yet, so the fast path runs a
-# stand-in that does what the launcher execs: bench/launchers/az-sr, and a
-# copy of gcloud.py with a shebang. The env the launcher would set is set
-# for both sides, native and fast. Each command runs twice through
+# Both sides run the real command: natively, and through speedrunner, which
+# follows the launcher to what it execs. Each command runs twice through
 # speedrunner first, so that the daemon has learned its lazy imports.
 #
 # Usage: bench/launchers.sh <speedrunner binary> [out_dir]
-# Env:   RUNS (default 10), AZ_VENV, DJANGO_VENV, DJANGO_PROJECT, GCLOUD_ROOT;
-#        GCLOUD_PYTHONPATH=1 adds gcloud's lib dirs to PYTHONPATH on both
-#        sides, to estimate the gain once learned imports see the sys.path
-#        entries gcloud.py adds itself.
+# Env:   RUNS (default 10), AZ_VENV, DJANGO_VENV, DJANGO_PROJECT, GCLOUD_ROOT
 set -euo pipefail
 
 hs=${1:?usage: launchers.sh <speedrunner> [out_dir]}
@@ -24,16 +19,14 @@ az_venv=${AZ_VENV:-/root/speedrunner/venv-az}
 dj_venv=${DJANGO_VENV:-/root/speedrunner/venv-django}
 dj_project=${DJANGO_PROJECT:-/root/speedrunner/django/shop}
 groot=${GCLOUD_ROOT:-/usr/lib/google-cloud-sdk}
-gpy=$groot/platform/bundledpythonunix/bin/python3
 
 scratch=$(mktemp -d)
 export XDG_RUNTIME_DIR=$scratch/run XDG_CACHE_HOME=$scratch/cache
 mkdir -m 0700 "$XDG_RUNTIME_DIR"
 unset SPEEDRUNNER_REQUIRE_FAST
-gcloud_sr=$groot/lib/.gcloud-sr
 cleanup() {
-  for t in az-sr .gcloud-sr manage.py; do "$hs" stop "$t" > /dev/null 2>&1 || true; done
-  rm -f "$gcloud_sr"
+  for t in az gcloud; do PATH=$az_venv/bin:$groot/bin:$PATH "$hs" stop "$t" > /dev/null 2>&1 || true; done
+  (cd "$dj_project" && PATH=$dj_venv/bin:$PATH "$hs" stop ./manage.py > /dev/null 2>&1) || true
   rm -rf "$scratch"
 }
 trap cleanup EXIT
@@ -49,7 +42,6 @@ mkdir -p "$out"
   free -m
   "$az_venv/bin/python" -VV
   "$az_venv/bin/az" version
-  "$gpy" -VV
   "$groot/bin/gcloud" --version
   "$dj_venv/bin/python" -m django --version
   hyperfine --version
@@ -100,25 +92,14 @@ bench_tool() {
   "$hs" stop "$fast" > /dev/null 2>&1 || true
 }
 
-# az: what bin/az sets before its exec.
 (
-  export PATH=$bench_dir/launchers:$az_venv/bin:$base_path AZ_INSTALLER=PIP
-  export PYTHONPATH=$az_venv/bin/src
-  bench_tool az az-sr az "version" "vm create --help" "group list"
+  export PATH=$az_venv/bin:$base_path
+  bench_tool az az az "version" "vm create --help" "group list"
 )
 
-# gcloud: what bin/gcloud exports before its exec.
-{ echo "#!$gpy -S"; cat "$groot/lib/gcloud.py"; } > "$gcloud_sr"
-chmod 755 "$gcloud_sr"
 (
-  export PATH=$groot/lib:$groot/bin:$base_path
-  export CLOUDSDK_ROOT_DIR=$groot CLOUDSDK_PYTHON=$gpy CLOUDSDK_PYTHON_ARGS=-S \
-    CLOUDSDK_GSUTIL_PYTHON=$gpy CLOUDSDK_BQ_PYTHON=$gpy CLOUDSDK_ENCODING=UTF-8 \
-    PYTHONIOENCODING=UTF-8
-  if [ "${GCLOUD_PYTHONPATH:-}" = 1 ]; then
-    export PYTHONPATH=$groot/lib/third_party:$groot/lib
-  fi
-  bench_tool gcloud .gcloud-sr gcloud "--version" "config list" "compute instances create --help"
+  export PATH=$groot/bin:$base_path
+  bench_tool gcloud gcloud gcloud "--version" "config list" "compute instances create --help"
 )
 
 # Django: the project's manage.py, its venv first on PATH.
