@@ -98,7 +98,11 @@ class Outputs(m.Matrix):
                     rc, out, err = self.assertSame(["phptest", "exit", "throw"], env=env)
                     self.assertEqual(rc, 255)
                     shown = b"Next RuntimeException: phptest failure" in out + err
-                    self.assertEqual(shown, ini != "-dlog_errors=0")  # nothing shown at all then
+                    # Nothing shown at all then, unless errors are displayed
+                    # anyway (no php.ini: display_errors defaults to on).
+                    display = subprocess.run([php, "-r", "echo ini_get('display_errors');"],
+                                             capture_output=True).stdout not in (b"", b"0", b"Off")
+                    self.assertEqual(shown, ini != "-dlog_errors=0" or display)
                     self.assertNotIn(b"speedrunner", out + err)
                 finally:
                     if HS_BIN:

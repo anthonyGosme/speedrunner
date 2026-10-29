@@ -121,7 +121,8 @@ class AutoScripts(ScriptCase):
         p = self.auto("\ncommand -v hstest; command -v ls; command -v bash")
         hstest, ls, bash = p.stdout.decode().split()
         self.assertIn("/bin-auto-", hstest)
-        self.assertEqual((ls, bash), (shutil.which("ls"), shutil.which("bash")))
+        path = {**m.BASE_ENV, **self.env}["PATH"]  # Fedora has /usr/sbin first on its own
+        self.assertEqual((ls, bash), (shutil.which("ls", path=path), shutil.which("bash", path=path)))
 
     def test_matches_native_and_starts_the_daemon(self):
         self.assertEqual(self.native(), m.outcome(self.auto(BODY)))

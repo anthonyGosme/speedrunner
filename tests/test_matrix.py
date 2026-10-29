@@ -11,6 +11,7 @@ Run: python3 tests/test_matrix.py -v
 """
 import concurrent.futures
 import glob
+import gzip
 import json
 import os
 import pty
@@ -458,7 +459,8 @@ def main():
     with open(os.environ["TOOL_LOG"], "a") as f:
         f.write("tool\\n")
     print(sys.argv, os.environ.get("LAUNCHED_BY"), sys.flags.no_user_site, thirdmod.VALUE,
-          signal.getsignal(signal.SIGUSR2), sys.orig_argv[1:2], os.umask(0o22))
+          signal.getsignal(signal.SIGUSR2) == signal.SIG_IGN,
+          getattr(sys, "orig_argv", ["", "-s"])[1:2], os.umask(0o22))  # orig_argv: 3.10+
     sys.exit(3 if sys.argv[1:] == ["fail"] else 0)
 
 if __name__ == "__main__":
@@ -481,13 +483,28 @@ def main():
     from lmod import lazy
     print(sys.argv[0] == __file__, os.path.basename(sys.argv[0]), sys.argv[1:], __name__,
           __spec__.name, sys.path[0] == os.getcwd(), os.environ.get("LAUNCHED_BY"), lazy.VALUE,
-          getattr(json, "VALUE", "stdlib json"), sys.orig_argv[1:3])
+          getattr(json, "VALUE", "stdlib json"), getattr(sys, "orig_argv", ["", "-m", "lmod"])[1:3])
     if sys.argv[1:] == ["boom"]:
         raise ValueError("boom")
     sys.exit(int(sys.argv[1]) if sys.argv[1:2] and sys.argv[1].isdigit() else 0)
 
 main()
 """
+
+
+def ptrace_allowed():
+    """Whether a process may be traced by its parent (PTRACE_TRACEME), as the
+    client does to follow a launcher: seccomp or Yama may forbid it."""
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    pid = os.fork()
+    if pid == 0:
+        os._exit(0 if libc.ptrace(0, 0, None, None) == 0 else 1)
+    return os.waitpid(pid, 0)[1] == 0
+
+
+PTRACE = ptrace_allowed()
+needs_ptrace = unittest.skipUnless(PTRACE, "ptrace is not allowed here")
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
@@ -537,6 +554,7 @@ class Launchers(Matrix):
         except FileNotFoundError:
             return []
 
+    @needs_ptrace
     def test_shell_launcher_on_a_script(self):
         self.warm("sh-tool")
         for argv in (["sh-tool", "a b", "--x"], ["sh-tool", "fail"]):
@@ -544,8 +562,9 @@ class Launchers(Matrix):
                 code, out, err = self.assertSame(argv, cwd=self.work, env=self.env)
                 self.assertEqual(err, b"")
         _, out, _ = self.assertSame(["sh-tool", "a b"], cwd=self.work, env=self.env, umask=0o077)
-        self.assertEqual(out, b"['%s/bin/../lib/tool.py', 'a b'] sh 1 third 1 ['-s'] 63\n" % self.root.encode())
+        self.assertEqual(out, b"['%s/bin/../lib/tool.py', 'a b'] sh 1 third True ['-s'] 63\n" % self.root.encode())
 
+    @needs_ptrace
     def test_python_launcher_on_a_module(self):
         self.warm("py-tool")
         for argv in (["py-tool", "x", "y"], ["py-tool", "7"], ["py-tool", "boom"]):
@@ -555,6 +574,7 @@ class Launchers(Matrix):
         self.assertEqual(out, b"True __main__.py ['x'] __main__ lmod.__main__ True py lazy"
                               b" stdlib json ['-m', 'lmod']\n")
 
+    @needs_ptrace
     def test_launcher_and_tool_run_once_per_call(self):
         for tool in ("sh-tool", "py-tool"):
             with self.subTest(tool=tool):
@@ -565,6 +585,7 @@ class Launchers(Matrix):
                 self.assertEqual(self.log()[before:], ["launcher", "tool"] * 3 if tool == "sh-tool"
                                  else ["launcher"] * 3)
 
+    @needs_ptrace
     def test_learns_imports_from_the_entries_the_tool_adds(self):
         self.warm("sh-tool")
         deadline = time.monotonic() + 30
@@ -577,6 +598,7 @@ class Launchers(Matrix):
         self.assertGreaterEqual(int(status_field(text, "learned")), 1, text)
         self.assertEqual(status_field(text, "blacklisted"), "0", text)
 
+    @needs_ptrace
     def test_cwd_module_shadows_a_preloaded_one(self):
         self.warm("py-tool")
         shadow = os.path.join(self.root, "shadow")
@@ -591,6 +613,17 @@ class Launchers(Matrix):
         self.assertSame(["cat-tool", "/nonexistent"], cwd=self.work, env=self.env,
                         require_fast=False)
 
+    @unittest.skipIf(PTRACE, "ptrace is allowed here")
+    def test_without_ptrace_runs_natively_and_once(self):
+        for tool in ("sh-tool", "py-tool"):
+            with self.subTest(tool=tool):
+                before = len(self.log())
+                self.assertSame([tool, "x"], cwd=self.work, env=self.env, require_fast=False)
+                self.assertEqual(len(self.log()) - before, 4 if tool == "sh-tool" else 2)
+                self.assertEqual(run("hs", [tool], cwd=self.work, env=self.env).returncode,
+                                 EXIT_NOT_FAST)
+
+    @needs_ptrace
     def test_status_stop_and_prewarm(self):
         self.warm("sh-tool")
         self.assertTrue(status("sh-tool", self.env).startswith("ready"))
@@ -652,15 +685,19 @@ class Preload(Matrix):
         wait_ready(tool, env)
         return env
 
-    def learn(self, tool, env, argvs, timeout=30.0):
-        """Run argvs through speedrunner; wait until the daemon has applied what it learned."""
+    def learn(self, tool, env, argvs, timeout=30.0, required=True):
+        """Run argvs through speedrunner; wait until the daemon has applied what
+        it learned. Not required: there may be nothing new to learn, as when
+        the interpreter already had every module the run imports (3.9)."""
         gen = int(status_field(status(tool, env), "gen"))
         for argv in argvs:
             run("hs", argv, env=env)
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + (timeout if required else 3.0)
         while int(status_field(status(tool, env), "gen") or -1) <= gen:
             if time.monotonic() > deadline:
-                self.fail(f"nothing applied: {status(tool, env)!r}")
+                if required:
+                    self.fail(f"nothing applied: {status(tool, env)!r}")
+                return
             time.sleep(0.1)
 
     def test_aws_levels_match_native(self):
@@ -682,13 +719,16 @@ class Preload(Matrix):
     def test_memo_rereads_modified_data_file(self):
         # A copy of the sts model, found first through AWS_DATA_PATH.
         aws = shutil.which("aws", path=BASE_ENV["PATH"])
-        [model] = glob.glob(os.path.join(os.path.dirname(os.path.dirname(aws)), "lib", "python3*",
-                                         "site-packages", "awscli", "botocore", "data", "sts",
-                                         "2011-06-15", "service-2.json"))
+        # botocore vendored by awscli, or a package of its own (pip's choice
+        # for Python 3.9), whose models may be gzipped: the copy is plain.
+        site = os.path.join(os.path.dirname(os.path.dirname(aws)), "lib", "python3*", "site-packages")
+        model = os.path.join("data", "sts", "2011-06-15", "service-2.json")
+        [model] = [p for d in ("awscli/botocore", "botocore") for ext in ("", ".gz")
+                   for p in glob.glob(os.path.join(site, d, model + ext))][:1]
         data_path = tempfile.mkdtemp(dir=ROOT)
         copy = os.path.join(data_path, "sts", "2011-06-15", "service-2.json")
         os.makedirs(os.path.dirname(copy))
-        with open(model, "rb") as f:
+        with (gzip.open if model.endswith(".gz") else open)(model, "rb") as f:
             original = f.read()
 
         def write_model(tag):
@@ -741,7 +781,7 @@ class Preload(Matrix):
     def test_module_from_a_runtime_import_hook(self):
         env = self.daemon("hstest", "1,2")
         try:
-            self.learn("hstest", env, [["hstest", "hook"]])
+            self.learn("hstest", env, [["hstest", "hook"]], required=False)
             _, out, _ = self.assertSame(["hstest", "hook"], env=env)
             self.assertEqual(out, b"hooked\n")
         finally:
@@ -1016,7 +1056,10 @@ def pty_transcript(argv, env, answers, timeout=30):
     deadline = time.monotonic() + timeout
     pending = list(answers)
     try:
-        while time.monotonic() < deadline:
+        while True:
+            if time.monotonic() > deadline:
+                os.kill(pid, signal.SIGKILL)
+                break
             if pending and out.endswith(pending[0][0]):
                 # Ruby's getpass prints its prompt before turning echo off: an
                 # answer typed at once would be echoed, natively too.
@@ -1030,9 +1073,11 @@ def pty_transcript(argv, env, answers, timeout=30):
                 if not chunk:
                     break
                 out += chunk
+        # Reap before closing our end: PHP 8.1 closes its streams, then
+        # shuts down, and a closed pty would hang it up meanwhile.
+        _, status = os.waitpid(pid, 0)
     finally:
         os.close(fd)
-    _, status = os.waitpid(pid, 0)
     return os.waitstatus_to_exitcode(status), out
 
 

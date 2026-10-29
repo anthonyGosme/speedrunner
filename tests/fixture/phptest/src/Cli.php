@@ -64,7 +64,10 @@ final class Cli
                           'argc' => $_SERVER['argc'], 'env_keys_match' => array_keys(array_intersect_key($_SERVER, $env)) === array_keys($env),
                           'request_time_fresh' => abs($_SERVER['REQUEST_TIME'] - time()) <= 2,
                           'request_time_float_fresh' => abs($_SERVER['REQUEST_TIME_FLOAT'] - microtime(true)) < 2,
-                          'ENV' => $_ENV]), "\n";
+                          // Without a php.ini, variables_order fills $_ENV: the test
+                          // run's own SPEEDRUNNER_* variables are no part of it.
+                          'ENV' => array_filter($_ENV, fn ($k) => !str_starts_with($k, 'SPEEDRUNNER_'),
+                                                ARRAY_FILTER_USE_KEY)]), "\n";
         return null;
     }
 
