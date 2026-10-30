@@ -2,6 +2,13 @@
 import os
 import warnings
 
+# A key of the wrong type raises natively, and reads nothing (as some of
+# meson's imports do).
+try:
+    os.environ[b"HSTEST_BYTES_KEY"]
+except (KeyError, TypeError):
+    pass
+
 # An env var set at import time: the daemon must re-apply it in each child.
 os.environ.setdefault("HSTEST_IMPORTED", "1")
 

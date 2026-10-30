@@ -94,7 +94,7 @@ def cmd_frozen(args):
 
 def cmd_lazy(args):
     # Imported on first use only: what level 2 learns.
-    from hstest import lazy_plain, lazy_thread, lazy_print, lazy_env, lazy_argv  # noqa: F401
+    from hstest import lazy_plain, lazy_thread, lazy_print, lazy_env, lazy_argv, lazy_uses_argv  # noqa: F401
     print(lazy_plain.VALUE, lazy_env.VALUE, lazy_argv.VALUE)
 
 

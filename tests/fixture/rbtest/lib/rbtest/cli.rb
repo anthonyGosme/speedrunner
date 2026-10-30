@@ -160,7 +160,14 @@ module Rbtest
       require "rbtest/lazy_print"
       require_relative "lazy_env"
       require "rbtest/lazy_argv"
+      require "rbtest/lazy_uses_argv"
       p [Rbtest::LazyPlain::VALUE, Rbtest::LazyEnv::VALUE, Rbtest::LazyArgv::VALUE]
+    end
+
+    def cmd_reopen(_args)
+      require "rbtest/lazy_alias"
+      require "rbtest/lazy_reopen"
+      p Rbtest::Real.const_defined?(:REOPENED, false)
     end
 
     def cmd_frozen(_args)

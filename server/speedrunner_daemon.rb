@@ -38,6 +38,7 @@ module Speedrunner
   LOG = STDERR.dup
   CHILD = { conn: nil, files: nil, ctl: nil, learn: nil }
   PROBE_TIMEOUT_S = 30.0
+  PROBE_STEP_S = 0.25 # a probe hands back what is left after this long
 
   def self.log(msg)
     LOG.write("speedrunner[#{Process.pid}] #{msg}\n")
@@ -116,7 +117,7 @@ module Speedrunner
                   :import_output, :fingerprint_paths, :fingerprint, :fingerprint_set, :watch,
                   :preload_s, :bound_ino, :levels, :gem_binstub, :learned, :learned_gems,
                   :blacklist, :pending, :pending_gems, :gen, :cache_path, :restart, :tty,
-                  :import_tty_read
+                  :import_tty_read, :skip, :learning
 
     def initialize(tool, script, sock_path)
       @tool, @script, @sock_path = tool, script, sock_path
@@ -140,6 +141,8 @@ module Speedrunner
       @gen = 0           # bumped whenever the preloaded state changes
       @tty = nil             # TtyStandIn: the starting client's terminals, during loads
       @import_tty_read = {}  # fd -> whether a terminal, as load-time code found it
+      @skip = {}         # level 1: file -> why a fresh daemon must not load it
+      @learning = nil    # what apply_learned still has to vet, across its steps
     end
   end
 
@@ -371,7 +374,7 @@ module Speedrunner
     t0 = now
     begin
       EnvReads::ON[0] = true
-      skip = load_skip(state)
+      skip = state.skip = load_skip(state)
       TtyReads::SEEN.clear
       TtyReads::ON[0] = true
       state.import_output = capture_fds(state.tty) do
@@ -379,13 +382,19 @@ module Speedrunner
           names.each do |name|
             (name.is_a?(Proc) ? name.call : [name]).each do |req|
               next if skip.key?(req)
-              next unless reads_argv { require req }[1]
 
-              # Already run with the daemon's command line, which cannot be
-              # undone: skip it from now on, in a fresh daemon.
-              skip[req] = "reads the command line at load"
+              why = if reads_argv { require req }[1] then "reads the command line at load"
+                    elsif threads_running? then "starts a thread at load"
+                    end
+              next unless why
+
+              # Already run with the daemon's command line, or a thread that
+              # forbids forking, which cannot be undone: skip it from now on,
+              # in a fresh daemon. Level 2 still learns what it loads, short
+              # of what starts the thread.
+              skip[req] = why
               save_skip(state, skip)
-              state.restart = "#{req} reads the command line at load"
+              state.restart = "#{req} #{why}"
               throw :restart
             end
           end
@@ -471,40 +480,49 @@ module Speedrunner
     nil
   end
 
-  # Require files one by one in a throwaway child; sort them into ok, bad
-  # (with the reason) and retry: after a bad one, a fresh probe judges the
-  # rest, since whatever it left behind would taint later verdicts.
-  def self.probe(gems, files, tty = nil)
+  # Raised in a probe when a file already refused starts loading: the file
+  # that requires it is refused too, without running the refused one again,
+  # which would cost as much each time. Not a StandardError, so that an
+  # optional require (`rescue LoadError`) cannot hide it.
+  class Refused < Exception; end # rubocop:disable Lint/InheritException
+
+  # Where a file belongs: its gem's directory, else its own.
+  def self.load_root(path)
+    path[%r{\A.*/gems/[^/]+/}] || "#{File.dirname(path)}/"
+  end
+
+  # The namespaces each file opens (`module`/`class`) while it loads, by
+  # name: path -> names, filled while the returned TracePoint is enabled.
+  # Only statements of the file's own body: one in a method runs whenever
+  # the method is called (metaid.rb's `class << self`), from other files.
+  # Addresses, in the names of anonymous classes, differ in every process.
+  # Module's own methods: a class may redefine name (puppet's features).
+  # Never raises: that would fail the load it watches.
+  MODULE_NAME = Module.instance_method(:name)
+  MODULE_INSPECT = Module.instance_method(:inspect)
+
+  def self.namespace_tracer(traces)
+    TracePoint.new(:class) do |t|
+      scope = caller_locations(2, 1)&.first&.label.to_s # where the statement runs
+      next unless scope.start_with?("<", "block in <")
+
+      mod = t.self
+      name = MODULE_NAME.bind_call(mod) || MODULE_INSPECT.bind_call(mod)
+      traces[t.path] << name.to_s.gsub(/0x\h+/, "0x")
+    rescue Exception # rubocop:disable Lint/RescueException
+      traces[t.path] << "?"
+    end
+  end
+
+  # Runs the block in a throwaway child; returns what it returned, through
+  # JSON, or fallback if the child crashed or took longer than the probe
+  # timeout.
+  def self.in_child(fallback)
     r, w = IO.pipe
     pid = Process.fork
     if pid.nil?
       r.close
-      verdict = { "ok" => [], "bad" => {}, "retry" => [] }
-      activate_gems(gems)
-      files.each_with_index do |file, i|
-        if $LOADED_FEATURES.include?(file)
-          verdict["ok"] << file # came with an earlier, clean require
-          next
-        end
-        env_before = ENV.to_h
-        why = begin
-          output, argv_read = reads_argv { capture_fds(tty) { require file } }
-          if output != ["".b, "".b] then "prints at load" # natively mid-run
-          elsif argv_read then "reads the command line at load"
-          elsif ENV.to_h != env_before then "changes the env at load"
-          elsif threads_running? then "starts a thread at load"
-          end
-        rescue Exception => e # rubocop:disable Lint/RescueException
-          "load failed: #{e.class}: #{e.message[0, 200]}"
-        end
-        if why
-          verdict["bad"][file] = why
-          verdict["retry"] = files[(i + 1)..]
-          break
-        end
-        verdict["ok"] << file
-      end
-      w.write(JSON.generate(verdict))
+      w.write(JSON.generate(yield))
       w.close
       exit!(0)
     end
@@ -525,7 +543,93 @@ module Speedrunner
     Process.wait(pid)
     JSON.parse(data)
   rescue JSON::ParserError
-    { "ok" => [], "bad" => files.to_h { |f| [f, "probe crashed or hung"] }, "retry" => [] }
+    fallback
+  end
+
+  # Require files one by one in a throwaway child; sort them into ok, bad
+  # (with the reason) and retry: after a bad one, a fresh probe judges the
+  # rest, since whatever it left behind would taint later verdicts. A file
+  # that loads one of refused is bad. So is one that opens other namespaces
+  # than expect has for it, as natively (see native_namespaces).
+  def self.probe(gems, files, tty = nil, refused = [], expect = {})
+    in_child({ "ok" => [], "bad" => files.to_h { |f| [f, "probe crashed or hung"] }, "retry" => [] }) do
+      verdict = { "ok" => [], "bad" => {}, "retry" => [] }
+      activate_gems(gems)
+      refused = refused.to_h { |f| [f, true] }
+      compiled = {}
+      TracePoint.new(:script_compiled) do |t|
+        next unless t.eval_script.nil?
+
+        path = t.instruction_sequence.path
+        raise Refused, "loads #{path}, refused" if refused.key?(path)
+
+        compiled[path] = true
+      end.enable
+      traces = Hash.new { |h, k| h[k] = [] }
+      namespace_tracer(traces).enable
+      unchecked = expect.keys
+      # The first file loaded since the last call whose namespaces differ
+      # from those expected, with why: file is the one being required.
+      mismatch = lambda do |file|
+        done, unchecked = unchecked.partition { |f| compiled.key?(f) }
+        f = done.find { |g| expect[g] != traces[g] }
+        "#{f == file ? "opens" : "loads #{f}, which opens"} other namespaces than natively" if f
+      end
+      step_end = now + PROBE_STEP_S
+      files.each_with_index do |file, i|
+        if verdict["ok"].any? && now > step_end
+          verdict["retry"] = files[i..] # the parent replaces the spare in between
+          break
+        end
+        if $LOADED_FEATURES.include?(file)
+          verdict["ok"] << file # came with an earlier, clean require
+          next
+        end
+        env_before = ENV.to_h
+        why = begin
+          output, argv_read = reads_argv { capture_fds(tty) { require file } }
+          if output != ["".b, "".b] then "prints at load" # natively mid-run
+          elsif argv_read then "reads the command line at load"
+          elsif ENV.to_h != env_before then "changes the env at load"
+          elsif threads_running? then "starts a thread at load"
+          else mismatch.call(file)
+          end
+        rescue Refused => e
+          e.message
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          "load failed: #{e.class}: #{e.message[0, 200]}"
+        end
+        if why
+          verdict["bad"][file] = why
+          verdict["retry"] = files[(i + 1)..]
+          break
+        end
+        verdict["ok"] << file
+      end
+      verdict
+    end
+  end
+
+  # Natively, every file runs, refused ones included, and a later file may
+  # need what an earlier one defined: fastlane.rb sets Fastlane::Helper to
+  # FastlaneCore::Helper, which dotenv_helper.rb, loaded later, reopens;
+  # preloaded without fastlane.rb, it makes a Fastlane::Helper of its own.
+  # In a throwaway child, load files in their native order whatever they do:
+  # path -> the namespaces it opened, to compare in the probe.
+  def self.native_namespaces(state, files)
+    in_child({}) do
+      traces = Hash.new { |h, k| h[k] = [] }
+      failed = {}
+      capture_fds(state.tty) do
+        namespace_tracer(traces).enable
+        files.each do |f|
+          require f
+        rescue Exception # rubocop:disable Lint/RescueException
+          failed[f] = true
+        end
+      end
+      files.to_h { |f| [f, failed[f] ? ["(fails)"] : traces[f]] }
+    end
   end
 
   def self.cache_file(state)
@@ -584,30 +688,56 @@ module Speedrunner
     nil
   end
 
+  # The files level 1 skipped (it skips requires by name).
+  def self.skipped_paths(state)
+    state.skip.keys.filter_map do |req|
+      kind, path = $LOAD_PATH.resolve_feature_path(req)
+      path if kind == :rb
+    rescue LoadError
+      nil
+    end
+  end
+
   # Vet and load what children learned, then let the caller replace the
-  # spare. Returns [changed, reason to restart or nil].
+  # spare. One probe per call: between calls the main loop keeps a spare
+  # ready. Returns [changed, reason to restart or nil].
   def self.apply_learned(state)
-    gems = state.pending_gems.keys - state.learned_gems
-    files = state.pending.keys.reject { |f| state.blacklist.key?(f) || $LOADED_FEATURES.include?(f) }
-    state.pending.clear
-    state.pending_gems.clear
-    before = [state.learned.size, state.blacklist.size, state.learned_gems.size]
-    activate_gems(gems)
-    state.learned_gems |= gems
-    while files.any?
-      verdict = probe(state.learned_gems, files, state.tty)
+    job = state.learning
+    unless job
+      gems = state.pending_gems.keys - state.learned_gems
+      native = state.pending.keys.reject { |f| $LOADED_FEATURES.include?(f) }
+      files = native.reject { |f| state.blacklist.key?(f) }
+      state.pending.clear
+      state.pending_gems.clear
+      before = [state.learned.size, state.blacklist.size, state.learned_gems.size]
+      activate_gems(gems)
+      state.learned_gems |= gems
+      # What level 1 skipped loaded before all of these, natively.
+      expect = files.empty? ? {} : native_namespaces(state, skipped_paths(state) + native)
+      job = state.learning = { files: files, before: before, t0: now, expect: expect, vets: files.any? }
+      # Replace the spare: one forked from now on says so in its status.
+      return [true, nil] if files.any?
+    end
+    if job[:files].any?
+      verdict = probe(state.learned_gems, job[:files], state.tty, state.blacklist.keys + skipped_paths(state),
+                      job[:expect])
       state.blacklist.update(verdict["bad"])
       why = import_in_daemon(state, verdict["ok"])
       if why
+        state.learning = nil
         save_cache(state)
         return [true, why]
       end
       extend_fingerprint(state, $LOADED_FEATURES.select { |f| f.start_with?("/") }, watch: true)
-      files = verdict["retry"].reject { |f| $LOADED_FEATURES.include?(f) }
+      job[:files] = verdict["retry"].reject { |f| state.blacklist.key?(f) || $LOADED_FEATURES.include?(f) }
+      return [false, nil] if job[:files].any?
     end
-    return [false, nil] if [state.learned.size, state.blacklist.size, state.learned_gems.size] == before
+    state.learning = nil
+    # Nothing new: a spare that said it was learning is replaced all the same.
+    return [job[:vets], nil] if [state.learned.size, state.blacklist.size, state.learned_gems.size] == job[:before]
     state.gen += 1
     save_cache(state)
+    log("learned in #{((now - job[:t0]) * 1000).round} ms; #{status_text(state)}")
     [true, nil]
   end
 
@@ -906,7 +1036,8 @@ module Speedrunner
     "ready pid=#{PARENT_PID} preload_ms=#{(state.preload_s * 1000).round} " \
       "modules=#{$LOADED_FEATURES.size} levels=#{state.levels.join(',').then { |l| l.empty? ? 'none' : l }} " \
       "learned=#{state.learned.size} blacklisted=#{state.blacklist.size} memo=0 gen=#{state.gen} " \
-      "tty_read=#{state.import_tty_read.keys.sort.join(',').then { |t| t.empty? ? '-' : t }}"
+      "tty_read=#{state.import_tty_read.keys.sort.join(',').then { |t| t.empty? ? '-' : t }}" \
+      "#{" learning=#{state.learning[:files].size}" if state.learning}"
   end
 
   # --- parent: accept loop -------------------------------------------------
@@ -1088,6 +1219,8 @@ module Speedrunner
         watch << server if state.disabled
         watch << state.watch.io if state.watch&.io
         timeout = [1.0, last_activity + IDLE_TIMEOUT_S - now].max
+        # Its next step, once the spare is replaced.
+        timeout = 0 if state.learning && !children.values.any?(&:conn)
         readable, = IO.select(watch, nil, nil, timeout)
         readable ||= []
         if state.watch&.io && readable.include?(state.watch.io)
@@ -1163,13 +1296,11 @@ module Speedrunner
           end
         end
         active = children.values.any?(&:conn)
-        if (state.pending.any? || state.pending_gems.any?) && !state.disabled && !active
-          t0 = now
+        if (state.pending.any? || state.pending_gems.any? || state.learning) && !state.disabled && !active
           changed, why = apply_learned(state)
           if why
             stop[0] = "learned requires misbehaved: #{why}"
           elsif changed
-            log("learned in #{((now - t0) * 1000).round} ms; #{status_text(state)}")
             if spare # replace it: it was forked before this
               spare.retired = true
               spare.ctl.write("Q") rescue nil

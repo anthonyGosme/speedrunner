@@ -74,6 +74,7 @@ STARTUP_ENV_KEYS = ("LC_ALL", "LC_CTYPE", "LANG")
 PRELOAD_ENV = "SPEEDRUNNER_PRELOAD"
 DEFAULT_LEVELS = "1,2,3"
 PROBE_TIMEOUT_S = 30.0
+PROBE_STEP_S = 0.25  # a probe hands back what is left after this long
 # Level 3 budget, in bytes of source JSON; parsed, it takes several times that.
 MEMO_BUDGET = int(float(os.environ.get("SPEEDRUNNER_MEMO_MB", 16)) * 2**20)
 
@@ -198,6 +199,8 @@ class State:
         self.learned_paths = []  # sys.path entries the tool added itself, to import them with
         self.pending_origins = {}  # module -> the file a child imported it from
         self.blacklist = {}  # module -> why it is never preloaded
+        self.skip = {}  # level 1: module -> why a fresh daemon must not import it
+        self.learning_left = 0  # modules apply_learned has still to vet
         self.pending = {}    # ordered set: learned from children, not yet vetted
         self.pending_files = {}  # level 3: data files children loaded
         self.memo = None     # level 3: BotocoreMemo, once botocore is imported
@@ -539,9 +542,10 @@ class EnvReads:
         keys = self.keys
 
         def getitem(env, key):
-            if env is os.environ:
+            # A key of the wrong type raises TypeError natively: not a read.
+            if env is os.environ and isinstance(key, str):
                 keys.add(key)
-            elif env is getattr(os, "environb", None):
+            elif env is getattr(os, "environb", None) and isinstance(key, bytes):
                 keys.add(os.fsdecode(key))
             return original(env, key)
 
@@ -626,7 +630,7 @@ def preload(state):
             sys.path[0] = os.path.dirname(os.path.realpath(state.script))
         sys.argv = ArgvProbe([state.script])
 
-    skip = load_skip(state)
+    skip = state.skip = load_skip(state)
     state.pre_import_env = dict(os.environ)
 
     def do_imports():
@@ -637,12 +641,16 @@ def preload(state):
                 raise ImportError(f"{state.module}'s packages read the command line at import")
         names = script_imports(state.script) if 1 in state.levels else []
         for name in [n for n in names if n not in skip]:
-            if reads_argv(lambda: importlib.import_module(name))[1]:
-                # Already run with the daemon's command line, which cannot
-                # be undone: skip it from now on, in a fresh daemon.
-                skip[name] = "reads the command line at import"
+            why = ("reads the command line at import" if reads_argv(lambda: importlib.import_module(name))[1]
+                   else "starts a thread at import" if threads_running() else None)
+            if why:
+                # Already run with the daemon's command line, or a thread
+                # that forbids forking, which cannot be undone: skip it from
+                # now on, in a fresh daemon. Level 2 still learns what it
+                # imports, short of what starts the thread.
+                skip[name] = why
                 save_skip(state, skip)
-                state.restart = f"{name} reads the command line at import"
+                state.restart = f"{name} {why}"
                 return
 
     t0 = time.perf_counter()
@@ -733,10 +741,31 @@ def import_in_daemon(state, names):
     return None
 
 
-def probe_imports(names, tty=None, paths=(), origins=None):
+class Refused(BaseException):
+    """Raised by RefuseImports: a BaseException, so that an optional import
+    (`except ImportError`) cannot hide it."""
+
+
+class RefuseImports:
+    """In a probe: importing a module already refused fails at once. The
+    module that imports it is refused too, without running the refused one
+    again, which would cost as much each time (oci: 470 modules import one
+    that reads the command line)."""
+
+    def __init__(self, names):
+        self.names = names
+
+    def find_spec(self, name, path=None, target=None):
+        if name in self.names:
+            raise Refused(f"imports {name}, refused")
+        return None
+
+
+def probe_imports(names, tty=None, paths=(), origins=None, refused=()):
     """Import names one by one in a throwaway child, with paths in front of
     sys.path; sort them into ok, bad (with the reason) and retry. A module
-    found elsewhere than in the child that imported it (origins) is bad."""
+    found elsewhere than in the child that imported it (origins), or that
+    imports one of refused, is bad."""
     origins = origins or {}
     r, w = os.pipe2(os.O_CLOEXEC)
     pid = os.fork()
@@ -745,8 +774,13 @@ def probe_imports(names, tty=None, paths=(), origins=None):
             signal.set_wakeup_fd(-1)
             os.close(r)
             sys.path[:0] = [p for p in paths if p not in sys.path]
+            sys.meta_path.insert(0, RefuseImports(set(refused)))
             verdict = {"ok": [], "bad": {}, "retry": []}
+            step_end = time.monotonic() + PROBE_STEP_S
             for i, name in enumerate(names):
+                if verdict["ok"] and time.monotonic() > step_end:
+                    verdict["retry"] = names[i:]  # the parent replaces the spare in between
+                    break
                 if name in sys.modules:
                     verdict["ok"].append(name)  # came with an earlier, clean import
                     continue
@@ -761,6 +795,8 @@ def probe_imports(names, tty=None, paths=(), origins=None):
                            else "found in another file than at run time"
                            if origins.get(name, file_of(name)) != file_of(name)
                            else None)
+                except Refused as exc:
+                    why = str(exc)
                 except BaseException as exc:
                     why = f"import failed: {type(exc).__name__}: {exc}"
                 if why:
@@ -1350,7 +1386,8 @@ def status_text(state):
             f"modules={len(sys.modules)} levels={levels} learned={len(state.learned)} "
             f"blacklisted={len(state.blacklist)} "
             f"memo={len(state.memo.entries) if state.memo is not None else 0} gen={state.gen} "
-            f"tty_read={','.join(map(str, sorted(state.import_tty_read))) or '-'}")
+            f"tty_read={','.join(map(str, sorted(state.import_tty_read))) or '-'}"
+            + (f" learning={state.learning_left}" if state.learning_left else ""))
 
 
 # --- parent: accept loop ---------------------------------------------------
@@ -1405,6 +1442,13 @@ def handle_inline(state, conn):
     return True
 
 
+class Learning:
+    """What apply_learned still has to vet, across its steps."""
+
+    def __init__(self, names, files, before, origins, t0):
+        self.names, self.files, self.before, self.origins, self.t0 = names, files, before, origins, t0
+
+
 class Child:
     """A forked child as the parent sees it: a spare until it accepts a client."""
 
@@ -1446,6 +1490,7 @@ class Parent:
         self.spare = None
         self.spare_failures = 0
         self.last_activity = time.monotonic()
+        self.learning = None  # Learning, while apply_learned has steps left
 
     def fork_spare(self):
         """Returns the child's pid in the parent, 0 in the spare."""
@@ -1523,24 +1568,40 @@ class Parent:
 
     def apply_learned(self):
         """Vet and import what children learned, parse the data files they
-        loaded, then replace the spare. Returns a reason to restart, or None."""
-        state = self.state
-        names = [n for n in state.pending if n not in sys.modules and n not in state.blacklist]
-        files, before = list(state.pending_files), self.snapshot()
-        origins = dict(state.pending_origins)
-        state.pending.clear()
-        state.pending_files.clear()
-        state.pending_origins.clear()
-        t0 = time.perf_counter()
-        while names:
-            verdict = probe_imports(names, state.tty, state.learned_paths, origins)
+        loaded, then replace the spare. One probe per call: between calls
+        the main loop keeps a spare ready. Returns a reason to restart, or
+        None."""
+        state, job = self.state, self.learning
+        if job is None:
+            job = self.learning = Learning(
+                names=[n for n in state.pending if n not in sys.modules and n not in state.blacklist],
+                files=list(state.pending_files), before=self.snapshot(),
+                origins=dict(state.pending_origins), t0=time.perf_counter())
+            state.pending.clear()
+            state.pending_files.clear()
+            state.pending_origins.clear()
+            if job.names:
+                # A spare forked from now on says so in its status.
+                state.learning_left = len(job.names)
+                self.retire_spare()
+                return None
+        if job.names:
+            verdict = probe_imports(job.names, state.tty, state.learned_paths, job.origins,
+                                    set(state.blacklist) | set(state.skip))
             state.blacklist.update(verdict["bad"])
             why = import_in_daemon(state, verdict["ok"])
             if why:
+                self.learning = None
                 save_cache(state)
                 return why
             extend_fingerprint(state, module_files(), watch=True)
-            names = [n for n in verdict["retry"] if n not in sys.modules]
+            job.names = [n for n in verdict["retry"] if n not in sys.modules]
+            state.learning_left = len(job.names)
+            if job.names:
+                return None
+            self.retire_spare()  # it said it was learning
+        self.learning = None
+        files, before, t0 = job.files, job.before, job.t0
         install_memo(state)
         if state.memo is not None:
             state.memo.refresh(files)
@@ -1676,6 +1737,8 @@ def serve(state):
             if state.watch is not None and state.watch.fd >= 0:
                 watch.append(state.watch.fd)  # never read: children must see it too
             timeout = max(1.0, parent.last_activity + IDLE_TIMEOUT_S - time.monotonic())
+            if parent.learning is not None and not parent.active():
+                timeout = 0  # its next step, once the spare is replaced
             readable, _, _ = select.select(watch, [], [], timeout)
             if state.watch is not None and state.watch.fd in readable:
                 stop["why"] = "stale: a preloaded module file changed"
@@ -1699,8 +1762,8 @@ def serve(state):
                 conn.setblocking(True)
                 if not handle_inline(state, conn):
                     stop["why"] = "stop request"
-            if ((state.pending or state.pending_files) and not state.disabled
-                    and not parent.active()):
+            if ((state.pending or state.pending_files or parent.learning is not None)
+                    and not state.disabled and not parent.active()):
                 why = parent.apply_learned()
                 if why:
                     stop["why"] = f"learned imports misbehaved: {why}"

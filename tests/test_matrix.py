@@ -293,6 +293,17 @@ class Context(Matrix):
         _, out, _ = self.assertSame(["hsrun", "a", "b"])
         self.assertEqual(out, b"autorun: ['a', 'b']\n")
 
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_module_that_starts_a_thread_at_import(self):
+        # Forking would lose the thread: the daemon skips the module, and
+        # still serves the tool.
+        wait_ready("hsthread")
+        self.addCleanup(stop, "hsthread")
+        run("hs", ["hsthread"], require_fast=False)  # may restart the daemon once
+        wait_ready("hsthread")
+        _, out, _ = self.assertSame(["hsthread"])
+        self.assertEqual(out, b"threaded\n")
+
     def test_signal_dispositions(self):
         self.assertSame(["hstest", "signals"])
 
@@ -808,6 +819,9 @@ class Preload(Matrix):
             self.assertIn("hstest.lazy_thread", cache["blacklist"])
             self.assertIn("hstest.lazy_print", cache["blacklist"])
             self.assertIn("hstest.lazy_argv", cache["blacklist"])
+            # Refused for importing lazy_argv, which the probe did not run again.
+            self.assertTrue(cache["blacklist"].get("hstest.lazy_uses_argv", "").startswith(
+                "imports hstest.lazy_argv"), cache["blacklist"])
             self.assertSame(["hstest", "lazy"], env=env)
             # lazy_env keeps HSTEST_LAZY from import time: another value runs natively.
             lazy = {**env, "HSTEST_LAZY": "client value"}

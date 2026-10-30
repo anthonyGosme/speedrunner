@@ -150,6 +150,17 @@ class Context(m.Matrix):
         _, out, _ = self.assertSame(["rbrun", "a", "b"])
         self.assertEqual(out, b'autorun: ["a", "b"]\n')
 
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_file_that_starts_a_thread_when_required(self):
+        # Forking would lose the thread: the daemon skips the file, and
+        # still serves the tool.
+        m.wait_ready("rbthread")
+        self.addCleanup(m.stop, "rbthread")
+        run("hs", ["rbthread"], require_fast=False)  # may restart the daemon once
+        m.wait_ready("rbthread")
+        _, out, _ = self.assertSame(["rbthread"])
+        self.assertEqual(out, b"threaded\n")
+
     def test_signal_dispositions(self):
         self.assertSame(["rbtest", "signals"])
 
@@ -261,6 +272,9 @@ class Preload(m.Matrix):
             self.assertTrue(learned("lazy_thread", cache["blacklist"]), cache)
             self.assertTrue(learned("lazy_print", cache["blacklist"]), cache)
             self.assertTrue(learned("lazy_argv", cache["blacklist"]), cache)
+            # Refused for loading lazy_argv, which the probe did not run again.
+            why = next(w for f, w in cache["blacklist"].items() if f.endswith("/rbtest/lazy_uses_argv.rb"))
+            self.assertRegex(why, r"\Aloads .*/rbtest/lazy_argv\.rb, refused")
             self.assertSame(["rbtest", "lazy"], env=env)
             # lazy_env keeps RBTEST_LAZY from load time: another value runs natively.
             lazy = {**env, "RBTEST_LAZY": "client value"}
@@ -268,6 +282,20 @@ class Preload(m.Matrix):
             self.assertEqual(native, outcome(run("hs", ["rbtest", "lazy"], env=lazy,
                                                  require_fast=False)))
             self.assertEqual(run("hs", ["rbtest", "lazy"], env=lazy).returncode, m.EXIT_NOT_FAST)
+        finally:
+            m.stop("rbtest", env)
+
+    def test_learned_file_that_needs_a_refused_one(self):
+        # lazy_reopen.rb reopens a module through an alias that lazy_alias.rb,
+        # refused, defines: preloaded alone, it would define another module.
+        env = self.daemon("1,2")
+        try:
+            self.learn(env, [["rbtest", "reopen"]])
+            cache = self.cache(env)
+            why = next(w for f, w in cache["blacklist"].items() if f.endswith("/rbtest/lazy_reopen.rb"))
+            self.assertIn("other namespaces than natively", why)
+            _, out, _ = self.assertSame(["rbtest", "reopen"], env=env)
+            self.assertEqual(out, b"true\n")
         finally:
             m.stop("rbtest", env)
 
