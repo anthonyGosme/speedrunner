@@ -12,13 +12,13 @@ jobs:
   unit:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: cargo test --locked --manifest-path client/Cargo.toml
 
   musl:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: >-
           docker run --rm -v "$PWD:/src" -w /src/client rust:1-alpine sh -c
           'apk add -q musl-dev && cargo build --locked --release && ./target/release/speedrunner --version'
@@ -27,6 +27,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker build -t speedrunner-dev docker
       - run: docker run --rm -t -v "$PWD:/src" speedrunner-dev tests

@@ -40,19 +40,34 @@ export ASCIINEMA=$root/venv-rec/bin/asciinema  # for bench/demo/record.sh
 # The Laravel project is in the Debian image only: optional elsewhere.
 laravel=$root/php/laravel; [ -d "$laravel" ] || laravel=
 
-suite() {
-    echo "== $1"
+run_suite() {
     case $1 in
         matrix|shell|scripts)
-            HS_BIN=$B HS_PATH=$P python3 "tests/test_$1.py" 2>&1 | tail -3 ;;
+            HS_BIN=$B HS_PATH=$P python3 "tests/test_$1.py" ;;
         ruby)
             RB_GEM_HOME=$root/gems-rbtest HS_BIN=$B HS_PATH=$root/gems-rbtest/bin:$P \
-                python3 tests/test_ruby.py 2>&1 | tail -3 ;;
+                python3 tests/test_ruby.py ;;
         php)
             PHP_LARAVEL=$laravel HS_BIN=$B HS_PATH=$repo/tests/fixture/phptest/bin:$P \
-                python3 tests/test_php.py 2>&1 | tail -3 ;;
+                python3 tests/test_php.py ;;
         *) echo "unknown suite $1"; return 2 ;;
     esac
+}
+
+# Its summary; on a failure, what failed and why too.
+suite() {
+    echo "== $1"
+    local out rc=0
+    out=$(mktemp)
+    run_suite "$1" > "$out" 2>&1 || rc=$?
+    if [ $rc = 0 ]; then
+        tail -3 "$out"
+    else
+        grep -A 40 -E "^(FAIL|ERROR):" "$out" | head -200 || true
+        tail -3 "$out"
+    fi
+    rm -f "$out"
+    return $rc
 }
 
 status=0

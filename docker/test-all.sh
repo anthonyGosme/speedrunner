@@ -6,13 +6,16 @@
 #   docker/test-all.sh                  # everything
 #   docker/test-all.sh alpine py3.9     # some targets (names as in the table)
 #   JOBS=4 docker/test-all.sh           # at most 4 containers at a time
+#   SUITES="ruby php" docker/test-all.sh fedora       # only these suites
+#   PLATFORM=linux/arm64 docker/test-all.sh alpine   # another architecture
+#                                       # (emulated by Docker Desktop: slow)
 #
 # The client is built once, static (musl), as releases are, and mounted in
-# every container. Logs: docker/logs/<target>.log (git-ignored).
+# every container. Logs: docker/logs/<platform>/<target>.log (git-ignored).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 jobs=${JOBS:-$(( $(getconf _NPROCESSORS_ONLN) / 2 > 0 ? $(getconf _NPROCESSORS_ONLN) / 2 : 1 ))}
-logs=docker/logs
+logs=docker/logs/$(echo "${PLATFORM:-native}" | tr / -)  # docker/logs/linux-arm64
 mkdir -p "$logs"
 
 # target | dockerfile | build args | run options | suites
@@ -36,24 +39,28 @@ wanted() {
   local t; for t in "$@"; do [ "$t" = "$name" ] && return 0; done; return 1
 }
 
-echo "building the static client"
-bin=client/target/docker/speedrunner
-mkdir -p client/target/docker
+platform=${PLATFORM:+--platform $PLATFORM}
+arch=${PLATFORM:-native}
+echo "building the static client ($arch)"
+bin=client/target/docker-${arch//\//-}/speedrunner
+mkdir -p "$(dirname "$bin")"
 # From a copy: a newer cargo would rewrite the repository's Cargo.lock.
-docker run --rm -v "$PWD:/src" rust:1-alpine sh -c \
+docker run --rm $platform -e OUT="/src/$bin" -v "$PWD:/src" rust:1-alpine sh -c \
   'apk add -q musl-dev && mkdir /tmp/r && cp -r /src/client /src/server /src/shell /tmp/r \
    && rm -rf /tmp/r/client/target && cd /tmp/r/client \
-   && cargo build -q --locked --release && cp target/release/speedrunner /src/client/target/docker/' \
+   && cargo build -q --locked --release && cp target/release/speedrunner "$OUT"' \
   || { echo "static build failed"; exit 1; }
 
 run_target() {
-  local name=$1 file=$2 args=$3 opts=$4 cmd=$5 log=$logs/$1.log image=speedrunner-test-$1
-  local build=(docker build -q -t "$image" -f "$file")
+  local name=$1 file=$2 args=$3 opts=$4 cmd=${SUITES:+suites $SUITES} log=$logs/$1.log
+  local image=speedrunner-test-$1-${arch//\//-}
+  cmd=${cmd:-$5}
+  local build=(docker build -q $platform -t "$image" -f "$file")
   [ -n "$args" ] && build+=(--build-arg "$args")
   {
     echo "\$ ${build[*]} docker"
     "${build[@]}" docker && \
-    docker run --rm $opts -v "$PWD:/src" -v "$PWD/$bin:/opt/speedrunner:ro" \
+    docker run --rm $platform $opts -v "$PWD:/src" -v "$PWD/$bin:/opt/speedrunner:ro" \
       -e SPEEDRUNNER_BIN=/opt/speedrunner "$image" $cmd
   } > "$log" 2>&1
   echo $? > "$log.status"
@@ -100,4 +107,13 @@ PY
   [ "$status" = 0 ] || failed=1
   printf "%-14s %s%s\n" "$name" "$row" "$([ "$status" = 0 ] || echo "  (exit $status, see $log)")"
 done
+# In CI, the logs of what failed, where the job's own log shows them.
+if [ -n "${CI:-}" ]; then
+  for t in "${selected[@]}"; do
+    IFS='|' read -r name _ <<< "$t"
+    if [ "$(cat "$logs/$name.log.status" 2>/dev/null)" != 0 ]; then
+      echo; echo "######## $name"; cat "$logs/$name.log"
+    fi
+  done
+fi
 exit $failed

@@ -23,7 +23,7 @@ jobs:
     env:
       TARGET: ${{ matrix.arch }}-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: The tag is the crate's version
         run: test "${GITHUB_REF_NAME#v}" = "$(sed -n 's/^version = "\(.*\)"/\1/p' client/Cargo.toml)"
       - name: Toolchain
@@ -46,7 +46,7 @@ jobs:
           cp "client/target/$TARGET/release/speedrunner" LICENSE-MIT LICENSE-APACHE README.md "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.arch }}
           path: speedrunner-*.tar.gz*
@@ -58,8 +58,8 @@ jobs:
     needs: [build, platforms]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
