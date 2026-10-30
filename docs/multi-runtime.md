@@ -12,6 +12,8 @@ Rédigé le 2026-10-28, après l'étape 1 (Python). Rien n'est encore mesuré po
 
 Le cœur de speedrunner, c'est `fork()` d'un processus déjà initialisé. Ça ne marche que si le runtime est mono-thread au moment du fork. Python l'est, Ruby l'est presque (et sait se réparer après un fork), Node et la JVM ne le sont jamais : ils démarrent des threads internes (GC, compilation, I/O) dès le lancement, et après un `fork()` seul le thread appelant survit. Il faut donc une autre technique pour ces deux-là.
 
+**Mise à jour (2026-10-31) : pour Node, le fork marche quand même.** Avec `--single-threaded`, V8 ne confie rien à ses threads, et un addon lève les autres obstacles (`MADV_DONTFORK` sur le tas, sortie par `_exit`, PID et cwd en cache). C'est l'étape N1 : voir [ARCHITECTURE.md](ARCHITECTURE.md) §2 bis et `bench/results/…-node-panel-docker/`. Ce qui suit reste valable pour la JVM.
+
 ## Runtime par runtime
 
 | | Ruby | Node | JVM | Binaires natifs (wget, curl…) |

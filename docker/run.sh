@@ -8,7 +8,7 @@
 #   docker run --rm -t -v "$PWD:/src" IMAGE suites matrix ruby      # some of them
 #   docker run --rm -t -v "$PWD:/src" speedrunner-dev <command>    # anything
 #
-# Suites: matrix, shell, scripts (Python), ruby, php. SR_ROOT: where the
+# Suites: matrix, shell, scripts (Python), ruby, php, node. SR_ROOT: where the
 # venvs and gems are (default /root/speedrunner).
 set -euo pipefail
 root=${SR_ROOT:-/root/speedrunner} repo=${SR_ROOT:-/root/speedrunner}/repo
@@ -50,6 +50,8 @@ run_suite() {
         php)
             PHP_LARAVEL=$laravel HS_BIN=$B HS_PATH=$repo/tests/fixture/phptest/bin:$P \
                 python3 tests/test_php.py ;;
+        node)
+            HS_BIN=$B HS_PATH=$repo/tests/fixture/nodetest/bin:$P python3 tests/test_node.py ;;
         *) echo "unknown suite $1"; return 2 ;;
     esac
 }

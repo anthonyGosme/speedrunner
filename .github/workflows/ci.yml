@@ -1,7 +1,7 @@
 # On every push: the client's unit tests, its static (musl) build as
-# releases make it, then the five regression suites in the Debian image of
-# docker/, as they run on the dev VPS. Other distributions and language
-# versions: platforms.yml.
+# releases make it, the five regression suites in the Debian image of
+# docker/, as they run on the dev VPS, and the Node suite (glibc and musl).
+# Other distributions and language versions: platforms.yml.
 name: ci
 
 on:
@@ -22,6 +22,13 @@ jobs:
       - run: >-
           docker run --rm -v "$PWD:/src" -w /src/client rust:1-alpine sh -c
           'apk add -q musl-dev && cargo build --locked --release && ./target/release/speedrunner --version'
+
+  node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker/test-all.sh node24 node24-alpine
 
   suites:
     runs-on: ubuntu-24.04

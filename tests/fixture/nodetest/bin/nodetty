@@ -1,0 +1,7 @@
+#!/usr/bin/env node
+// Checks at import whether its streams are terminals, as color libraries do
+// (lib/color.js): what a daemon started on a terminal, or not, preloads.
+"use strict";
+const tty = require("tty");
+const color = require("../lib/color");
+process.stdout.write(`import ${color.enabled} live ${[0, 1, 2].map((fd) => tty.isatty(fd)).join(",")}\n`);

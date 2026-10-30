@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+// speedrunner's test tool for Node: each command prints what a served run
+// must reproduce exactly. Run from its bin/ directory on PATH, no install.
+"use strict";
+const fs = require("fs");
+const path = require("path");
+const tty = require("tty");
+const crypto = require("crypto");
+const { execFileSync } = require("child_process");
+
+const [name, ...args] = process.argv.slice(2);
+const out = (s) => process.stdout.write(s + "\n");
+
+const commands = {
+  "echo-stdin"() {
+    process.stdin.pipe(process.stdout);
+  },
+  binary() {
+    process.stdout.write(Buffer.from(Array.from({ length: 256 * 64 }, (_, i) => i % 256)));
+  },
+  interleave() {
+    for (let i = 0; i < 5; i++) {
+      process.stdout.write(`out ${i}\n`);
+      process.stderr.write(`err ${i}\n`);
+    }
+  },
+  exit([kind]) {
+    process.on("exit", (code) => out(`exit listener ${code}`));
+    if (kind.startsWith("code:")) process.exit(Number(kind.slice(5)));
+    if (kind.startsWith("exitcode:")) process.exitCode = Number(kind.slice(9));
+    if (kind === "throw") throw new Error("nodetest failure");
+    if (kind === "reject") Promise.reject(new Error("nodetest rejection"));
+    if (kind === "late") setTimeout(() => { throw new TypeError("nodetest late failure"); }, 5);
+  },
+  env(keys) {
+    for (const key of keys) {
+      const sub = execFileSync("sh", ["-c", `printf %s "\${${key}-<unset>}"`]).toString();
+      out(JSON.stringify({ key, value: process.env[key] ?? null, subprocess: sub }));
+    }
+  },
+  argv() {
+    out(JSON.stringify({ argv: process.argv.slice(2), script: process.argv[1], execArgv: process.execArgv,
+                         argv0: path.basename(process.argv0), main: require.main === module }));
+  },
+  cwd() {
+    out(JSON.stringify({ cwd: process.cwd(), real: fs.realpathSync("."), PWD: process.env.PWD }));
+  },
+  umask() {
+    out(process.umask().toString(8));
+  },
+  tty() {
+    for (const [i, s] of [process.stdin, process.stdout, process.stderr].entries()) {
+      out(JSON.stringify({ fd: i, isTTY: Boolean(s.isTTY), isatty: tty.isatty(i), columns: s.columns ?? null }));
+    }
+  },
+  random() {
+    for (let i = 0; i < 3; i++) out(crypto.randomUUID());
+    out(String(Math.random()));
+  },
+  pid() {
+    out(JSON.stringify({ pid: process.pid === Number(fs.readlinkSync("/proc/self")),
+                         ppid: process.ppid === Number(fs.readFileSync("/proc/self/stat", "utf8").split(") ")[1].split(" ")[1]) }));
+  },
+  sleep([seconds]) {
+    out("ready");
+    setTimeout(() => out("done"), Number(seconds) * 1000);
+  },
+  hold([seconds, marker]) {
+    out(`ready ${process.pid}`);
+    fs.appendFileSync(marker, "start\n");
+    setTimeout(() => fs.appendFileSync(marker, "done\n"), Number(seconds) * 1000);
+  },
+  lazy() {
+    // Loaded on use, as tools load most of what they need: learned by the
+    // daemon, unless refused (lazy-prints prints, lazy-thread starts one).
+    out(require("../lib/lazy-plain").hello());
+    out(`env at import: ${require("../lib/lazy-env").value}`);
+    out(`flag at import: ${require("../lib/lazy-flag").shout}`);
+    out(`argv at import: ${require("../lib/lazy-argv").args}`);
+    require("../lib/lazy-prints");
+    out(`thread: ${require("../lib/lazy-thread").started}`);
+  },
+  version() {
+    out(require("../package.json").version);
+  },
+};
+
+if (!commands[name]) {
+  process.stderr.write("usage: nodetest <command> ...\n");
+  process.exitCode = 2;
+} else {
+  commands[name](args);
+}

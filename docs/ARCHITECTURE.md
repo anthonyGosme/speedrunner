@@ -16,7 +16,10 @@ docs/
 server/speedrunner_daemon.py  le démon Python, bibliothèque standard uniquement
 server/speedrunner_daemon.rb  le démon Ruby, même protocole, bibliothèque standard uniquement
 server/speedrunner_daemon.php le démon PHP, même protocole (pcntl, posix, FFI)
+server/speedrunner_daemon.mjs le démon Node, même protocole
+server/speedrunner_node.c   l'addon du démon Node : fork, passage de fd, signaux, pty
 client/src/main.rs        le client, Rust, seule dépendance : libc (=0.2.175)
+client/build.rs           embarque l'addon Node, compilé pour glibc et pour musl
 client/src/launcher.rs    suivi des lanceurs (az, gcloud) sous ptrace
 shell/speedrunner.zsh       wrappers et anticipation pour zsh ≥ 5.3
 tests/
@@ -24,9 +27,11 @@ tests/
   test_shell.py           intégration zsh, pilotée dans un vrai pty
   test_ruby.py            matrice Ruby (rbtest), sur le harnais de test_matrix.py
   test_php.py             matrice PHP (phptest, composer, artisan)
+  test_node.py            matrice Node (nodetest, nodetty)
   test_scripts.py         activate, exec, mode automatique
   fixture/hstest/         outil de test Python : une sous-commande par comportement
   fixture/rbtest/         outil de test Ruby : une gem avec un vrai binstub
+  fixture/nodetest/       outils de test Node, sans installation
 bench/
   baseline.sh, phases.py, summarize.py   étape 0
   preload_ceiling.py      prototype des niveaux de préchargement, sans client
@@ -36,6 +41,8 @@ bench/
   keystroke.zsh           coût du hook zsh par frappe
   script.sh               boucles scriptées avec `srr`
   launchers.sh            CLI à lanceur (az, gcloud) et `./manage.py`
+  node/                   go/no-go Node : image, prototype de fork, plafonds
+  node_panel.py           panel des CLI Node, dans l'image de node/
   results/<date>-<étape>-vps/   chaque mesure, avec un ANALYSE.md
 ```
 
@@ -58,6 +65,14 @@ Le client lit le shebang de l'outil et choisit le démon de son runtime : `serve
 - **Exécution.** `Speedrunner\Daemon::main()` rend la main dans l'enfant, qui inclut l'outil au niveau global du fichier : les variables de haut niveau de l'outil sont donc des globales. `$argv`, `$argc`, `$_SERVER` (environnement, puis `PHP_SELF` … `argc`, dans l'ordre natif) et `$_ENV` (selon `variables_order`) sont reconstruits. Un gestionnaire d'exceptions reproduit le message natif (journal et affichage, selon `log_errors` et `display_errors`), sans la frame du démon, puis sort en 255.
 - **Fin.** PHP ne donne aucun code de sortie avant son arrêt : pas de X, le client attend le statut d'attente W.
 - **Forme `php script args`.** Le client la reconnaît quand l'outil est l'interpréteur PHP et que son premier argument est un fichier. Il sert alors le script, avec son propre démon. `$argv[0]` vaut le chemin tel qu'il a été tapé, et le démon le résout par rapport au cwd du client. `speedrunner status|stop php <script>` vise ce démon. En mode automatique, `activate` crée aussi un raccourci `php`.
+
+**Node** (`server/speedrunner_daemon.mjs`), le même protocole, sur un `fork()` que Node n'a pas :
+- **Addon.** `speedrunner_node.c`, un addon Node-API d'environ 500 lignes, fournit `fork` (avec `uv_loop_fork` dans l'enfant), le passage de fd, `dup2`, `poll`, les signaux, inotify et un pty. Il déclare lui-même les fonctions Node-API qu'il appelle : il se compile avec un compilateur C seul, et une compilation sert toutes les versions de Node. `client/build.rs` l'embarque en deux variantes, glibc (compilée sur Ubuntu 22.04) et musl (Alpine) ; le client choisit selon l'interpréteur ELF du binaire `node`. Sans la variante, l'outil part en natif.
+- **Threads.** Node garde au moins quatre threads : un planificateur de tâches différées, un worker V8 et le thread de l'inspecteur, qui n'existent pas dans l'enfant. Le client lance le démon avec `--single-threaded --v8-pool-size=1` : V8 ne leur confie plus de travail, et le GC comme le JIT tournent dans le thread principal. `--no-lazy` compile dans le parent toutes les fonctions qu'il charge ; sans lui, chaque enfant recompile ce qu'il exécute (eslint : 89 ms au lieu de 41).
+- **Préchargement appris seulement** (niveau 2). Un `module.registerHooks` (Node ≥ 22.15) note les modules que l'enfant charge, dans l'ordre où leur chargement commence, CommonJS comme ES. Après X, l'enfant les envoie au parent, qui les fait juger par une sonde. Elle refuse un module qui affiche quelque chose, modifie l'environnement, lance un thread, laisse du travail en attente (`process.getActiveResourcesInfo()`), lit les arguments, ou échoue. Les threads du pool de libuv sont tolérés : libuv le réinitialise après un fork (`pthread_atfork`). Le parent charge ensuite les modules acceptés, avec les mêmes contrôles.
+- **Ce que les imports lisent.** Pendant les chargements, `process.env` et `process.argv` sont remplacés par des proxys. On note les clés d'environnement lues, et le fait d'avoir parcouru les clés (le paquet `debug` cherche les `DEBUG_*`). Pour `process.argv`, on note les drapeaux cherchés par `includes` ou `indexOf`, comme le fait supports-color ; toute autre lecture des arguments fait refuser le module. On note aussi les réponses de `tty.isatty` et la création de `process.stdout`, `stderr` et `stdin`. Un client qui obtiendrait une autre réponse part en natif. Les imports se font avec un pty sur les fd qui étaient des terminaux pour le client qui a lancé le démon, pendant toute la vie du démon.
+- **Exécution.** `Module.runMain(script)`, depuis un `setImmediate` : CommonJS ou ES module, comme `node script`. `process.argv` et `process.env` sont modifiés en place, `process.execArgv` est vidé.
+- **Fin.** Une fois tous les écouteurs `exit` passés, l'enfant envoie X, puis ce qu'il a appris, et sort par `_exit` : la destruction normale de Node attendrait des threads qui n'existent pas dans l'enfant. Après une exception non rattrapée, Node émet `exit` *avant* d'afficher l'erreur. L'addon relaie alors stderr par un pipe jusqu'à la ligne `Node.js vX`, puis sort avec le code. Au passage, il remplace les deux frames du démon par celle d'un lancement natif (`node:internal/main/run_main_module`), apprise une fois par version de Node. Le client prend W.
 
 Pour un nouveau runtime : un démon `server/speedrunner_daemon.<ext>` qui parle ce protocole, une entrée dans `Runtime` (client), un outil de test et une matrice `tests/test_<runtime>.py` qui réutilise le harnais de `test_matrix.py`.
 
@@ -299,6 +314,10 @@ Une release est un seul fichier : le client embarque les trois démons et le hoo
   - retirer les adresses des noms de classes anonymes (`#<Class:0x…>::Config` dans psych) ;
   - appeler `Module#name` par `instance_method` : puppet le redéfinit sur certaines classes, qui renvoient un Symbol. Le traceur ne doit jamais lever : une exception levée dans un TracePoint remonte dans le chargement qu'il observe.
 - **Un SIGCHLD qui tombe hors de `poll` ne réveille personne.** Le démon PHP voit la fin de fichier du socket de contrôle d'un enfant, son `waitpid` passe avant que l'enfant soit ramassable, puis le signal arrive pendant que PHP exécute la boucle : le `poll` suivant dormait jusqu'à 4 h, et le client attendait son W (vu une fois sur psalm, dans le panel). Tant qu'un enfant a fermé son socket de contrôle sans avoir été ramassé, le parent reregarde après 5 ms. Python (`signal.set_wakeup_fd`) et Ruby (self-pipe écrit par `trap`) ne sont pas exposés.
+- **Node, `MADV_DONTFORK`.** V8 marque les pages de son tas pour qu'elles ne soient pas copiées au fork (indicateur `dc` dans smaps, à ne pas confondre avec `dd`). L'enfant plantait au premier objet JavaScript touché (SIGSEGV dans `napi_get_uv_event_loop`). L'addon remet `MADV_DOFORK` avant chaque fork.
+- **Node, threads du parent.** Sans `--single-threaded`, le premier GC de l'enfant attend des workers qui n'existent pas. À la sortie normale, `pthread_cond_destroy` attend des threads qui attendaient cette variable de condition dans le parent. Après une exception non rattrapée, `uv_thread_join` échoue et Node avorte (-6). D'où la sortie par `_exit`, et le relais de stderr après une exception.
+- **Node, signaux.** Un masque de signaux ne vaut que pour le thread qui le pose : bloquer SIGCHLD pour le lire par `signalfd` le laissait aux threads de Node, qui l'ignoraient. Un enfant fini n'était jamais ramassé, et son client attendait. Le démon passe par un self-pipe que remplit un gestionnaire C.
+- **Node, ce qu'il garde en cache.** Dans un processus forké, `process.pid`, `process.ppid` et `process.cwd()` gardent les valeurs du parent : un client relayait Ctrl-C au démon, et prettier cherchait ses fichiers dans le dossier runtime. Même chose pour `Math.random`, dont l'état est dans le tas : chaque enfant tirait les mêmes nombres. L'enfant redéfinit les deux PID, fait `process.chdir(".")` après `fchdir`, et remplace `Math.random` par un xoshiro128** amorcé par le noyau. Un spare prend aussi son propre groupe de processus, que le client signale.
 - **`subprocess` avec `timeout`** attend par paliers croissants, plafonnés à 50 ms : une mesure de temps doit attendre sans timeout.
 - **Faux serveurs dans les tests.** Un processus forké depuis le lanceur de tests doit finir par `os._exit` quoi qu'il arrive, sinon il exécute le reste de la suite en parallèle. Un faux serveur qui écrit à un client parti meurt de `BrokenPipe`. Dans les deux cas, on obtient un démon fantôme.
 
@@ -316,6 +335,9 @@ Elles sont listées dans le brief §5 (« Limites connues »). Les principales :
 - une horloge lue au chargement est celle du démon ; pour rspec seul, un adaptateur la remet à l'heure du début du run.
 - en Ruby, la comparaison des espaces de noms ne voit pas une dépendance à un fichier refusé par `defined?` ou par la valeur d'une constante ; une constante absente fait échouer le chargement dans la sonde, donc refuser le fichier ;
 - un lanceur n'est suivi que jusqu'à un interpréteur Python, et seulement par son `exec` final (wp-cli et drush passent par deux scripts shell, puis PHP : non suivis) ; sans ptrace (conteneur restrictif, Yama `ptrace_scope` 3), il part en natif ;
+- Node, `--single-threaded` : GC et compilation séquentiels dans l'enfant. Ce qui calcule beaucoup ralentit, jusqu'à 55 % (un script qui sollicite le GC) ; vite, dont des modules lancent des threads Rust au chargement et sont donc rechargés à chaque appel, est plus lent servi qu'en natif.
+- Node, pas de pont `/dev/tty` dans l'enfant ; il faut Node ≥ 22.15 pour apprendre (`module.registerHooks`). Sans cela, seul le démarrage de Node est économisé.
+- Node, un import qui parcourt les clés de l'environnement fait partir en natif un client dont l'ensemble des clés diffère (hors `PWD`, `OLDPWD`, `SHLVL`, `_` et `SPEEDRUNNER_*`) ; une pile capturée pendant l'évaluation du point d'entrée, et que l'outil affiche lui-même, montre les frames du démon.
 - pour un lanceur, `prewarm` exécute le préambule sans argument : sans effet pour az et gcloud, mais un lanceur qui ferait autre chose que préparer son exec le ferait aussi à chaque préchauffage.
 
 ## 13. État et suite
@@ -338,6 +360,8 @@ Elles sont listées dans le brief §5 (« Limites connues »). Les principales :
 | L0 CLI à lanceur : az, gcloud, `./manage.py` | fait | GO : Django x4,8–x7,7 (bug du chemin relatif corrigé) |
 | L1 Suivi des lanceurs, `-m module`, `sys.path` appris | fait | az x1,9–x4,3, gcloud x3,5–x4,2, sans réglage ; matrice de 67 tests verte |
 | Panel des candidats (47 commandes de plus, Docker) | fait | 45 servies, 45 sorties identiques, médiane x7,7 ; dbt x80, airflow x23, openstack x22, checkov x12 ; 6 bugs corrigés ; 70 + 37 tests verts |
+| N0 Go/no-go Node | fait | GO sous conditions : fork sûr (1 000 appels sur 1 000), plafonds x3 à x18 |
+| N1 Démon Node | fait | voir bench/results/…-node-panel-docker ; matrice Node de 28 tests verte |
 | 4 bis Instantané du driver (niveau 4) | reporté | propre à aws |
 | 5 Bench comparatif et vidéo (vhs ou asciinema) | à faire | |
 
@@ -352,7 +376,7 @@ Décidé : double licence MIT OR Apache-2.0 ; un démon par outil, pas par envir
 Pistes au-delà du PoC :
 
 - Ruby, avec la même architecture ;
-- Node et la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
+- la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
 - macOS, en second.
 
 Un nouvel OS a été écarté sur mesure (VPS, hyperfine, 30 runs). Le temps noyau ne fait que 44 ms sur 218 pour `aws --version` et 70 ms sur 304 pour le squelette ec2. Un noyau parfait plafonnerait donc à x1,25, et ce temps noyau vient lui-même surtout de l'initialisation que speedrunner supprime (ouvertures de fichiers, allocations). Pour `wget --version`, le total n'est que de 2,2 ms.

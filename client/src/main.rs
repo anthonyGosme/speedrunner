@@ -42,11 +42,15 @@ static CHILD_PID: AtomicI32 = AtomicI32::new(0);
 static NATIVE_PID: AtomicI32 = AtomicI32::new(0);
 static CHILD_PIDFD: AtomicI32 = AtomicI32::new(-1);
 
-// The daemons and the zsh hook, built in: a release is this one file.
-const EMBEDDED: [(&str, &[u8]); 3] = [
+// The daemons and the zsh hook, built in: a release is this one file. The
+// Node daemon's addon comes per libc, as build.rs made it (empty if not).
+const EMBEDDED: [(&str, &[u8]); 6] = [
     ("speedrunner_daemon.py", include_bytes!("../../server/speedrunner_daemon.py")),
     ("speedrunner_daemon.rb", include_bytes!("../../server/speedrunner_daemon.rb")),
     ("speedrunner_daemon.php", include_bytes!("../../server/speedrunner_daemon.php")),
+    ("speedrunner_daemon.mjs", include_bytes!("../../server/speedrunner_daemon.mjs")),
+    ("speedrunner_node-gnu.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-gnu.node"))),
+    ("speedrunner_node-musl.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-musl.node"))),
 ];
 const ZSH_HOOK: &str = include_str!("../../shell/speedrunner.zsh");
 
@@ -119,6 +123,7 @@ const DEMO_TOOLS: &[&str] = &[
     "pre-commit", "tox", "pipx", "django-admin", "jupyter", "ipython", "sphinx-build",
     "rubocop", "rspec", "rake", "bundle", "gem", "rails", "solargraph", "pod", "jekyll",
     "composer", "phpunit", "phpstan", "psalm", "php-cs-fixer", "phpcs", "rector", "laravel",
+    "npm", "eslint", "prettier", "jest", "webpack", "next", "firebase", "yarn",
 ];
 const DEMO_ARGS: &[&str] = &["--version"];
 
@@ -201,7 +206,7 @@ fn cmd_demo(rest: &[OsString]) -> i32 {
             let _ = quiet(fast(false)).status();
             std::thread::sleep(Duration::from_millis(100));
         }
-        wait_ready(&tool);
+        wait_learned(&tool);
         let a = native().stdin(process::Stdio::null()).output();
         let b = fast(true).stdin(process::Stdio::null()).output();
         let refused = matches!(&b, Ok(o) if o.status.code() == Some(EXIT_NOT_FAST));
@@ -1265,6 +1270,18 @@ fn wait_ready(tool: &Tool) {
     }
 }
 
+/// Until the daemon has loaded what its children reported (no `learning=`
+/// in its status), for at most 30 s: a Node daemon vets modules in probes.
+fn wait_learned(tool: &Tool) {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        match request(tool, b'P') {
+            Ok((b'P', text)) if !text.windows(10).any(|w| w == b" learning=") => return,
+            _ => std::thread::sleep(Duration::from_millis(50)),
+        }
+    }
+}
+
 fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     ensure_runtime_dir(&tool.dir)?;
     // The interpreter as named (argv[0]), the file to exec, and its options.
@@ -1277,7 +1294,7 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
             (interp.clone(), interp, flag.into_iter().collect(), runtime)
         }
     };
-    let daemon = locate_daemon(runtime)?;
+    let daemon = locate_daemon(runtime, &interp)?;
     let lock = lock_path(tool);
     let awaited = match lock_state(&lock)? {
         LockState::Free => None,
@@ -1815,6 +1832,7 @@ enum Runtime {
     Python,
     Ruby,
     Php,
+    Node,
 }
 
 impl Runtime {
@@ -1826,6 +1844,8 @@ impl Runtime {
             Some(Runtime::Ruby)
         } else if name.starts_with(b"php") {
             Some(Runtime::Php)
+        } else if name == b"nodejs" || (name.starts_with(b"node") && name[4..].iter().all(|c| c.is_ascii_digit())) {
+            Some(Runtime::Node)
         } else {
             None
         }
@@ -1836,6 +1856,7 @@ impl Runtime {
             Runtime::Python => "speedrunner_daemon.py",
             Runtime::Ruby => "speedrunner_daemon.rb",
             Runtime::Php => "speedrunner_daemon.php",
+            Runtime::Node => "speedrunner_daemon.mjs",
         }
     }
 
@@ -1847,6 +1868,10 @@ impl Runtime {
             // child sets, instead of the daemon's own arguments.
             Runtime::Php => &["-d", "opcache.enable_cli=1", "-d", "opcache.validate_timestamps=1",
                               "-d", "opcache.revalidate_freq=0", "-d", "register_argc_argv=0"],
+            // V8 hands no work to the worker threads a forked child lacks,
+            // and compiles in the parent what children would otherwise
+            // compile on each run.
+            Runtime::Node => &["--single-threaded", "--v8-pool-size=1", "--no-lazy"],
             _ => &[],
         }
     }
@@ -1874,15 +1899,20 @@ fn read_shebang(script: &[u8]) -> io::Result<(Vec<u8>, Option<Vec<u8>>, Runtime)
         }
         interp = resolve_in_path(&prog).ok_or_else(|| unsupported("interpreter not in PATH"))?;
     }
-    let runtime = Runtime::of(&interp).ok_or_else(|| unsupported("not a Python, Ruby or PHP script"))?;
+    let runtime = Runtime::of(&interp).ok_or_else(|| unsupported("not a Python, Ruby, PHP or Node script"))?;
     Ok((interp, flag, runtime))
 }
 
 /// The runtime's daemon script: next to SPEEDRUNNER_DAEMON (a daemon of any
 /// runtime, for tests), else next to this binary, in ../share/speedrunner, or
 /// in the source tree's server/ when run from client/target/release.
-fn locate_daemon(runtime: Runtime) -> io::Result<Vec<u8>> {
+fn locate_daemon(runtime: Runtime, interp: &[u8]) -> io::Result<Vec<u8>> {
     let file = runtime.daemon_file();
+    // The Node daemon loads the addon built for its interpreter's libc.
+    let addon = match runtime {
+        Runtime::Node => Some(node_addon(interp)?),
+        _ => None,
+    };
     let dirs: Vec<PathBuf> = match env::var_os("SPEEDRUNNER_DAEMON") {
         Some(p) => vec![Path::new(&p).parent().map(Path::to_path_buf).unwrap_or_default()],
         None => {
@@ -1894,14 +1924,30 @@ fn locate_daemon(runtime: Runtime) -> io::Result<Vec<u8>> {
     let pinned = env::var_os("SPEEDRUNNER_DAEMON").is_some();
     for dir in dirs {
         let cand = dir.join(file);
-        if cand.is_file() {
+        if cand.is_file() && addon.map_or(true, |a| dir.join(a).is_file()) {
             return Ok(cand.canonicalize()?.into_os_string().into_vec());
         }
     }
     if pinned {
         return Err(io::Error::new(io::ErrorKind::NotFound, format!("{} not found", file)));
     }
+    if let Some(a) = addon {
+        extract_daemon(a)?;
+    }
     Ok(extract_daemon(file)?.into_os_string().into_vec())
+}
+
+/// The addon file for a Node interpreter: glibc or musl, from its ELF
+/// interpreter (ld-musl-*). An error if this build has none for it.
+fn node_addon(interp: &[u8]) -> io::Result<&'static str> {
+    let mut head = vec![0u8; 4096];
+    let n = File::open(OsStr::from_bytes(interp))?.read(&mut head)?;
+    let musl = head[..n].windows(7).any(|w| w == b"ld-musl");
+    let name = if musl { "speedrunner_node-musl.node" } else { "speedrunner_node-gnu.node" };
+    match EMBEDDED.iter().find(|(f, _)| *f == name) {
+        Some((_, bytes)) if !bytes.is_empty() => Ok(name),
+        _ => Err(unsupported("this build has no Node addon for this libc")),
+    }
 }
 
 /// The built-in copy of a daemon file, written out once per build to

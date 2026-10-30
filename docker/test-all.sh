@@ -5,6 +5,7 @@
 #
 #   docker/test-all.sh                  # everything
 #   docker/test-all.sh alpine py3.9     # some targets (names as in the table)
+#   docker/test-all.sh node24 node24-alpine   # the Node suite
 #   JOBS=4 docker/test-all.sh           # at most 4 containers at a time
 #   SUITES="ruby php" docker/test-all.sh fedora       # only these suites
 #   PLATFORM=linux/arm64 docker/test-all.sh alpine   # another architecture
@@ -36,6 +37,9 @@ for v in 3.9 3.10 3.11 3.12 3.13 3.14; do TARGETS+=("py$v|docker/lang/python.Doc
 # serves it; Ubuntu 22.04 above runs the Ruby suite on 3.0.
 for v in 3.1 3.2 3.3 3.4; do TARGETS+=("rb$v|docker/lang/ruby.Dockerfile|VERSION=$v||suites ruby"); done
 for v in 8.1 8.2 8.3 8.4; do TARGETS+=("php$v|docker/lang/php.Dockerfile|VERSION=$v||suites php"); done
+# Node: module.registerHooks, which learning needs, is in 22.15 and later.
+for v in 22 24; do TARGETS+=("node$v|docker/lang/node.Dockerfile|VERSION=$v-bookworm-slim||suites node"); done
+TARGETS+=("node24-alpine|docker/lang/node.Dockerfile|VERSION=24-alpine||suites node")  # the musl addon
 
 wanted() {
   [ $# -eq 0 ] && return 0
@@ -44,11 +48,13 @@ wanted() {
 
 platform="--platform $PLATFORM"
 arch=$PLATFORM
-echo "building the static client ($arch)"
+echo "building the Node addons and the static client ($arch)"
 bin=client/target/docker-${arch//\//-}/speedrunner
+addons=client/target/node-addons-${arch//\//-}
 mkdir -p "$(dirname "$bin")"
+docker/node-addons.sh "$addons" "$PLATFORM" > /dev/null || { echo "addon build failed"; exit 1; }
 # From a copy: a newer cargo would rewrite the repository's Cargo.lock.
-docker run --rm $platform -e OUT="/src/$bin" -v "$PWD:/src" rust:1-alpine sh -c \
+docker run --rm $platform -e OUT="/src/$bin" -e SPEEDRUNNER_NODE_ADDONS="/src/$addons" -v "$PWD:/src" rust:1-alpine sh -c \
   'apk add -q musl-dev && mkdir /tmp/r && cp -r /src/client /src/server /src/shell /tmp/r \
    && rm -rf /tmp/r/client/target && cd /tmp/r/client \
    && cargo build -q --locked --release && cp target/release/speedrunner "$OUT"' \
@@ -86,7 +92,7 @@ wait
 
 # One row per target: each suite's result, from its "== suite" block.
 failed=0
-printf "%-14s %-8s %-8s %-8s %-8s %-8s\n" target matrix shell scripts ruby php
+printf "%-14s %-8s %-8s %-8s %-8s %-8s %-8s\n" target matrix shell scripts ruby php node
 for t in "${selected[@]}"; do
   IFS='|' read -r name _ <<< "$t"
   log=$logs/$name.log
@@ -94,7 +100,7 @@ for t in "${selected[@]}"; do
 import re, sys
 text = open(sys.argv[1], errors="replace").read()
 cells = []
-for suite in ("matrix", "shell", "scripts", "ruby", "php"):
+for suite in ("matrix", "shell", "scripts", "ruby", "php", "node"):
     m = re.search(rf"^== {suite}\n(.*?)(?=^== |\Z)", text, re.S | re.M)
     if not m:
         cells.append("-")

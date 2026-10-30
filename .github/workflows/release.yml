@@ -30,7 +30,11 @@ jobs:
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q musl-tools
           rustup target add "$TARGET"
+      - name: Node addons (glibc and musl), embedded by the build
+        run: docker/node-addons.sh node-addons
       - name: Build
+        env:
+          SPEEDRUNNER_NODE_ADDONS: ${{ github.workspace }}/node-addons
         run: cargo build --release --locked --manifest-path client/Cargo.toml --target "$TARGET"
       - name: Static, and runs
         run: |
@@ -39,6 +43,7 @@ jobs:
           if ldd "$bin" 2>/dev/null | grep -q '=>'; then echo "not static"; exit 1; fi
           "$bin" --version
           "$bin" init zsh > /dev/null
+          for f in node-addons/*.node; do test -s "$f"; done  # both addons built
       - name: Package
         run: |
           name=speedrunner-$TARGET

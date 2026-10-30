@@ -1,0 +1,7 @@
+{
+  "name": "nodetest",
+  "version": "0.1.0",
+  "description": "speedrunner's test tool for Node: each command exercises one thing a served run must reproduce",
+  "private": true,
+  "bin": { "nodetest": "bin/nodetest" }
+}
