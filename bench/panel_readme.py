@@ -1,10 +1,11 @@
-"""The README's results table, generated from a panel run (bench/panel.py),
-so that it never drifts from what was measured.
+"""The README's results, generated from panel runs (bench/panel.py and the
+panels built on it), so that they never drift from what was measured: one
+table per language, every command of every panel in it.
 
-Usage: python3 panel_readme.py <panel_dir> [README.md] [<marker> <where>]
-Prints the Markdown; with a README path, replaces what lies between the
-<!-- panel:start --> and <!-- panel:end --> markers in it (or those of
-<marker>, for a panel measured elsewhere than the VPS, described by <where>).
+Usage: python3 panel_readme.py <main_dir> [<other_dir>...] [--readme README.md]
+<main_dir> is the panel measured on the VPS; the others, measured on a
+laptop, have their commands marked ¹. Prints the Markdown; with --readme,
+replaces what lies between <!-- panel:start --> and <!-- panel:end --> in it.
 """
 import json
 import math
@@ -12,12 +13,16 @@ import re
 import statistics
 import sys
 
-RUNTIMES = {"python": "Python", "ruby": "Ruby", "php": "PHP"}
+RUNTIMES = {"python": "Python", "ruby": "Ruby", "php": "PHP", "node": "Node"}
+MAIN = "a 2-vCPU Debian 12 VPS"
+OTHER = "a laptop (Intel i7-9750H), in a Debian 12 container"
 
 # Why a command gains nothing: shown under its table.
 NOTES = {
     "phpstan analyse": "`phpstan analyse` spends its time in the analysis itself, not in the "
                        "interpreter start.",
+    "nest --version": "`nest --version`: most of what it loads fails the daemon's checks (modules that "
+                      "start threads or read the command line as they load), and loads again on every run.",
 }
 
 # Why a command is not served at all.
@@ -26,76 +31,96 @@ NOT_SERVED = {
            "that runs PHP, and speedrunner follows such launchers only up to Python.",
     "drush ": "`wp` and `drush` are not served: Composer installs them behind a shell script "
               "that runs PHP, and speedrunner follows such launchers only up to Python.",
+    "vite ": "`vite` was not served when measured: its bundler starts threads as it loads, the daemon "
+             "refuses those modules, and it was restarting, after one of them. Served, it would gain "
+             "nothing: what is refused loads again on every run.",
 }
 
 
-def machine(panel_dir):
-    try:
-        lines = open(f"{panel_dir}/machine.txt").read().splitlines()
-    except OSError:
-        return ""
-    # "ruby 3.1.2p20 (2022-04-12 …)" -> "Ruby 3.1.2"
-    keep = [re.sub(r"^(\S+) (\d+\.\d+\.\d+).*", r"\1 \2", l).capitalize().replace("Php", "PHP")
-            for l in lines if l.startswith(("Python", "ruby", "PHP"))]
-    return ", ".join(keep)
+def versions(panel_dirs):
+    """"Python 3.11.2, Ruby 3.1.2, PHP 8.2.35, Node 24.22.2", from machine.txt."""
+    seen = {}
+    for d in panel_dirs:
+        try:
+            lines = open(f"{d}/machine.txt").read().splitlines()
+        except OSError:
+            continue
+        for l in lines:
+            m = re.match(r"^(Python|ruby|PHP) (\d+\.\d+\.\d+)", l) or re.match(r"^(v)(\d+\.\d+\.\d+)$", l)
+            if m:
+                name = {"ruby": "Ruby", "v": "Node"}.get(m.group(1), m.group(1))
+                seen.setdefault(name, m.group(2))
+    return ", ".join(f"{k} {v}" for k, v in seen.items())
 
 
-def table(panel_dir, where="a 2-vCPU Debian 12 VPS"):
-    data = json.load(open(f"{panel_dir}/panel.json"))
-    rows = data["results"]
-    versions = machine(panel_dir)
-    served = [r for r in rows if "speedup" in r]
+def row(r, mark):
+    name = f"`{r['command']}`{mark}"
+    if "error" in r:
+        return f"| {name} | {r.get('native_ms', 0):.0f} ms | — | not served | — | — | |"
+    if r.get("native_rc", 0) != 0:
+        name = f"`{r['command']}` (exits {r['native_rc']} natively){mark}"
+    mem = f"{r['pss_mb']:.0f} MB" if "pss_mb" in r else ""
+    ci = " ({:.1f}–{:.1f})".format(*r["speedup_ci95"]) if "speedup_ci95" in r else ""
+    return (f"| {name} | {r['native_ms']:.0f} ms | {r['fast_ms']:.0f} ms | **x{r['speedup']:.1f}**{ci} | "
+            f"{r['native_ms'] - r['fast_ms']:.0f} ms | {'✓' if r['identical'] else '✗'} | {mem} |")
+
+
+def tables(main_dir, other_dirs):
+    rows, runs = [], set()
+    for d in [main_dir, *other_dirs]:
+        data = json.load(open(f"{d}/panel.json"))
+        runs.add(data["runs"])
+        rows += [(r, "" if d == main_dir else " ¹") for r in data["results"]]
+    served = [r for r, _ in rows if "speedup" in r]
     gains = [r["speedup"] for r in served]
     geo = math.exp(statistics.mean(math.log(g) for g in gains))
-    out = [f"Measured on {where}{f' ({versions})' if versions else ''}, warm daemon, no tool-specific setup: "
-           "each command is simply run as `srr <command>`. Each time is the median of "
-           f"{data['runs']} runs, native and speedrunner interleaved; the speedup is the ratio of the medians, "
-           "with its 95% confidence interval (bootstrap). *Identical* compares exit code, stdout and stderr "
-           f"with the native run. Mean, standard deviation, min and max: [summary]({panel_dir}/summary.md); "
-           f"every run: [panel.json]({panel_dir}/panel.json).",
-           "",
-           f"**{len(served)} commands served, {sum(r['identical'] for r in served)} identical outputs. "
-           f"Speedup: geometric mean x{geo:.1f}, median x{statistics.median(gains):.1f}, "
-           f"from x{min(gains):.1f} to x{max(gains):.1f}.**", ""]
+    per = ", ".join(f"{sum(r['runtime'] == k for r in served)} {name}" for k, name in RUNTIMES.items()
+                    if any(r["runtime"] == k for r in served))
+    links = "; ".join(f"[{d.rstrip('/').split('/')[-1]}]({d}/summary.md)" for d in [main_dir, *other_dirs])
+    out = [f"**{len(served)} commands served ({per}), {sum(r['identical'] for r in served)} with an output "
+           f"identical to the native run. Speedup: geometric mean x{geo:.1f}, median "
+           f"x{statistics.median(gains):.1f}; {sum(g >= 3 for g in gains)} at x3 or more, "
+           f"{sum(g >= 10 for g in gains)} at x10 or more.**", "",
+           f"Measured on {MAIN}, or, for the commands marked ¹, on {OTHER} ({versions([main_dir, *other_dirs])}). "
+           "Warm daemon, no tool-specific setup: each command is simply run as `srr <command>`. Each time is the "
+           f"median of {'/'.join(map(str, sorted(runs)))} runs, native and speedrunner interleaved; the speedup is "
+           "the ratio of the medians, with its 95% confidence interval (bootstrap). *Identical* compares exit "
+           "code, stdout and stderr with the native run. Mean, standard deviation, min, max and every run: "
+           f"{links}.", ""]
     for key, name in RUNTIMES.items():
-        group = [r for r in rows if r["runtime"] == key]
+        group = [(r, mark) for r, mark in rows if r["runtime"] == key]
         if not group:
             continue
-        group.sort(key=lambda r: -(r.get("native_ms", 0) - r.get("fast_ms", r.get("native_ms", 0))))
+        group.sort(key=lambda rm: -rm[0].get("speedup", 0))
         out += [f"**{name}**", "",
                 "| Command | Native | speedrunner | Speedup (95% CI) | Saved per call | Identical | Daemon memory |",
                 "|---|---:|---:|---:|---:|:---:|---:|"]
-        for r in group:
-            if "error" in r:
-                out.append(f"| `{r['command']}` | {r.get('native_ms', 0):.0f} ms | — | not served | — | — | |")
-                continue
-            saved = r["native_ms"] - r["fast_ms"]
-            if r.get("native_rc", 0) != 0:
-                r["command"] += f" (exits {r['native_rc']} natively)"
-            mem = f"{r['pss_mb']:.0f} MB" if "pss_mb" in r else ""
-            ci = " ({:.1f}–{:.1f})".format(*r["speedup_ci95"]) if "speedup_ci95" in r else ""
-            out.append(f"| `{r['command']}` | {r['native_ms']:.0f} ms | {r['fast_ms']:.0f} ms | "
-                       f"**x{r['speedup']:.1f}**{ci} | {saved:.0f} ms | {'✓' if r['identical'] else '✗'} | {mem} |")
-        out.append("")
-        notes = {text for r in group if r.get("speedup", 9) < 1.2
-                 for key, text in NOTES.items() if r["command"].startswith(key)}
-        out += [f"No gain: {text}" for text in sorted(notes)] + ([""] if notes else [])
-        skipped = {text for r in group if "error" in r
-                   for key, text in NOT_SERVED.items() if r["command"].startswith(key)}
-        out += sorted(skipped) + ([""] if skipped else [])
+        out += [row(r, mark) for r, mark in group] + [""]
+        notes = {text for r, _ in group if r.get("speedup", 9) < 1.2
+                 for k, text in NOTES.items() if r["command"].startswith(k)}
+        skipped = {text for r, _ in group if "error" in r
+                   for k, text in NOT_SERVED.items() if r["command"].startswith(k)}
+        out += [f"No gain: {t}" for t in sorted(notes)] + sorted(skipped)
+        if notes or skipped:
+            out.append("")
     return "\n".join(out)
 
 
 def main():
-    marker, where = sys.argv[3:5] if len(sys.argv) > 4 else ("panel", None)
-    text = table(sys.argv[1], *([where] if where else []))
-    if len(sys.argv) > 2:
-        readme = open(sys.argv[2]).read()
-        new = re.sub(rf"(<!-- {marker}:start -->\n).*?(<!-- {marker}:end -->)",
-                     lambda m: m.group(1) + text + "\n" + m.group(2), readme, flags=re.S)
-        if new == readme and f"<!-- {marker}:start -->" not in readme:
-            sys.exit(f"no <!-- {marker}:start --> marker in the README")
-        open(sys.argv[2], "w").write(new)
+    args = sys.argv[1:]
+    readme = None
+    if "--readme" in args:
+        i = args.index("--readme")
+        readme = args[i + 1]
+        del args[i:i + 2]
+    text = tables(args[0], args[1:])
+    if readme:
+        content = open(readme).read()
+        new = re.sub(r"(<!-- panel:start -->\n).*?(<!-- panel:end -->)",
+                     lambda m: m.group(1) + text + "\n" + m.group(2), content, flags=re.S)
+        if "<!-- panel:start -->" not in content:
+            sys.exit("no <!-- panel:start --> marker in the README")
+        open(readme, "w").write(new)
     print(text)
 
 
