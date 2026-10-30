@@ -374,6 +374,35 @@ def daemon_roots(root):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class NoLocale(Matrix):
+    """No LANG nor LC_*, as in a fresh container or cron. In a C locale,
+    CPython adds LC_CTYPE=C.UTF-8 to its own env at startup (PEP 538): the
+    daemon's env is then not the client's, but the tool's must be as natively."""
+
+    def test_fast_and_same_env(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        env = {k: v for k, v in BASE_ENV.items() if k != "LANG"}
+        env.update(XDG_RUNTIME_DIR=os.path.join(root, "run"), XDG_CACHE_HOME=os.path.join(root, "cache"))
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(lambda: subprocess.run([HS_BIN, "stop", "hstest"], env=env, capture_output=True))
+        argv = ["hstest", "env", "LC_CTYPE", "LC_ALL", "LANG"]
+
+        def go(mode, fast=True):
+            cmd, extra = command(mode, argv, require_fast=fast)
+            return outcome(subprocess.run(cmd, env={**env, **extra}, capture_output=True, timeout=60))
+
+        native = go("native")
+        go("hs", fast=False)  # starts the daemon, from this env
+        deadline = time.monotonic() + 30
+        fast = go("hs")
+        while fast[0] == EXIT_NOT_FAST:
+            self.assertLess(time.monotonic(), deadline, fast[2])
+            time.sleep(0.1)
+            fast = go("hs")
+        self.assertEqual(native, fast)
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class ScriptPrefix(Matrix):
     """`srr <tool> args`, a link to the client: a prefix that needs no
     enrolling, for scripts too (they do not see the shell's wrappers)."""
@@ -689,14 +718,25 @@ class Preload(Matrix):
         """Run argvs through speedrunner; wait until the daemon has applied what
         it learned. Not required: there may be nothing new to learn, as when
         the interpreter already had every module the run imports (3.9)."""
-        gen = int(status_field(status(tool, env), "gen"))
+        first = status(tool, env)
+        gen, pid = int(status_field(first, "gen")), status_field(first, "pid")
         for argv in argvs:
             run("hs", argv, env=env)
         deadline = time.monotonic() + (timeout if required else 3.0)
-        while int(status_field(status(tool, env), "gen") or -1) <= gen:
+        while True:
+            text = status(tool, env)
+            if int(status_field(text, "gen") or -1) > gen:
+                return
+            # A module that misbehaved in the daemon despite the probe makes it
+            # exit, by design: the next call starts one, which reloads what was
+            # learned (the culprit blacklisted).
+            if text == "down":
+                run("hs", argvs[0], env=env)
+            elif status_field(text, "pid") not in (None, pid) and int(status_field(text, "learned") or 0):
+                return
             if time.monotonic() > deadline:
                 if required:
-                    self.fail(f"nothing applied: {status(tool, env)!r}")
+                    self.fail(f"nothing applied: {text!r}")
                 return
             time.sleep(0.1)
 

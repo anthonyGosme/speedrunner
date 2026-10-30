@@ -177,7 +177,10 @@ class State:
         self.top_names = frozenset()  # top-level modules a file in that cwd could shadow
         self.sock_path = sock_path
         self.disabled = None  # reason string when the fast path is off
-        self.start_env = dict(os.environ)
+        # As the client that started us had it: compared with each client's.
+        self.start_env = initial_environ()
+        # What CPython itself set at startup, as natively for the tool.
+        self.interpreter_env = {k: v for k, v in os.environ.items() if self.start_env.get(k) != v}
         self.pre_import_env = {}
         self.import_env_changed = {}
         self.import_env_deleted = set()
@@ -205,6 +208,23 @@ class State:
 
 def preload_levels(text):
     return {int(x) for x in text.split(",") if x.strip() in ("1", "2", "3")}
+
+
+def initial_environ():
+    """The env we were started with, as /proc/self/environ still has it.
+    CPython may have added to os.environ since: in a C locale, LC_CTYPE=C.UTF-8
+    (PEP 538). Natively it does the same for the tool."""
+    try:
+        with open("/proc/self/environ", "rb") as f:
+            data = f.read()
+    except OSError:
+        return dict(os.environ)
+    env = {}
+    for entry in data.split(b"\0"):
+        key, sep, value = entry.partition(b"=")
+        if sep:
+            env[os.fsdecode(key)] = os.fsdecode(value)
+    return env
 
 
 def startup_env(env):
@@ -956,8 +976,9 @@ def why_not_fast(state, req, peer_gid, fds):
         if client.get(key) != daemon.get(key):
             return f"startup env differs: {key}"
     frozen = set(state.import_env_changed) | state.import_env_deleted | state.import_env_read
+    env = {**req.env, **state.interpreter_env}  # the tool's at import time, natively
     for key in sorted(frozen):
-        if req.env.get(key) != state.pre_import_env.get(key):
+        if env.get(key) != state.pre_import_env.get(key):
             return f"import-time env differs: {key}"
     for fd, was in sorted(state.import_tty_read.items()):
         if _os_isatty(fds[fd]) != was:
@@ -1017,6 +1038,8 @@ def apply_request(state, req, fds):
     # clear()/update() also call unsetenv()/putenv() for C code and children.
     os.environ.clear()
     os.environ.update(req.env)
+    # Same startup env as ours (why_not_fast): CPython would set the same.
+    os.environ.update(state.interpreter_env)
     for key in state.import_env_deleted:
         os.environ.pop(key, None)
     os.environ.update(state.import_env_changed)
