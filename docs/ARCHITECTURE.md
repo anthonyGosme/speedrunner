@@ -298,6 +298,7 @@ Une release est un seul fichier : le client embarque les trois démons et le hoo
   - ne compter que les `class`/`module` du corps du fichier : un `class << self` dans une méthode (metaid.rb de puppet) s'exécute à chaque appel, depuis d'autres fichiers ;
   - retirer les adresses des noms de classes anonymes (`#<Class:0x…>::Config` dans psych) ;
   - appeler `Module#name` par `instance_method` : puppet le redéfinit sur certaines classes, qui renvoient un Symbol. Le traceur ne doit jamais lever : une exception levée dans un TracePoint remonte dans le chargement qu'il observe.
+- **Un SIGCHLD qui tombe hors de `poll` ne réveille personne.** Le démon PHP voit la fin de fichier du socket de contrôle d'un enfant, son `waitpid` passe avant que l'enfant soit ramassable, puis le signal arrive pendant que PHP exécute la boucle : le `poll` suivant dormait jusqu'à 4 h, et le client attendait son W (vu une fois sur psalm, dans le panel). Tant qu'un enfant a fermé son socket de contrôle sans avoir été ramassé, le parent reregarde après 5 ms. Python (`signal.set_wakeup_fd`) et Ruby (self-pipe écrit par `trap`) ne sont pas exposés.
 - **`subprocess` avec `timeout`** attend par paliers croissants, plafonnés à 50 ms : une mesure de temps doit attendre sans timeout.
 - **Faux serveurs dans les tests.** Un processus forké depuis le lanceur de tests doit finir par `os._exit` quoi qu'il arrive, sinon il exécute le reste de la suite en parallèle. Un faux serveur qui écrit à un client parti meurt de `BrokenPipe`. Dans les deux cas, on obtient un démon fantôme.
 

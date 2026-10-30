@@ -248,6 +248,17 @@ class Concurrency(m.Matrix):
         self.assertEqual(len({r.stdout.splitlines()[0] for r in results}), 10)
 
 
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_quick_calls_in_a_row_never_hang(self):
+        # A child whose exit the daemon learns of after its last wakeup must
+        # still be reaped: else its client waits for the status forever. The
+        # race is narrow (psalm hit it in a panel run): a smoke test.
+        cmd, extra = m.command("hs", ["phptest", "exit", "int:3"], True)
+        for i in range(500):
+            p = subprocess.run(cmd, env={**m.BASE_ENV, **extra}, capture_output=True, timeout=10)
+            self.assertEqual(p.returncode, 3, f"call {i}: {p.stderr!r}")
+
+
 class Teardown(m.Matrix):
     def test_unclosed_file_flushed_before_exit(self):
         for mode in ("native", "hs"):

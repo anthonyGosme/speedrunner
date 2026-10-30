@@ -770,6 +770,15 @@ final class Daemon
                 $i++;
             }
             $timeout = max(1.0, $lastActivity + $idle - self::now());
+            // A child whose control socket closed is exiting, but may not have
+            // been reapable at the last waitpid; its SIGCHLD then came while
+            // PHP ran here, outside poll, and wakes nothing: look again soon.
+            foreach ($children as $ch) {
+                if ($ch['ctl'] === null) {
+                    $timeout = 0.005;
+                    break;
+                }
+            }
             $r = $c->poll($pfds, $n, (int) ($timeout * 1000));
             $i = 0;
             foreach ($watch as $pid => $fd) {
