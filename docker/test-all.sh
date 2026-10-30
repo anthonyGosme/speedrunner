@@ -15,7 +15,10 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 jobs=${JOBS:-$(( $(getconf _NPROCESSORS_ONLN) / 2 > 0 ? $(getconf _NPROCESSORS_ONLN) / 2 : 1 ))}
-logs=docker/logs/$(echo "${PLATFORM:-native}" | tr / -)  # docker/logs/linux-arm64
+# Always explicit: a base image pulled for another platform keeps its tag,
+# and would then be used, emulated (QEMU has no ptrace), for "native" runs.
+PLATFORM=${PLATFORM:-$(docker version --format '{{.Server.Os}}/{{.Server.Arch}}')}
+logs=docker/logs/$(echo "$PLATFORM" | tr / -)  # docker/logs/linux-arm64
 mkdir -p "$logs"
 
 # target | dockerfile | build args | run options | suites
@@ -39,8 +42,8 @@ wanted() {
   local t; for t in "$@"; do [ "$t" = "$name" ] && return 0; done; return 1
 }
 
-platform=${PLATFORM:+--platform $PLATFORM}
-arch=${PLATFORM:-native}
+platform="--platform $PLATFORM"
+arch=$PLATFORM
 echo "building the static client ($arch)"
 bin=client/target/docker-${arch//\//-}/speedrunner
 mkdir -p "$(dirname "$bin")"
