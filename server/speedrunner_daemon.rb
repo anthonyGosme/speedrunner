@@ -32,8 +32,7 @@ module Speedrunner
   # cannot honour a client whose values differ from the daemon's.
   STARTUP_ENV_PREFIXES = %w[RUBY GEM_].freeze
   STARTUP_ENV_KEYS = %w[LC_ALL LC_CTYPE LANG].freeze
-  O_CLOEXEC = 0o2000000
-  O_DIRECTORY = 0o200000
+  IN_CLOEXEC = 0o2000000 # O_CLOEXEC: the same on x86 and arm64 (asm-generic)
   DAEMON_FILE = File.expand_path(__FILE__)
   PARENT_PID = Process.pid
   LOG = STDERR.dup
@@ -327,7 +326,7 @@ module Speedrunner
       @add = Fiddle::Function.new(libc["inotify_add_watch"],
                                   [Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT],
                                   Fiddle::TYPE_INT)
-      fd = init.call(File::NONBLOCK | O_CLOEXEC)
+      fd = init.call(File::NONBLOCK | IN_CLOEXEC)
       @io = fd >= 0 ? IO.for_fd(fd, autoclose: false) : nil
     end
 
@@ -913,11 +912,15 @@ module Speedrunner
   # --- parent: accept loop -------------------------------------------------
 
   def self.open_runtime_dir(path)
-    dir = File.open(path, File::RDONLY | File::NOFOLLOW | O_DIRECTORY | O_CLOEXEC)
+    # Ruby has no File::DIRECTORY, and O_DIRECTORY's value depends on the
+    # architecture (0o200000 on x86, O_DIRECT on arm64): check the type on
+    # the open fd instead. NONBLOCK: a FIFO put there must not block us.
+    # Ruby opens close-on-exec by itself.
+    dir = File.open(path, File::RDONLY | File::NOFOLLOW | File::NONBLOCK)
     st = dir.stat
-    unless st.uid == Process.uid && (st.mode & 0o7777) == 0o700
+    unless st.directory? && st.uid == Process.uid && (st.mode & 0o7777) == 0o700
       dir.close
-      raise "#{path} must be owned by uid #{Process.uid} with mode 0700"
+      raise "#{path} must be a directory owned by uid #{Process.uid} with mode 0700"
     end
     # Ruby 3.1 has no fchdir: chdir by path, then check it is still that one.
     Dir.chdir(path)
