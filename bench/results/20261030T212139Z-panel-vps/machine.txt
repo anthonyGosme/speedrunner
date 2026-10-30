@@ -1,0 +1,8 @@
+Linux my-vps 6.1.0-50-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.1.176-1 (2026-07-02) x86_64 GNU/Linux
+2
+               total        used        free      shared  buff/cache   available
+Mem:            1857        1232         255          16         557         625
+Swap:           3071        2363         708
+Python 3.11.2
+ruby 3.1.2p20 (2022-04-12 revision 4491bb740a) [x86_64-linux-gnu]
+PHP 8.2.35 (cli) (built: Oct 21 2026 06:29:51) (NTS)

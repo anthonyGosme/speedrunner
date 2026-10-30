@@ -1,0 +1,27 @@
+{
+ "modules": [
+  "distro",
+  "distro.distro",
+  "conan.cli.args",
+  "conan.cli.formatters.audit.vulnerabilities",
+  "conan.cli.formatters.audit",
+  "conan.cli.formatters",
+  "conan.cli.formatters.graph",
+  "conan.cli.formatters.graph.graph",
+  "conan.cli.formatters.graph.graph_info_text",
+  "conan.cli.formatters.graph.info_graph_dot",
+  "conan.cli.formatters.graph.info_graph_html",
+  "conan.cli.commands.list",
+  "conan.cli.formatters.list",
+  "conan.cli.formatters.list.list",
+  "conan.cli.formatters.list.search_table_html",
+  "conan.cli.commands.export",
+  "conan.cli.formatters.graph.build_order_html",
+  "conan.cli.formatters.report",
+  "conan.cli.formatters.report.diff",
+  "conan.cli.formatters.report.diff_html"
+ ],
+ "paths": [],
+ "blacklist": {},
+ "files": []
+}

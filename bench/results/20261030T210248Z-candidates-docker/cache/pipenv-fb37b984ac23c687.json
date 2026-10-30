@@ -1,0 +1,9 @@
+{
+ "modules": [
+  "pkgutil",
+  "pipenv.utils.display"
+ ],
+ "paths": [],
+ "blacklist": {},
+ "files": []
+}

@@ -2,19 +2,25 @@
 tool-specific setup (`speedrunner run TOOL -- ARGS`, as `srr TOOL ARGS`).
 
 For each command:
-  native, speedrunner  median wall time over RUNS runs; speedrunner with a
-                       warm daemon (warmed by a few calls, then the fast path
-                       required: a fallback would be reported, not measured)
+  native, speedrunner  wall time over RUNS runs each, the two interleaved so
+                       that a drift of the machine affects both alike: n,
+                       mean, median, standard deviation, min, max and the
+                       samples themselves; speedrunner with a warm daemon
+                       (warmed by a few calls, then the fast path required: a
+                       fallback would be reported, not measured)
+  speedup              ratio of the medians, with its 95% confidence interval
+                       (bootstrap: medians of resampled runs)
   identical            exit code, stdout and stderr equal to a native run,
                        printed durations aside ("in 0.01s")
   pss_mb               the daemon's memory: PSS of its parent and its spare
 Each daemon is stopped after its command, to keep the machine's memory free.
 
 Usage: python3 panel.py <speedrunner binary> <out_dir>
-Env:   RUNS (default 10), PANEL_ONLY (comma-separated runtimes or tools).
+Env:   RUNS (default 20), PANEL_ONLY (comma-separated runtimes or tools).
 """
 import json
 import os
+import random
 import re
 import shutil
 import statistics
@@ -45,6 +51,21 @@ TIMES = re.compile(rb"\d+(\.\d+)?\s?(ms|s|seconds?)\b|(?<!\d)\d\d:\d\d:\d\d(?!\d
 # extra working directories, "{scratch}" and "{work}" filled in.
 EXTRA_ENV = {}
 CWDS = {}
+
+def stats(times):
+    return {"n": len(times), "mean": round(statistics.mean(times), 1),
+            "median": round(statistics.median(times), 1), "sd": round(statistics.stdev(times), 1),
+            "min": round(min(times), 1), "max": round(max(times), 1),
+            "samples": [round(t, 2) for t in times]}
+
+
+def speedup_ci(native, fast, rounds=2000):
+    """95% interval of median(native) / median(fast), by bootstrap."""
+    rng = random.Random(0)
+    ratios = sorted(statistics.median(rng.choices(native, k=len(native))) /
+                    statistics.median(rng.choices(fast, k=len(fast))) for _ in range(rounds))
+    return [round(ratios[int(rounds * 0.025)], 2), round(ratios[int(rounds * 0.975) - 1], 2)]
+
 
 # runtime, label, argv, cwd ("work": the samples' directory), normalize durations
 PANEL = [
@@ -91,7 +112,7 @@ PANEL = [
 
 def main():
     sr, out = sys.argv[1], sys.argv[2]
-    runs = int(os.environ.get("RUNS", "10"))
+    runs = int(os.environ.get("RUNS", "20"))
     only = set(filter(None, os.environ.get("PANEL_ONLY", "").split(",")))
     os.makedirs(out, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="sr-panel-")
@@ -129,13 +150,18 @@ def main():
                               stderr=subprocess.PIPE if capture else subprocess.DEVNULL,
                               timeout=120 if capture else None)
 
-    def median_ms(argv, cwd, extra=None):
-        times = []
+    def timed_ms(argv, cwd, extra=None):
+        t0 = time.perf_counter()
+        run(argv, cwd, extra, capture=False)
+        return (time.perf_counter() - t0) * 1000
+
+    def interleaved_ms(*commands):
+        """Each command's times over `runs` rounds, one run of each per round."""
+        times = [[] for _ in commands]
         for _ in range(runs):
-            t0 = time.perf_counter()
-            run(argv, cwd, extra, capture=False)
-            times.append((time.perf_counter() - t0) * 1000)
-        return statistics.median(times), statistics.stdev(times)
+            for t, command in zip(times, commands):
+                t.append(timed_ms(*command))
+        return times
 
     def target(argv):
         return argv[:2] if argv[0] == "php" else argv[:1]
@@ -181,7 +207,8 @@ def main():
         check = run(fast_argv, cwd, {"SPEEDRUNNER_REQUIRE_FAST": "1"})
         if check.returncode == 124:
             row["error"] = "not fast: " + check.stderr.decode(errors="replace").strip()[-200:]
-            row["native_ms"] = round(median_ms(argv, cwd)[0], 1)
+            native_t, = interleaved_ms((argv, cwd))
+            row.update(native_ms=round(statistics.median(native_t), 1), native=stats(native_t))
         else:
             norm = (lambda b: TIMES.sub(b"<t>", b)) if times else (lambda b: b)
             same = (native.returncode, norm(native.stdout), norm(native.stderr)) == \
@@ -193,31 +220,41 @@ def main():
                                "stdout_equal": norm(native.stdout) == norm(check.stdout),
                                "stderr_native": native.stderr.decode(errors="replace")[-300:],
                                "stderr_fast": check.stderr.decode(errors="replace")[-300:]}
-            n, n_sd = median_ms(argv, cwd)
-            f, f_sd = median_ms(fast_argv, cwd, {"SPEEDRUNNER_REQUIRE_FAST": "1"})
-            row.update(native_ms=round(n, 1), native_sd=round(n_sd, 1), fast_ms=round(f, 1),
-                       fast_sd=round(f_sd, 1), speedup=round(n / f, 2))
+            native_t, fast_t = interleaved_ms((argv, cwd), (fast_argv, cwd, {"SPEEDRUNNER_REQUIRE_FAST": "1"}))
+            n, f = stats(native_t), stats(fast_t)
+            row.update(native_ms=n["median"], native_sd=n["sd"], fast_ms=f["median"], fast_sd=f["sd"],
+                       speedup=round(statistics.median(native_t) / statistics.median(fast_t), 2),
+                       speedup_ci95=speedup_ci(native_t, fast_t), native=n, fast=f)
             m = re.search(r"pid=(\d+)", status(argv, cwd))
             if m:
                 row["pss_mb"] = pss_mb(int(m.group(1)))
         run([sr, "stop", *target(argv)], cwd)
         results.append(row)
-        print(f"{label:32} " + json.dumps({k: v for k, v in row.items() if k not in ('runtime', 'command')}),
-              flush=True)
+        print(f"{label:32} " + json.dumps({k: v for k, v in row.items()
+                                           if k not in ('runtime', 'command', 'native', 'fast')}), flush=True)
 
     # The learned sets, to estimate one daemon per environment (bench/union.py).
     shutil.copytree(os.path.join(scratch, "cache", "speedrunner"), os.path.join(out, "cache"),
                     dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.tmp"))
     with open(os.path.join(out, "panel.json"), "w") as f:
         json.dump({"runs": runs, "results": results}, f, indent=1)
-    lines = ["| Runtime | Command | Native (ms) | speedrunner (ms) | Speedup | Identical | Daemon PSS (MB) |",
-             "|---|---|---|---|---|---|---|"]
+    # Per command: median, mean ± standard deviation and min–max, in ms.
+    def cell(st):
+        return f"{st['median']} | {st['mean']} ± {st['sd']} | {st['min']}–{st['max']}"
+    lines = [f"Wall time in ms over {runs} interleaved runs each; speedup = ratio of the medians, "
+             "with its 95% bootstrap confidence interval.", "",
+             "| Runtime | Command | Native median | Native mean ± sd | Native min–max | speedrunner median "
+             "| speedrunner mean ± sd | speedrunner min–max | Speedup | 95% CI | Identical | Daemon PSS (MB) |",
+             "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|"]
     for r in results:
         if "error" in r:
-            lines.append(f"| {r['runtime']} | `{r['command']}` | {r.get('native_ms', '')} | — | — | {r['error']} | |")
+            native = cell(r["native"]) if "native" in r else " | | "
+            lines.append(f"| {r['runtime']} | `{r['command']}` | {native} | — | — | — | — | — | {r['error']} | |")
         else:
-            lines.append(f"| {r['runtime']} | `{r['command']}` | {r['native_ms']} | {r['fast_ms']} | x{r['speedup']} "
-                         f"| {'yes' if r['identical'] else 'NO'} | {r.get('pss_mb', '')} |")
+            ci = r["speedup_ci95"]
+            lines.append(f"| {r['runtime']} | `{r['command']}` | {cell(r['native'])} | {cell(r['fast'])} "
+                         f"| x{r['speedup']} | x{ci[0]}–x{ci[1]} | {'yes' if r['identical'] else 'NO'} "
+                         f"| {r.get('pss_mb', '')} |")
     with open(os.path.join(out, "summary.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))

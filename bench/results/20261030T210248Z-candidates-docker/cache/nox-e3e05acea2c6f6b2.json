@@ -1,0 +1,10 @@
+{
+ "modules": [
+  "pkgutil",
+  "email.parser",
+  "email.feedparser"
+ ],
+ "paths": [],
+ "blacklist": {},
+ "files": []
+}

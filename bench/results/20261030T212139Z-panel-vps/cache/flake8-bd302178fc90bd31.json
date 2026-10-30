@@ -1,0 +1,15 @@
+{
+ "modules": [
+  "pkgutil",
+  "email.parser",
+  "email.feedparser",
+  "optparse",
+  "pycodestyle",
+  "pyflakes.checker",
+  "pyflakes",
+  "pyflakes.messages"
+ ],
+ "paths": [],
+ "blacklist": {},
+ "files": []
+}

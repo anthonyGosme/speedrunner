@@ -1,0 +1,3 @@
+{
+ "checkov.main": "reads the command line at import"
+}

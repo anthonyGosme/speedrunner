@@ -1,0 +1,12 @@
+{
+ "modules": [
+  "openstackclient.command",
+  "keystoneauth1.token_endpoint",
+  "keystoneauth1.http_basic",
+  "keystoneauth1.noauth",
+  "keystoneauth1.extras.oauth1.v3"
+ ],
+ "paths": [],
+ "blacklist": {},
+ "files": []
+}
