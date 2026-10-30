@@ -1,0 +1,21 @@
+{
+ "modules": [
+  "rich.console",
+  "dataclasses",
+  "inspect",
+  "dis",
+  "opcode",
+  "_opcode",
+  "rich.themes",
+  "rich._export_format",
+  "rich._fileno",
+  "rich.markup",
+  "rich.pager",
+  "rich.region",
+  "rich.screen",
+  "rich.styled"
+ ],
+ "paths": [],
+ "blacklist": {},
+ "files": []
+}

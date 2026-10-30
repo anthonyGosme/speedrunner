@@ -1,0 +1,12 @@
+{
+  "modules": [
+    "/root/speedrunner/gems-rb/gems/jekyll-4.4.1/lib/jekyll/plugin_manager.rb",
+    "/root/speedrunner/gems-rb/gems/jekyll-4.4.1/lib/jekyll/deprecator.rb",
+    "/root/speedrunner/gems-rb/gems/mercenary-0.4.0/lib/mercenary/program.rb",
+    "/root/speedrunner/gems-rb/gems/mercenary-0.4.0/lib/mercenary/command.rb",
+    "/root/speedrunner/gems-rb/gems/jekyll-4.4.1/lib/jekyll/version.rb",
+    "/root/speedrunner/gems-rb/gems/mercenary-0.4.0/lib/mercenary/option.rb"
+  ],
+  "gems": [],
+  "blacklist": {}
+}

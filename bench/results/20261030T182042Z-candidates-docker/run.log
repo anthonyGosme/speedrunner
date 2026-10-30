@@ -1,0 +1,96 @@
+dbt --help                       {"identical": true, "native_rc": 0, "native_ms": 3091.0, "native_sd": 45.9, "fast_ms": 38.8, "fast_sd": 3.2, "speedup": 79.61, "pss_mb": 167.8}
+dbt ls                           {"identical": true, "native_rc": 0, "native_ms": 4567.9, "native_sd": 58.4, "fast_ms": 1342.2, "fast_sd": 12.6, "speedup": 3.4, "pss_mb": 179.0}
+airflow version                  {"identical": true, "native_rc": 0, "native_ms": 2685.1, "native_sd": 127.3, "fast_ms": 117.3, "fast_sd": 2.8, "speedup": 22.9, "pss_mb": 141.5}
+checkov --version                {"identical": true, "native_rc": 0, "native_ms": 3630.2, "native_sd": 195.6, "fast_ms": 293.0, "fast_sd": 13.6, "speedup": 12.39, "pss_mb": 159.3}
+cfn-lint template.yaml           {"identical": true, "native_rc": 0, "native_ms": 1538.6, "native_sd": 20.6, "fast_ms": 420.5, "fast_sd": 9.9, "speedup": 3.66, "pss_mb": 141.5}
+sam --version                    {"identical": true, "native_rc": 0, "native_ms": 160.2, "native_sd": 4.5, "fast_ms": 18.2, "fast_sd": 2.9, "speedup": 8.8, "pss_mb": 38.4}
+openstack --version              {"identical": true, "native_rc": 0, "native_ms": 1232.4, "native_sd": 37.2, "fast_ms": 55.7, "fast_sd": 9.4, "speedup": 22.14, "pss_mb": 65.3}
+oci --version                    {"identical": true, "native_rc": 0, "native_ms": 800.2, "native_sd": 9.5, "fast_ms": 273.1, "fast_sd": 8.4, "speedup": 2.93, "pss_mb": 88.2}
+pylint --version                 {"identical": true, "native_rc": 0, "native_ms": 202.3, "native_sd": 3.4, "fast_ms": 15.4, "fast_sd": 2.3, "speedup": 13.14, "pss_mb": 41.9}
+pylint sample.py                 {"identical": true, "native_rc": 16, "native_ms": 697.8, "native_sd": 9.4, "fast_ms": 350.2, "fast_sd": 8.8, "speedup": 1.99, "pss_mb": 64.8}
+sqlfluff lint sample.sql         {"identical": true, "native_rc": 1, "native_ms": 735.2, "native_sd": 8.8, "fast_ms": 156.8, "fast_sd": 4.4, "speedup": 4.69, "pss_mb": 66.7}
+pgcli --version                  {"identical": true, "native_rc": 0, "native_ms": 504.9, "native_sd": 6.3, "fast_ms": 22.0, "fast_sd": 3.8, "speedup": 22.91, "pss_mb": 96.7}
+mycli --version                  {"identical": true, "native_rc": 0, "native_ms": 627.1, "native_sd": 12.0, "fast_ms": 23.0, "fast_sd": 4.0, "speedup": 27.32, "pss_mb": 122.8}
+litecli --version                {"identical": true, "native_rc": 0, "native_ms": 359.8, "native_sd": 6.3, "fast_ms": 20.2, "fast_sd": 3.4, "speedup": 17.79, "pss_mb": 54.7}
+yt-dlp --version                 {"identical": true, "native_rc": 0, "native_ms": 306.0, "native_sd": 14.6, "fast_ms": 24.7, "fast_sd": 4.0, "speedup": 12.39, "pss_mb": 37.1}
+meson --version                  {"identical": true, "native_rc": 0, "native_ms": 428.7, "native_sd": 13.6, "fast_ms": 48.9, "fast_sd": 3.3, "speedup": 8.77, "pss_mb": 53.7}
+conan --version                  {"identical": true, "native_rc": 0, "native_ms": 441.8, "native_sd": 5.5, "fast_ms": 41.5, "fast_sd": 2.6, "speedup": 10.65, "pss_mb": 63.6}
+pio --version                    {"identical": true, "native_rc": 0, "native_ms": 303.6, "native_sd": 6.7, "fast_ms": 24.0, "fast_sd": 2.7, "speedup": 12.65, "pss_mb": 53.3}
+mkdocs --version                 {"identical": true, "native_rc": 0, "native_ms": 156.7, "native_sd": 3.8, "fast_ms": 17.9, "fast_sd": 1.6, "speedup": 8.76, "pss_mb": 39.0}
+pipenv --version                 {"identical": true, "native_rc": 0, "native_ms": 598.8, "native_sd": 6.3, "fast_ms": 36.4, "fast_sd": 1.7, "speedup": 16.45, "pss_mb": 61.6}
+pdm --version                    {"identical": true, "native_rc": 0, "native_ms": 496.9, "native_sd": 4.4, "fast_ms": 81.0, "fast_sd": 2.1, "speedup": 6.14, "pss_mb": 58.4}
+hatch --version                  {"identical": true, "native_rc": 0, "native_ms": 159.7, "native_sd": 7.3, "fast_ms": 16.9, "fast_sd": 1.5, "speedup": 9.44, "pss_mb": 38.3}
+twine --version                  {"identical": true, "native_rc": 0, "native_ms": 278.9, "native_sd": 5.6, "fast_ms": 34.7, "fast_sd": 2.5, "speedup": 8.04, "pss_mb": 49.9}
+bandit --version                 {"identical": true, "native_rc": 0, "native_ms": 239.4, "native_sd": 4.7, "fast_ms": 20.6, "fast_sd": 3.7, "speedup": 11.62, "pss_mb": 43.7}
+codespell --version              {"identical": true, "native_rc": 0, "native_ms": 62.1, "native_sd": 2.7, "fast_ms": 17.9, "fast_sd": 1.1, "speedup": 3.46, "pss_mb": 20.4}
+cookiecutter --version           {"identical": true, "native_rc": 0, "native_ms": 354.3, "native_sd": 20.5, "fast_ms": 21.5, "fast_sd": 2.4, "speedup": 16.49, "pss_mb": 52.5}
+copier --version                 {"identical": true, "native_rc": 0, "native_ms": 646.9, "native_sd": 6.7, "fast_ms": 20.1, "fast_sd": 3.1, "speedup": 32.11, "pss_mb": 95.6}
+nox --version                    {"identical": true, "native_rc": 0, "native_ms": 220.2, "native_sd": 5.4, "fast_ms": 23.5, "fast_sd": 2.5, "speedup": 9.36, "pss_mb": 41.7}
+command-not-found sl             {"identical": true, "native_rc": 127, "native_ms": 86.9, "native_sd": 5.4, "fast_ms": 20.8, "fast_sd": 2.2, "speedup": 4.18, "pss_mb": 26.6}
+fastlane --version               {"identical": true, "native_rc": 0, "native_ms": 2604.2, "native_sd": 41.4, "fast_ms": 721.3, "fast_sd": 48.9, "speedup": 3.61, "pss_mb": 112.8}
+kamal version                    {"identical": true, "native_rc": 0, "native_ms": 717.2, "native_sd": 12.5, "fast_ms": 147.4, "fast_sd": 2.9, "speedup": 4.87, "pss_mb": 33.1}
+cap --version                    {"identical": true, "native_rc": 0, "native_ms": 557.4, "native_sd": 15.1, "fast_ms": 72.2, "fast_sd": 1.9, "speedup": 7.72, "pss_mb": 31.5}
+brakeman --version               {"identical": true, "native_rc": 0, "native_ms": 172.4, "native_sd": 4.0, "fast_ms": 21.3, "fast_sd": 2.7, "speedup": 8.1, "pss_mb": 16.8}
+standardrb sample.rb             {"identical": true, "native_rc": 0, "native_ms": 2633.1, "native_sd": 50.4, "fast_ms": 1039.5, "fast_sd": 43.4, "speedup": 2.53, "pss_mb": 66.8}
+asciidoctor sample.adoc          {"identical": true, "native_rc": 0, "native_ms": 265.3, "native_sd": 3.7, "fast_ms": 35.3, "fast_sd": 2.5, "speedup": 7.51, "pss_mb": 20.2}
+puppet --version                 {"identical": true, "native_rc": 0, "native_ms": 1553.8, "native_sd": 31.4, "fast_ms": 530.2, "fast_sd": 7.7, "speedup": 2.93, "pss_mb": 51.3}
+jekyll --version                 {"identical": true, "native_rc": 0, "native_ms": 748.2, "native_sd": 5.3, "fast_ms": 106.4, "fast_sd": 2.3, "speedup": 7.03, "pss_mb": 31.8}
+wp --version                     {"error": "not fast: speedrunner: fast path unavailable: not a script of a runtime speedrunner serves", "native_ms": 202.4}
+php bin/console --version        {"identical": true, "native_rc": 0, "native_ms": 130.3, "native_sd": 11.5, "fast_ms": 36.6, "fast_sd": 3.7, "speedup": 3.56, "pss_mb": 40.1}
+php bin/console list             {"identical": true, "native_rc": 0, "native_ms": 157.8, "native_sd": 12.1, "fast_ms": 40.2, "fast_sd": 4.2, "speedup": 3.93, "pss_mb": 40.2}
+drush --version                  {"error": "not fast: speedrunner: fast path unavailable: not a script of a runtime speedrunner serves", "native_ms": 210.9}
+pint --version                   {"identical": true, "native_rc": 0, "native_ms": 330.4, "native_sd": 8.8, "fast_ms": 176.0, "fast_sd": 5.4, "speedup": 1.88, "pss_mb": 39.8}
+infection --version              {"identical": true, "native_rc": 0, "native_ms": 103.3, "native_sd": 3.2, "fast_ms": 30.7, "fast_sd": 2.7, "speedup": 3.37, "pss_mb": 40.1}
+phpmd --version                  {"identical": true, "native_rc": 0, "native_ms": 85.2, "native_sd": 2.7, "fast_ms": 30.2, "fast_sd": 3.8, "speedup": 2.82, "pss_mb": 40.0}
+dep --version                    {"identical": true, "native_rc": 0, "native_ms": 96.8, "native_sd": 4.9, "fast_ms": 37.2, "fast_sd": 3.0, "speedup": 2.6, "pss_mb": 40.1}
+behat --version                  {"identical": true, "native_rc": 0, "native_ms": 236.8, "native_sd": 3.2, "fast_ms": 113.5, "fast_sd": 3.1, "speedup": 2.09, "pss_mb": 40.5}
+pest --version                   {"identical": true, "native_rc": 0, "native_ms": 103.9, "native_sd": 1.6, "fast_ms": 29.3, "fast_sd": 1.9, "speedup": 3.55, "pss_mb": 40.0}
+| Runtime | Command | Native (ms) | speedrunner (ms) | Speedup | Identical | Daemon PSS (MB) |
+|---|---|---|---|---|---|---|
+| python | `dbt --help` | 3091.0 | 38.8 | x79.61 | yes | 167.8 |
+| python | `dbt ls` | 4567.9 | 1342.2 | x3.4 | yes | 179.0 |
+| python | `airflow version` | 2685.1 | 117.3 | x22.9 | yes | 141.5 |
+| python | `checkov --version` | 3630.2 | 293.0 | x12.39 | yes | 159.3 |
+| python | `cfn-lint template.yaml` | 1538.6 | 420.5 | x3.66 | yes | 141.5 |
+| python | `sam --version` | 160.2 | 18.2 | x8.8 | yes | 38.4 |
+| python | `openstack --version` | 1232.4 | 55.7 | x22.14 | yes | 65.3 |
+| python | `oci --version` | 800.2 | 273.1 | x2.93 | yes | 88.2 |
+| python | `pylint --version` | 202.3 | 15.4 | x13.14 | yes | 41.9 |
+| python | `pylint sample.py` | 697.8 | 350.2 | x1.99 | yes | 64.8 |
+| python | `sqlfluff lint sample.sql` | 735.2 | 156.8 | x4.69 | yes | 66.7 |
+| python | `pgcli --version` | 504.9 | 22.0 | x22.91 | yes | 96.7 |
+| python | `mycli --version` | 627.1 | 23.0 | x27.32 | yes | 122.8 |
+| python | `litecli --version` | 359.8 | 20.2 | x17.79 | yes | 54.7 |
+| python | `yt-dlp --version` | 306.0 | 24.7 | x12.39 | yes | 37.1 |
+| python | `meson --version` | 428.7 | 48.9 | x8.77 | yes | 53.7 |
+| python | `conan --version` | 441.8 | 41.5 | x10.65 | yes | 63.6 |
+| python | `pio --version` | 303.6 | 24.0 | x12.65 | yes | 53.3 |
+| python | `mkdocs --version` | 156.7 | 17.9 | x8.76 | yes | 39.0 |
+| python | `pipenv --version` | 598.8 | 36.4 | x16.45 | yes | 61.6 |
+| python | `pdm --version` | 496.9 | 81.0 | x6.14 | yes | 58.4 |
+| python | `hatch --version` | 159.7 | 16.9 | x9.44 | yes | 38.3 |
+| python | `twine --version` | 278.9 | 34.7 | x8.04 | yes | 49.9 |
+| python | `bandit --version` | 239.4 | 20.6 | x11.62 | yes | 43.7 |
+| python | `codespell --version` | 62.1 | 17.9 | x3.46 | yes | 20.4 |
+| python | `cookiecutter --version` | 354.3 | 21.5 | x16.49 | yes | 52.5 |
+| python | `copier --version` | 646.9 | 20.1 | x32.11 | yes | 95.6 |
+| python | `nox --version` | 220.2 | 23.5 | x9.36 | yes | 41.7 |
+| python | `command-not-found sl` | 86.9 | 20.8 | x4.18 | yes | 26.6 |
+| ruby | `fastlane --version` | 2604.2 | 721.3 | x3.61 | yes | 112.8 |
+| ruby | `kamal version` | 717.2 | 147.4 | x4.87 | yes | 33.1 |
+| ruby | `cap --version` | 557.4 | 72.2 | x7.72 | yes | 31.5 |
+| ruby | `brakeman --version` | 172.4 | 21.3 | x8.1 | yes | 16.8 |
+| ruby | `standardrb sample.rb` | 2633.1 | 1039.5 | x2.53 | yes | 66.8 |
+| ruby | `asciidoctor sample.adoc` | 265.3 | 35.3 | x7.51 | yes | 20.2 |
+| ruby | `puppet --version` | 1553.8 | 530.2 | x2.93 | yes | 51.3 |
+| ruby | `jekyll --version` | 748.2 | 106.4 | x7.03 | yes | 31.8 |
+| php | `wp --version` | 202.4 | — | — | not fast: speedrunner: fast path unavailable: not a script of a runtime speedrunner serves | |
+| php | `php bin/console --version` | 130.3 | 36.6 | x3.56 | yes | 40.1 |
+| php | `php bin/console list` | 157.8 | 40.2 | x3.93 | yes | 40.2 |
+| php | `drush --version` | 210.9 | — | — | not fast: speedrunner: fast path unavailable: not a script of a runtime speedrunner serves | |
+| php | `pint --version` | 330.4 | 176.0 | x1.88 | yes | 39.8 |
+| php | `infection --version` | 103.3 | 30.7 | x3.37 | yes | 40.1 |
+| php | `phpmd --version` | 85.2 | 30.2 | x2.82 | yes | 40.0 |
+| php | `dep --version` | 96.8 | 37.2 | x2.6 | yes | 40.1 |
+| php | `behat --version` | 236.8 | 113.5 | x2.09 | yes | 40.5 |
+| php | `pest --version` | 103.9 | 29.3 | x3.55 | yes | 40.0 |

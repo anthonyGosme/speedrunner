@@ -39,7 +39,12 @@ SAMPLES = {
                     "    {\n        return \"Hello, {$name}!\";\n    }\n}\n"),
 }
 
-TIMES = re.compile(rb"\d+(\.\d+)?\s?(ms|s|seconds?)\b")
+TIMES = re.compile(rb"\d+(\.\d+)?\s?(ms|s|seconds?)\b|(?<!\d)\d\d:\d\d:\d\d(?!\d)")  # durations, clock times
+
+# Set by another panel (bench/candidates.py): env added to every run and
+# extra working directories, "{scratch}" and "{work}" filled in.
+EXTRA_ENV = {}
+CWDS = {}
 
 # runtime, label, argv, cwd ("work": the samples' directory), normalize durations
 PANEL = [
@@ -93,6 +98,7 @@ def main():
     work = os.path.join(scratch, "work")
     os.makedirs(work)
     for name, text in SAMPLES.items():
+        os.makedirs(os.path.dirname(os.path.join(work, name)), exist_ok=True)
         with open(os.path.join(work, name), "w") as f:
             f.write(text)
     env = {
@@ -109,9 +115,11 @@ def main():
         "CLOUDSDK_CORE_DISABLE_USAGE_REPORTING": "true",
         "CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK": "true",
         "COMPOSER_ALLOW_SUPERUSER": "1", "ANSIBLE_LOCAL_TEMP": os.path.join(scratch, "ansible"),
+        **{k: v.format(scratch=scratch, work=work) for k, v in EXTRA_ENV.items()},
     }
     os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
-    cwds = {None: work, "work": work, "laravel": LARAVEL}
+    cwds = {None: work, "work": work, "laravel": LARAVEL,
+            **{k: v.format(scratch=scratch, work=work) for k, v in CWDS.items()}}
 
     def run(argv, cwd, extra=None, capture=True):
         # No timeout on timed runs: subprocess then polls waitpid in steps of
@@ -163,11 +171,11 @@ def main():
         # Warm up: a few calls (learning), the status settled, the fast path taken.
         for _ in range(3):
             run(fast_argv, cwd)
-        prev, deadline = None, time.monotonic() + 20
+        prev, deadline = None, time.monotonic() + 60
         while time.monotonic() < deadline:
             time.sleep(0.5)
             cur = status(argv, cwd)
-            if cur == prev and cur.startswith("ready"):
+            if cur == prev and cur.startswith("ready") and " learning=" not in cur:
                 break
             prev = cur
         check = run(fast_argv, cwd, {"SPEEDRUNNER_REQUIRE_FAST": "1"})
