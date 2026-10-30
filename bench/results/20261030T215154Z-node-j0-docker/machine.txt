@@ -1,0 +1,6 @@
+Linux c8ca153cb0ca 7.0.14-linuxkit #1 SMP PREEMPT_DYNAMIC Tue Oct 20 23:09:17 UTC 2026 x86_64 GNU/Linux
+12
+               total        used        free      shared  buff/cache   available
+Mem:           11956         772        8361           0        3136       11183
+Swap:           2047           0        2047
+v24.22.2
