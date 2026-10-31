@@ -802,7 +802,8 @@ module Speedrunner
     frozen = state.import_env_changed.keys | state.import_env_deleted | state.import_env_read
     frozen.sort.each do |key|
       pre = state.pre_import_env[key]
-      return "import-time env differs: #{key}" if req.env[b(key)] != (pre && b(pre))
+      theirs = without_links(state, key, req.env[b(key)])
+      return "import-time env differs: #{key}" if theirs != without_links(state, key, pre && b(pre))
     end
     state.import_tty_read.sort.each do |fd, was|
       return "import-time terminal state differs: fd #{fd}" if fds[fd].tty? != was
@@ -1088,6 +1089,17 @@ module Speedrunner
       sleep 0.05
     end
     lock
+  end
+
+  # See without_links in speedrunner_daemon.py.
+  def self.without_links(state, key, value)
+    return value if key != "PATH" || value.nil?
+
+    links = b(File.dirname(state.sock_path))
+    value.split(":", -1).reject do |d|
+      d = d.chomp("/")
+      File.dirname(d) == links && File.basename(d).start_with?("bin-")
+    end.join(":")
   end
 
   # See mark_exiting in speedrunner_daemon.py.

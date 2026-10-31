@@ -8,6 +8,7 @@ Env: as test_matrix.py.
 Run: python3 tests/test_scripts.py -v
 """
 import glob
+import json
 import os
 import re
 import shlex
@@ -95,6 +96,30 @@ class Scripts(ScriptCase):
         p = self.bash(f'eval "$({shlex.quote(HS_BIN)} activate)"' + BODY,
                       SPEEDRUNNER_REQUIRE_FAST="1")
         self.assertEqual(self.native(), m.outcome(p))
+
+    def test_tool_reading_path_at_import_served_under_exec(self):
+        # hstest.lazy_env reads PATH as it loads, as pre-commit does. Its
+        # daemon, started and taught outside any script, must still serve a
+        # script's calls, whose PATH begins with speedrunner's own links.
+        m.wait_ready("hstest", self.env)
+
+        def preloaded():
+            for path in glob.glob(os.path.join(self.env["XDG_CACHE_HOME"], "speedrunner", "hstest-*.json")):
+                with open(path) as f:
+                    if "hstest.lazy_env" in json.load(f).get("modules", []):
+                        return True
+            return False
+
+        deadline = time.monotonic() + 30
+        while not preloaded() or " learning=" in m.status("hstest", self.env):
+            self.assertLess(time.monotonic(), deadline, m.status("hstest", self.env))
+            m.run("hs", ["hstest", "lazy"], env=self.env, require_fast=False)
+            time.sleep(0.3)
+        m.wait_ready("hstest", self.env)
+        native = m.outcome(m.run("native", ["hstest", "lazy"], env=self.env))
+        p = subprocess.run([HS_BIN, "exec", "-t", "hstest", "hstest", "lazy"], capture_output=True, timeout=60,
+                           env={**m.BASE_ENV, **self.env, "SPEEDRUNNER_REQUIRE_FAST": "1"})
+        self.assertEqual(native, m.outcome(p))
 
     def test_native_tool_refused(self):
         p = self.bash(f'eval "$({shlex.quote(HS_BIN)} activate ls)"; command -v ls')

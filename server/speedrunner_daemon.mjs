@@ -408,7 +408,9 @@ function whyNotFast(req, peerGid, fds) {
     if (STARTUP_ENV(key) && req.env[key] !== state.startEnv[key]) return `startup env differs: ${key}`;
   }
   for (const key of reads.env) {
-    if (req.env[key] !== state.importEnv[key]) return `import-time env differs: ${key}`;
+    if (withoutLinks(key, req.env[key]) !== withoutLinks(key, state.importEnv[key])) {
+      return `import-time env differs: ${key}`;
+    }
   }
   if (reads.envKeys) {
     const keys = (env) => Object.keys(env).filter((k) => !VOLATILE_ENV.has(k) && !k.startsWith("SPEEDRUNNER_")).sort().join("\0");
@@ -554,6 +556,16 @@ function serveChild(c) {
 }
 
 // --- parent ---------------------------------------------------------------------------
+
+// See without_links in speedrunner_daemon.py.
+function withoutLinks(key, value) {
+  if (key !== "PATH" || value === undefined) return value;
+  const links = path.dirname(state.sockPath);
+  return value.split(":").filter((d) => {
+    const dir = d.replace(/\/+$/, "");
+    return !(path.dirname(dir) === links && path.basename(dir).startsWith("bin-"));
+  }).join(":");
+}
 
 function markExiting() {
   try {

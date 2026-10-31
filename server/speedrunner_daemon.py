@@ -1022,7 +1022,7 @@ def why_not_fast(state, req, peer_gid, fds):
     frozen = set(state.import_env_changed) | state.import_env_deleted | state.import_env_read
     env = {**req.env, **state.interpreter_env}  # the tool's at import time, natively
     for key in sorted(frozen):
-        if env.get(key) != state.pre_import_env.get(key):
+        if without_links(state, key, env.get(key)) != without_links(state, key, state.pre_import_env.get(key)):
             return f"import-time env differs: {key}"
     for fd, was in sorted(state.import_tty_read.items()):
         if _os_isatty(fds[fd]) != was:
@@ -1657,6 +1657,18 @@ class Parent:
 
     def active(self):
         return any(c.conn is not None for c in self.children.values())
+
+
+def without_links(state, key, value):
+    """PATH without our own link directories (`speedrunner exec`, `activate`):
+    they lead to the very tools the rest of PATH names, so a tool that read
+    PATH as it loaded behaves the same with or without them."""
+    if key != "PATH" or value is None:
+        return value
+    links = os.path.dirname(state.sock_path)
+    return os.pathsep.join(d for d in value.split(os.pathsep)
+                           if not (os.path.dirname(d.rstrip("/")) == links
+                                   and os.path.basename(d.rstrip("/")).startswith("bin-")))
 
 
 def mark_exiting(state):
