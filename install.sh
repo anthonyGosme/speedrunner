@@ -124,7 +124,7 @@ fi
 cat << EOF
 
   speedrunner demo                   # the gain on this machine, with the tools it has
-  srr aws s3 ls                      # one command: any Python, Ruby or PHP tool
+  srr aws s3 ls                      # one command: any Python, Ruby, PHP or Node tool
   speedrunner exec ./script.sh       # a whole script: every tool it calls, preloaded
   eval "\$(speedrunner activate)"     # or this line at the top of the script itself
 
