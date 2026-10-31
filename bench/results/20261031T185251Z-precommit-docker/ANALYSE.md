@@ -28,5 +28,5 @@ Au premier passage, `speedrunner exec pre-commit run` ne gagnait rien. pre-commi
 
 ## Pistes
 
-- Servir pre-commit quand git lance le hook : le script installé se termine par un `if … exec python -m pre_commit … elif …`, que le suivi des lanceurs (une commande `exec` finale) ne reconnaît pas.
+- Servir pre-commit quand git lance le hook : le script installé se termine par un `if … exec python -m pre_commit … elif …`, que le suivi des lanceurs (une commande `exec` finale) ne reconnaît pas. Fait depuis : `speedrunner exec git commit` passe à 306 ms, voir [20261031T214045Z-precommit-hook-docker](../20261031T214045Z-precommit-hook-docker/ANALYSE.md).
 - Servir les hooks `language: python` : il faudrait intercepter l'exécution par chemin absolu (hors de portée d'un dossier de liens).
