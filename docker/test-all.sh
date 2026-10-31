@@ -40,6 +40,9 @@ for v in 8.1 8.2 8.3 8.4; do TARGETS+=("php$v|docker/lang/php.Dockerfile|VERSION
 # Node: module.registerHooks, which learning needs, is in 22.15 and later.
 for v in 22 24; do TARGETS+=("node$v|docker/lang/node.Dockerfile|VERSION=$v-bookworm-slim||suites node"); done
 TARGETS+=("node24-alpine|docker/lang/node.Dockerfile|VERSION=24-alpine||suites node")  # the musl addon
+# Races: parallel calls while daemons restart, with a terminal as CI has.
+TARGETS+=("stress|docker/Dockerfile||-t|suites stress")
+TARGETS+=("stress-node|docker/lang/node.Dockerfile|VERSION=24-bookworm-slim|-t|suites stress")
 
 wanted() {
   [ $# -eq 0 ] && return 0
@@ -65,6 +68,7 @@ run_target() {
   local image=speedrunner-test-$1-${arch//\//-}
   cmd=${cmd:-$5}
   local build=(docker build -q $platform -t "$image" -f "$file")
+  [ -n "${STRESS_SECONDS:-}" ] && opts="$opts -e STRESS_SECONDS=$STRESS_SECONDS"
   [ -n "$args" ] && build+=(--build-arg "$args")
   {
     echo "\$ ${build[*]} docker"
@@ -92,7 +96,7 @@ wait
 
 # One row per target: each suite's result, from its "== suite" block.
 failed=0
-printf "%-14s %-8s %-8s %-8s %-8s %-8s %-8s\n" target matrix shell scripts ruby php node
+printf "%-14s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" target matrix shell scripts ruby php node stress
 for t in "${selected[@]}"; do
   IFS='|' read -r name _ <<< "$t"
   log=$logs/$name.log
@@ -100,13 +104,13 @@ for t in "${selected[@]}"; do
 import re, sys
 text = open(sys.argv[1], errors="replace").read()
 cells = []
-for suite in ("matrix", "shell", "scripts", "ruby", "php", "node"):
+for suite in ("matrix", "shell", "scripts", "ruby", "php", "node", "stress"):
     m = re.search(rf"^== {suite}\n(.*?)(?=^== |\Z)", text, re.S | re.M)
     if not m:
         cells.append("-")
         continue
     body = m.group(1)
-    ran = re.search(r"Ran (\d+) tests", body)
+    ran = re.search(r"Ran (\d+) tests?", body)
     ok = re.search(r"^OK", body, re.M)
     cells.append(f"{'ok' if ok else 'FAIL'}:{ran.group(1) if ran else '?'}")
 print(" ".join(f"{c:<8}" for c in cells))

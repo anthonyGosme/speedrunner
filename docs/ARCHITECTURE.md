@@ -28,6 +28,7 @@ tests/
   test_ruby.py            matrice Ruby (rbtest), sur le harnais de test_matrix.py
   test_php.py             matrice PHP (phptest, composer, artisan)
   test_node.py            matrice Node (nodetest, nodetty)
+  test_stress.py          courses : appels parallèles pendant que les démons s'arrêtent, meurent, se périment
   test_scripts.py         activate, exec, mode automatique
   fixture/hstest/         outil de test Python : une sous-commande par comportement
   fixture/rbtest/         outil de test Ruby : une gem avec un vrai binstub
@@ -142,7 +143,7 @@ Socket de contrôle parent ↔ enfant : `A` (+ fd client : « j'ai accepté »),
 2. **Ouverture du socket avant le préchargement.** Un appel qui arrive pendant le démarrage attend le premier spare, au plus 3 s, au lieu de partir en natif. Le dossier runtime est vérifié par `fstat` sur un fd (propriétaire = nous, mode exactement 0700), et le démon travaille ensuite relativement à ce fd. Socket en 0600, umask d'origine rétabli juste après.
 3. **Préchargement** (§6), vérification des threads Python et natifs (`/proc/self/task`), calcul de l'empreinte et des watches inotify (§7).
 4. **Service.** Boucle du parent : spare, `on_ctl` (A/L), `reap` (W), application de l'apprentissage quand aucun enfant n'est actif.
-5. **Arrêt** : `S` (stop), empreinte périmée (SIGUSR1 envoyé par un enfant), fichier surveillé modifié, 4 h d'inactivité (`SPEEDRUNNER_IDLE_TIMEOUT`), ou import appris qui se comporte mal (le démon suivant le met en liste noire). En sortant, il écrit `exiting <pid>` dans le verrou, supprime son socket (seulement si c'est encore le sien, d'après l'inode), puis relâche le verrou. Les spares voient la fin de fichier sur leur socket de contrôle et sortent.
+5. **Arrêt** : `S` (stop), empreinte périmée (SIGUSR1 envoyé par un enfant), fichier surveillé modifié, 4 h d'inactivité (`SPEEDRUNNER_IDLE_TIMEOUT`), ou import appris qui se comporte mal (le démon suivant le met en liste noire). Il se retire d'abord : il écrit `exiting <pid>` dans le verrou, supprime son socket (seulement si c'est encore le sien, d'après l'inode), ferme son socket d'écoute et renvoie son spare. Puis il attend ses enfants en cours et leur envoie leur W : en PHP, et en Node après une exception non rattrapée, c'est la seule façon pour le client d'apprendre leur fin. Alors seulement il relâche le verrou. D'ici là, un nouvel appel part en natif, ou attend le démon suivant.
 6. **Crash** (`kill -9`) : les enfants actifs finissent et envoient leur X, le spare sort. Le prochain client trouve un socket sans écoute, le relance en arrière-plan et part en natif.
 
 ## 6. Préchargement
@@ -242,6 +243,7 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
   - `Failures` : démon, enfant ou client tués, module modifié sur place ;
   - `Security` : dossier runtime trop ouvert ou appartenant à un autre UID, socket servi par un autre UID ;
   - `Interactive` : `input`, getpass avec stdin redirigé, `aws configure`.
+- **Courses** : `tests/test_stress.py`. Pendant `STRESS_SECONDS` (90 s par défaut), `STRESS_WORKERS` threads (8) appellent en parallèle les outils de test de chaque runtime installé, au terminal ou non, avec des commandes qui apprennent, échouent ou affichent. Pendant ce temps, un perturbateur arrête les démons, les tue (`kill -9`) ou touche leurs scripts pour les rendre périmés. Chaque appel doit finir, sortir comme en natif (un repli natif est permis), ne jamais sortir en 125 (sauf `kill -9` d'un démon PHP, ou d'un démon Node pendant une exception, où seul son W rapportait la fin) et ne s'exécuter qu'une fois (un marqueur par appel). `docker/test-all.sh stress stress-node`, avec un terminal attaché ; job `stress` de la CI, 120 s par cible. `STRESS_SEED` rejoue un tirage.
 - Après chaque passage, vérifier qu'aucun démon ne reste : `ps -eo args | grep -c '[h]eadstart_daemon'` doit renvoyer 0.
 - Règles du brief : tests d'abord, bench avant/après commité pour toute optimisation, petits commits, validation par l'humain à la fin de chaque étape.
 
@@ -320,6 +322,8 @@ Une release est un seul fichier : le client embarque les trois démons et le hoo
 - **Node, sortie et `signal-exit`.** jest charge `signal-exit`, qui enveloppe `process.emit` et `process.reallyExit` : un crochet sur l'événement `exit` posé dans l'enfant ne voyait pas `process.exit()`, et l'enfant bloquait dans le démontage. Le démon enveloppe les deux avant tout préchargement (ses versions sont les plus internes) ; une fin naturelle sort par un crochet de nettoyage Node-API.
 - **Node, certificats racine.** Node les charge une fois, sous un verrou d'initialisation C++ ; un fork pendant ce chargement laissait l'enfant (firebase) l'attendre indéfiniment. Le démon les charge au démarrage, avant tout fork.
 - **Node, ce qu'il garde en cache.** Dans un processus forké, `process.pid`, `process.ppid` et `process.cwd()` gardent les valeurs du parent : un client relayait Ctrl-C au démon, et prettier cherchait ses fichiers dans le dossier runtime. Même chose pour `Math.random`, dont l'état est dans le tas : chaque enfant tirait les mêmes nombres. L'enfant redéfinit les deux PID, fait `process.chdir(".")` après `fchdir`, et remplace `Math.random` par un xoshiro128** amorcé par le noyau. Un spare prend aussi son propre groupe de processus, que le client signale.
+- **Un démon qui s'arrête attend ses enfants.** Il sortait dès l'arrêt décidé (`stop`, empreinte périmée…) : un appel PHP en cours, ou un appel Node terminé par une exception, ne recevait jamais son W, et le client sortait en 125 (« lost track ») alors que la commande s'était exécutée. Trouvé par la suite de stress (2 appels sur 8 600, puis 1 sur 6 800 en Node).
+- **Un pty livre en différé.** Ce qui est écrit sur l'esclave arrive au maître un peu plus tard (le tampon « flip » du noyau). Les démons Python et Ruby lisaient le maître aussitôt l'import fini : sur une machine lente, la sortie d'un import arrivait pendant le suivant, accusé à tort d'afficher quelque chose, et le démon redémarrait. Ils lisent maintenant jusqu'à 10 ms de silence. Seulement avec un démon lancé depuis un terminal : la CI lance ses conteneurs avec `-t`.
 - **`subprocess` avec `timeout`** attend par paliers croissants, plafonnés à 50 ms : une mesure de temps doit attendre sans timeout.
 - **Faux serveurs dans les tests.** Un processus forké depuis le lanceur de tests doit finir par `os._exit` quoi qu'il arrive, sinon il exécute le reste de la suite en parallèle. Un faux serveur qui écrit à un client parti meurt de `BrokenPipe`. Dans les deux cas, on obtient un démon fantôme.
 

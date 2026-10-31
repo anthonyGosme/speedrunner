@@ -1,6 +1,7 @@
 # On every push: the client's unit tests, its static (musl) build as
 # releases make it, the five regression suites in the Debian image of
-# docker/, as they run on the dev VPS, and the Node suite (glibc and musl).
+# docker/, as they run on the dev VPS, the Node suite (glibc and musl) and
+# the stress suite (races).
 # Other distributions and language versions: platforms.yml.
 name: ci
 
@@ -29,6 +30,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: docker/test-all.sh node24 node24-alpine
+
+  stress:  # races: parallel calls while daemons stop, die and go stale
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: STRESS_SECONDS=120 docker/test-all.sh stress stress-node
 
   suites:
     runs-on: ubuntu-24.04
