@@ -63,6 +63,7 @@ final class Daemon
 
     private static function libc(): \FFI
     {
+        // fcntl is variadic: on Apple's arm64 such arguments go on the stack.
         $platform = self::MACOS ? '
             struct msghdr { void *msg_name; socklen_t msg_namelen; struct iovec *msg_iov;
                             int msg_iovlen; void *msg_control; socklen_t msg_controllen;
@@ -75,6 +76,7 @@ final class Daemon
             void *dlsym(void *, const char *);
             int open(const char *, int);
             void _exit(int);
+            int fcntl(int, int, ...);
         ' : '
             struct msghdr { void *msg_name; socklen_t msg_namelen; struct iovec *msg_iov;
                             unsigned long msg_iovlen; void *msg_control;
@@ -83,6 +85,7 @@ final class Daemon
             struct ucred { int pid; unsigned int uid; unsigned int gid; };
             int accept4(int, void *, void *, int);
             int *__errno_location(void);
+            int fcntl(int, int, int);
         ';
         return self::$c ??= \FFI::cdef('
             typedef unsigned int socklen_t;
@@ -102,7 +105,6 @@ final class Daemon
             int dup2(int, int);
             int fchdir(int);
             int flock(int, int);
-            int fcntl(int, int, int);
             int poll(struct pollfd *, unsigned long, int);
             int getsockopt(int, int, int, void *, socklen_t *);
             long signal(int, long);
@@ -177,10 +179,9 @@ final class Daemon
         if (!self::MACOS) {
             return "/proc/self/fd/$fd";
         }
-        static $ffi = null;
-        $ffi ??= \FFI::cdef('int fcntl(int, int, char *);', '/usr/lib/libSystem.B.dylib');
-        $buf = $ffi->new('char[1024]');
-        return $ffi->fcntl($fd, self::F_GETPATH, $buf) === 0 ? \FFI::string($buf) : '/nonexistent';
+        $buf = self::libc()->new('char[1024]');
+        $ok = self::libc()->fcntl($fd, self::F_GETPATH, \FFI::cast('char *', \FFI::addr($buf))) === 0;
+        return $ok ? \FFI::string($buf) : '/nonexistent';
     }
 
     /**
@@ -339,7 +340,8 @@ final class Daemon
     private static function sendWithFd(int $sock, string $data, int $passFd): void
     {
         $c = self::libc();
-        $ctl = $c->new('unsigned char[' . (self::CMSG_HDR + 8) . ']');
+        $space = self::CMSG_HDR + (int) ceil(4 / self::CMSG_ALIGN) * self::CMSG_ALIGN; // CMSG_SPACE(4)
+        $ctl = $c->new("unsigned char[$space]");
         $len = self::CMSG_HDR + 4; // CMSG_LEN(4)
         $raw = (self::MACOS ? pack('V', $len) : pack('P', $len)) . pack('l', self::SOL_SOCKET)
             . pack('l', self::SCM_RIGHTS) . pack('l', $passFd);
@@ -353,7 +355,7 @@ final class Daemon
         $msg->msg_iov = \FFI::addr($iov);
         $msg->msg_iovlen = 1;
         $msg->msg_control = \FFI::cast('void *', \FFI::addr($ctl));
-        $msg->msg_controllen = self::CMSG_HDR + 8; // CMSG_SPACE(4)
+        $msg->msg_controllen = $space;
         if ($c->sendmsg($sock, \FFI::addr($msg), self::MSG_NOSIGNAL) < 0) {
             throw new \RuntimeException('sendmsg failed');
         }
