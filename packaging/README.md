@@ -8,7 +8,8 @@ All of them ship the release's static binary, unchanged.
   `sudo apt install ./speedrunner_<version>_amd64.deb`.
 - **AUR** (`speedrunner-bin`): `aur/PKGBUILD` and `aur/.SRCINFO`.
 - **Homebrew on Linux**: `homebrew/speedrunner.rb`, the formula of the tap
-  `anthonyGosme/homebrew-speedrunner`: `brew install anthonyGosme/speedrunner/speedrunner`.
+  [anthonyGosme/homebrew-speedrunner](https://github.com/anthonyGosme/homebrew-speedrunner)
+  (published): `brew install anthonyGosme/speedrunner/speedrunner`.
 
 ## After a release
 

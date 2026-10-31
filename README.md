@@ -46,7 +46,14 @@ link where your shell finds them: `/usr/local/bin` as root, otherwise
 `~/.local/bin` (added to your PATH in `~/.profile`, `~/.bashrc` and `~/.zshrc`
 if it is not there yet; `SPEEDRUNNER_NO_MODIFY_PATH=1` to leave them alone). Rather not pipe to `sh`? Take the archive and its
 `.sha256` from the [releases](https://github.com/anthonyGosme/speedrunner/releases).
-After v0.3.0, each archive also comes with a signed build provenance:
+Or with a package manager:
+
+```bash
+brew install anthonyGosme/speedrunner/speedrunner      # Homebrew on Linux
+sudo apt install ./speedrunner_0.3.2_amd64.deb          # Debian, Ubuntu: the .deb of a release
+```
+
+After v0.3.0, each archive and .deb also comes with a signed build provenance:
 `gh attestation verify <archive> --repo anthonyGosme/speedrunner` checks that this
 repository's release workflow built it from the tagged commit.
 Each tool's daemon runs on that tool's own interpreter: nothing else to install
