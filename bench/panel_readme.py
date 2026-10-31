@@ -23,6 +23,8 @@ NOTES = {
                        "interpreter start.",
     "nest --version": "`nest --version`: most of what it loads fails the daemon's checks (modules that "
                       "start threads or read the command line as they load), and loads again on every run.",
+    "vite --version": "`vite --version` is slower served: its bundler starts threads as it loads, so the daemon "
+                      "cannot preload it, and each run loads it again, in a single-threaded V8.",
 }
 
 # Why a command is not served at all.
@@ -31,9 +33,6 @@ NOT_SERVED = {
            "that runs PHP, and speedrunner follows such launchers only up to Python.",
     "drush ": "`wp` and `drush` are not served: Composer installs them behind a shell script "
               "that runs PHP, and speedrunner follows such launchers only up to Python.",
-    "vite ": "`vite` was not served when measured: its bundler starts threads as it loads, the daemon "
-             "refuses those modules, and it was restarting, after one of them. Served, it would gain "
-             "nothing: what is refused loads again on every run.",
 }
 
 
@@ -56,13 +55,13 @@ def versions(panel_dirs):
 def row(r, mark):
     name = f"`{r['command']}`{mark}"
     if "error" in r:
-        return f"| {name} | {r.get('native_ms', 0):.0f} ms | — | not served | — | — | |"
+        return f"| {name} | {r.get('native_ms', 0):.0f} ms | — | not served |"
     if r.get("native_rc", 0) != 0:
         name = f"`{r['command']}` (exits {r['native_rc']} natively){mark}"
-    mem = f"{r['pss_mb']:.0f} MB" if "pss_mb" in r else ""
+    if not r["identical"]:
+        name += " (output differs)"
     ci = " ({:.1f}–{:.1f})".format(*r["speedup_ci95"]) if "speedup_ci95" in r else ""
-    return (f"| {name} | {r['native_ms']:.0f} ms | {r['fast_ms']:.0f} ms | **x{r['speedup']:.1f}**{ci} | "
-            f"{r['native_ms'] - r['fast_ms']:.0f} ms | {'✓' if r['identical'] else '✗'} | {mem} |")
+    return f"| {name} | {r['native_ms']:.0f} ms | {r['fast_ms']:.0f} ms | **x{r['speedup']:.1f}**{ci} |"
 
 
 def tables(main_dir, other_dirs):
@@ -84,8 +83,9 @@ def tables(main_dir, other_dirs):
            f"Measured on {MAIN}, or, for the commands marked ¹, on {OTHER} ({versions([main_dir, *other_dirs])}). "
            "Warm daemon, no tool-specific setup: each command is simply run as `srr <command>`. Each time is the "
            f"median of {'/'.join(map(str, sorted(runs)))} runs, native and speedrunner interleaved; the speedup is "
-           "the ratio of the medians, with its 95% confidence interval (bootstrap). *Identical* compares exit "
-           "code, stdout and stderr with the native run. Mean, standard deviation, min, max and every run: "
+           "the ratio of the medians, with its 95% confidence interval (bootstrap). Every output (exit code, "
+           "stdout, stderr) is compared with the native run's. Mean, standard deviation, min, max, the daemons' "
+           "memory and every run: "
            f"{links}.", ""]
     for key, name in RUNTIMES.items():
         group = [(r, mark) for r, mark in rows if r["runtime"] == key]
@@ -93,8 +93,8 @@ def tables(main_dir, other_dirs):
             continue
         group.sort(key=lambda rm: -rm[0].get("speedup", 0))
         out += [f"**{name}**", "",
-                "| Command | Native | speedrunner | Speedup (95% CI) | Saved per call | Identical | Daemon memory |",
-                "|---|---:|---:|---:|---:|:---:|---:|"]
+                "| Command | Native | speedrunner | Speedup (95% CI) |",
+                "|---|---:|---:|---:|"]
         out += [row(r, mark) for r, mark in group] + [""]
         notes = {text for r, _ in group if r.get("speedup", 9) < 1.2
                  for k, text in NOTES.items() if r["command"].startswith(k)}
