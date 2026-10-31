@@ -1025,6 +1025,11 @@ class Security(Matrix):
     def test_socket_served_by_other_uid(self):
         root, env = private_daemon("hstest")
         stop("hstest", env)
+        # Down as soon as it leaves; gone once its children are.
+        deadline = time.monotonic() + 10
+        while daemon_roots(root) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(daemon_roots(root), [])
         # A listener of another uid in the daemon's place.
         sock_dir = os.path.join(env["XDG_RUNTIME_DIR"], "speedrunner")
         [name] = [n for n in os.listdir(sock_dir) if n.endswith(".sock.lock")]
