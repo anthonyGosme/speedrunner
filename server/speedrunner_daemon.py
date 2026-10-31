@@ -275,6 +275,12 @@ def cf_unsafe():
             null = os.open(os.devnull, os.O_RDWR)
             for fd in (0, 1, 2):
                 os.dup2(null, fd)  # "The process has forked and you cannot use..."
+            # Out by _exit, not by the crash: a crash report would pop up a
+            # "Python quit unexpectedly" dialog on the user's screen.
+            libc().signal.restype = ctypes.c_void_p
+            libc().signal.argtypes = (ctypes.c_int, ctypes.c_void_p)
+            for sig in (signal.SIGSEGV, signal.SIGBUS, signal.SIGILL, signal.SIGTRAP, signal.SIGABRT):
+                libc().signal(sig, ctypes.cast(libc()._exit, ctypes.c_void_p))
             import _scproxy
             _scproxy._get_proxy_settings()
         finally:
