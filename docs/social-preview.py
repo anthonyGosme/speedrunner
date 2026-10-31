@@ -1,5 +1,5 @@
 """The repository's social preview (1280x640, the card shown where its link is
-shared): name, what it serves, two measured gains, its promises.
+shared): name, what it serves, the demo video's gain, its promises.
 
 Run (Pillow and the DejaVu fonts; a Debian container has both at hand):
   docker run --rm -v "$PWD/docs:/d" python:3.12-slim sh -c \\
@@ -31,20 +31,20 @@ d.text((x, 140), "Python, Ruby, PHP and Node command-line tools, preloaded:",
 d.text((x, 178), "each tool stays loaded in a daemon that forks it on every call.",
        font=font(MONO, 27), fill=FG)
 
-# Two measured gains, as bars on a shared scale per row.
-rows = [("a nightly-checks bash script, dozens of calls", 22.8, 7.3, "s"), ("eslint, on save", 328, 43, "ms")]
-y = 240
-bar_x, bar_w = x + 160, 760
-for label, native, fast, unit in rows:
-    d.text((x, y), label, font=font(MONO, 24), fill=FG)
-    for i, (value, colour, who) in enumerate([(native, NATIVE, "native"), (fast, FAST, "speedrunner")]):
-        top = y + 40 + i * 34
-        length = max(6, int(bar_w * value / native))
-        d.rectangle((bar_x, top, bar_x + length, top + 24), fill=colour)
-        d.text((bar_x + length + 14, top - 2), f"{value:g} {unit}", font=font(MONO_BOLD if i else MONO, 23),
-               fill=ACCENT if i else DIM)
-        d.text((bar_x - 12, top + 1), who, font=font(MONO, 18), fill=DIM, anchor="ra")
-    y += 130
+# The gain the demo video shows (bench/speedrunner.mp4): the same numbers
+# wherever the project is presented.
+label, native, fast = "nightly.sh, the same bash script run twice (the demo video)", 24.0, 5.3
+y = 252
+bar_x, bar_w = x + 230, 740
+d.text((x, y), label, font=font(MONO, 24), fill=FG)
+for i, (value, colour, who) in enumerate([(native, NATIVE, "native"), (fast, FAST, "speedrunner")]):
+    top = y + 58 + i * 52
+    length = max(6, int(bar_w * value / native))
+    d.rectangle((bar_x, top, bar_x + length, top + 34), fill=colour)
+    d.text((bar_x + length + 16, top + 1), f"{value:.1f} s", font=font(MONO_BOLD if i else MONO, 28),
+           fill=ACCENT if i else DIM)
+    d.text((bar_x - 14, top + 6), who, font=font(MONO, 22), fill=DIM, anchor="ra")
+d.text((bar_x, y + 178), "x4.5, same output", font=font(MONO_BOLD, 30), fill=ACCENT)
 
 d.text((x, 526), "zero config  ·  one static binary  ·  never runs a command twice",
        font=font(MONO, 25), fill=FG)
