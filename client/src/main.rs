@@ -1349,9 +1349,12 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     let mut env: Option<Vec<Vec<u8>>> = tool.target.as_ref().map(|t| t.launch.env.clone());
     if cfg!(target_os = "macos") {
         let mut given = env.take().unwrap_or_else(environ);
-        if let Some(var) = platform::launch_env_var(&given) {
-            given.push(var);
-        }
+        let extra = match runtime {
+            Runtime::Python => platform::launch_env_var(&given).into_iter().collect(),
+            Runtime::Ruby => platform::ruby_daemon_env(&given),
+            _ => Vec::new(),
+        };
+        given.extend(extra);
         env = Some(given);
     }
     let envp: Option<Vec<CString>> = env.map(|env| env.iter().map(|e| cstring(e)).collect());

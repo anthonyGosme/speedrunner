@@ -213,3 +213,16 @@ pub fn launch_env_var(env: &[Vec<u8>]) -> Option<Vec<u8>> {
     }
     Some(out)
 }
+
+/// macOS: the Ruby daemon's own setting, so that its children may use
+/// Objective-C. Ruby always has a second thread (its timer), and after a
+/// fork in a process with threads the Objective-C runtime crashes any
+/// class's first use, however unlikely a race: Ruby's thread never runs
+/// any. With a marker, so that the daemon takes it out of its env at once;
+/// nothing if the client had set it itself.
+pub fn ruby_daemon_env(env: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    if env.iter().any(|e| e.starts_with(b"OBJC_DISABLE_INITIALIZE_FORK_SAFETY=")) {
+        return Vec::new();
+    }
+    vec![b"OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES".to_vec(), b"SPEEDRUNNER_OBJC_ADDED=1".to_vec()]
+}

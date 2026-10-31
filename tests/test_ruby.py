@@ -219,6 +219,48 @@ class FailOpen(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+@unittest.skipUnless(m.MACOS, "CoreFoundation is macOS's")
+class CoreFoundation(m.Matrix):
+    """macOS, as test_matrix.CoreFoundation, for Ruby. Also: Ruby always has
+    a second thread, after which the Objective-C runtime refuses a forked
+    child its classes, unless the daemon allowed it."""
+
+    def test_tool_using_it_at_run_time_is_served(self):
+        for _ in range(3):
+            _, out, _ = self.assertSame(["rbtest", "proxies"])
+            self.assertEqual(out, b"proxies true\n")
+
+    def test_entry_file_using_it_is_skipped(self):
+        root = tempfile.mkdtemp(dir=m.ROOT)
+        env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(m.stop, "rbcf", env)
+        run("hs", ["rbcf"], env=env, require_fast=False)  # starts the daemon, which skips cfmain
+        m.served_soon(["rbcf"], env=env)
+        for _ in range(3):
+            _, out, _ = self.assertSame(["rbcf"], env=env)
+            self.assertEqual(out, b"cf main true\n")
+        [skip] = glob.glob(os.path.join(env["XDG_CACHE_HOME"], "speedrunner", "rbcf.skip-*.json"))
+        with open(skip) as f:
+            self.assertEqual(list(json.load(f).values()), ["uses CoreFoundation at load"])
+
+    def test_learned_file_using_it_is_blacklisted(self):
+        env = Preload.daemon(self, "1,2")
+        try:
+            Preload.learn(self, env, [["rbtest", "lazy-cf"]])
+            self.assertTrue(m.status("rbtest", env).startswith("ready"))
+            cache = Preload.cache(self, env)
+            [cf] = [f for f in cache["blacklist"] if f.endswith("/rbtest/cf.rb")]
+            self.assertEqual(cache["blacklist"][cf], "uses CoreFoundation at load")
+            self.assertTrue(any(f.endswith("/rbtest/lazy_plain.rb") for f in cache["modules"]))
+            for _ in range(3):
+                _, out, _ = self.assertSame(["rbtest", "lazy-cf"], env=env)
+                self.assertEqual(out, b"proxies true\n")
+        finally:
+            m.stop("rbtest", env)
+
+
 class Preload(m.Matrix):
     """Stage R2: requires learned from earlier runs, vetted by a probe."""
 
