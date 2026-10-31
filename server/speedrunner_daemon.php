@@ -858,6 +858,11 @@ final class Daemon
                         'bound_ino' => null];
         if (ini_get('register_argc_argv')) {
             self::$state['disabled'] = 'getopt() would read the daemon\'s arguments: needs -d register_argc_argv=0';
+        } elseif (array_key_exists('argv', $_SERVER)) {
+            // PHP 8.5's CLI registers them whatever register_argc_argv says
+            // (RFC deprecations_php_8_5): getopt() would see ours.
+            self::$state['disabled'] = 'getopt() would read the daemon\'s arguments: PHP ' . PHP_VERSION
+                . ' registers argv whatever register_argc_argv says';
         } elseif (self::cfUnsafe()) {
             self::$state['disabled'] = 'CoreFoundation used at startup: a forked child would be killed';
         }

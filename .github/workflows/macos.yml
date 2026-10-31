@@ -52,7 +52,7 @@ jobs:
           STRESS_SECONDS: 60
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
 
-  php:  # PHP is on the Intel image; Homebrew's, on Apple Silicon
+  php:  # 8.4: PHP 8.5 registers argv whatever register_argc_argv says (daemon off)
     strategy:
       fail-fast: false
       matrix:
@@ -61,12 +61,12 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
-      - run: command -v php || brew install php
+      - run: brew install php@8.4 && echo "$(brew --prefix php@8.4)/bin" >> "$GITHUB_PATH"
       - run: php -v && php -m | grep -iE '^(ffi|pcntl|posix|zend opcache)$'
       - run: cargo build --locked --release --manifest-path client/Cargo.toml
       - run: |
           echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
-          echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(dirname "$(command -v php)")" >> "$GITHUB_ENV"
+          echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(brew --prefix php@8.4)/bin" >> "$GITHUB_ENV"
       - run: python3 tests/test_php.py -v
       - if: failure()
         run: tail -n 60 /tmp/hs-matrix-*/run/speedrunner/*.log /tmp/hs-matrix-*/*/run/speedrunner/*.log || true
