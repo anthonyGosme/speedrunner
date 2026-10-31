@@ -9,7 +9,7 @@
 #   <ruby> speedrunner_daemon.rb --tool NAME --script PATH --socket PATH
 #                              [--lock-fd N] [--origin TEXT]
 #
-# Standard library only. Linux only for now (SO_PEERCRED, /proc, inotify).
+# Standard library only. Linux and macOS: see the platform section.
 # Preload levels (SPEEDRUNNER_PRELOAD):
 #   1  the top-level requires of the script and, for a RubyGems binstub, of
 #      the gem's executable once the gem is activated;
@@ -39,6 +39,10 @@ module Speedrunner
   CHILD = { conn: nil, files: nil, ctl: nil, learn: nil }
   PROBE_TIMEOUT_S = 30.0
   PROBE_STEP_S = 0.25 # a probe hands back what is left after this long
+  MACOS = RUBY_PLATFORM.include?("darwin")
+  # The client sets OBJC_DISABLE_INITIALIZE_FORK_SAFETY for us on macOS (see
+  # ruby_daemon_env in client/src/platform.rs): ours, not the tool's.
+  ENV.delete("OBJC_DISABLE_INITIALIZE_FORK_SAFETY") if ENV.delete("SPEEDRUNNER_OBJC_ADDED")
 
   def self.log(msg)
     LOG.write("speedrunner[#{Process.pid}] #{msg}\n")
@@ -47,6 +51,91 @@ module Speedrunner
   end
 
   def self.now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+  # --- platform ------------------------------------------------------------
+  # Linux: /proc, inotify, SO_PEERCRED, O_TMPFILE. macOS: libproc, stat,
+  # LOCAL_PEERCRED, an unlinked file, fchdir, and CoreFoundation (see
+  # speedrunner_daemon.py).
+
+  LIBC = Fiddle.dlopen(nil)
+
+  # [uid, gid, groups] of the peer of a Unix socket; groups nil on Linux,
+  # where the request's are compared with ours.
+  def self.peer_creds(conn)
+    if MACOS
+      # struct xucred: u_int version; uid_t uid; short ngroups; gid_t groups[16].
+      data = conn.getsockopt(0, Socket::LOCAL_PEERCRED).data
+      uid, ngroups = data.unpack("x4Ls")
+      groups = data.unpack("x12L#{ngroups.clamp(0, 16)}")
+      return [uid, groups.first || -1, groups]
+    end
+    _pid, uid, gid = conn.getsockopt(Socket::SOL_SOCKET, Socket::SO_PEERCRED).data.unpack("i3")
+    [uid, gid, nil]
+  end
+
+  # Our groups as the kernel has them: on macOS, Process.groups may be the
+  # user's, resolved anew; ours are read as a peer's are, over a socketpair.
+  def self.own_groups
+    return Process.groups unless MACOS
+
+    @own_groups ||= begin
+      a, b = UNIXSocket.pair
+      peer_creds(a)[2]
+    ensure
+      a&.close
+      b&.close
+    end
+  end
+
+  def self.native_thread_count
+    return Dir.children("/proc/self/task").size unless MACOS
+
+    info = "\0".b * 96 # struct proc_taskinfo, PROC_PIDTASKINFO; pti_threadnum
+    @proc_pidinfo ||= Fiddle::Function.new(LIBC["proc_pidinfo"], [Fiddle::TYPE_INT, Fiddle::TYPE_INT,
+                                           Fiddle::TYPE_LONG_LONG, Fiddle::TYPE_VOIDP, Fiddle::TYPE_INT],
+                                           Fiddle::TYPE_INT)
+    return -1 if @proc_pidinfo.call(Process.pid, 4, 0, info, 96) != 96 # unknown: threads
+
+    info.unpack1("x84l")
+  end
+
+  # A file only we can reach, for output of any size.
+  def self.anon_file
+    dir = ENV.fetch("TMPDIR", "/tmp")
+    return File.open(dir, File::RDWR | File::TMPFILE, 0o600) unless MACOS
+
+    path = File.join(dir, ".speedrunner-#{Process.pid}-#{rand(1 << 32)}")
+    File.open(path, File::RDWR | File::CREAT | File::EXCL | File::NOFOLLOW, 0o600).tap { File.unlink(path) }
+  end
+
+  # chdir to the directory open as io. Ruby 3.1 has no fchdir.
+  def self.chdir_to(io)
+    return Dir.chdir("/proc/self/fd/#{io.fileno}") unless MACOS
+
+    fchdir = Fiddle::Function.new(LIBC["fchdir"], [Fiddle::TYPE_INT], Fiddle::TYPE_INT)
+    raise SystemCallError.new("fchdir", Fiddle.last_error) unless fchdir.call(io.fileno).zero?
+  end
+
+  # macOS: whether a forked child of ours would be killed for using
+  # CoreFoundation, because this process used it first: see cf_unsafe in
+  # speedrunner_daemon.py. Here the canary calls SCDynamicStoreCopyProxies,
+  # as _scproxy does, and leaves by _exit, not by a crash (crash report).
+  def self.cf_unsafe?
+    return false unless MACOS
+
+    [STDOUT, STDERR].each(&:flush)
+    pid = Process.fork do
+      signal = Fiddle::Function.new(LIBC["signal"], [Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP], Fiddle::TYPE_VOIDP)
+      %w[SEGV BUS ILL TRAP ABRT].each { |sig| signal.call(Signal.list.fetch(sig), LIBC["_exit"]) }
+      null = File.open(File::NULL, "r+")
+      [STDIN, STDOUT, STDERR].each { |io| io.reopen(null) }
+      sc = Fiddle.dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration")
+      Fiddle::Function.new(sc["SCDynamicStoreCopyProxies"], [Fiddle::TYPE_VOIDP], Fiddle::TYPE_VOIDP).call(nil)
+      exit!(0)
+    end
+    Process.wait(pid)
+    !$?.success?
+  end
 
   # --- wire format ---------------------------------------------------------
 
@@ -213,7 +302,7 @@ module Speedrunner
       if tty&.covers?(fd)
         tty.master[fd]
       else
-        File.open(ENV.fetch("TMPDIR", "/tmp"), File::RDWR | File::TMPFILE, 0o600)
+        anon_file
       end
     end
     begin
@@ -307,7 +396,6 @@ module Speedrunner
     nil
   end
 
-  def self.native_thread_count = Dir.children("/proc/self/task").size
   # Ruby 3.3 starts with a timer thread of its own, which fork handles:
   # only threads beyond those we started with count.
   BASE_THREADS = native_thread_count
@@ -356,7 +444,7 @@ module Speedrunner
   def self.extend_fingerprint(state, paths, watch: false)
     fresh = paths.uniq.reject { |p| state.fingerprint_set.key?(p) }
     fresh.each { |p| state.fingerprint_set[p] = true }
-    if watch
+    if watch && !MACOS # no inotify: stat
       state.watch ||= FileWatch.new
       fresh = fresh.reject { |p| state.watch.add(p) }
     end
@@ -396,11 +484,12 @@ module Speedrunner
 
               why = if reads_argv { require req }[1] then "reads the command line at load"
                     elsif threads_running? then "starts a thread at load"
+                    elsif cf_unsafe? then "uses CoreFoundation at load"
                     end
               next unless why
 
-              # Already run with the daemon's command line, or a thread that
-              # forbids forking, which cannot be undone: skip it from now on,
+              # Already run with the daemon's command line, or a thread or
+              # CoreFoundation that forbid forking, which cannot be undone: skip it from now on,
               # in a fresh daemon. Level 2 still learns what it loads, short
               # of what starts the thread.
               skip[req] = why
@@ -458,9 +547,11 @@ module Speedrunner
   # Require vetted files in the daemon, in order. A file that fails is
   # blacklisted. Returns why the daemon must restart, or nil.
   def self.import_in_daemon(state, files)
+    loaded = []
     files.each do |file|
       next if state.blacklist.key?(file)
       unless $LOADED_FEATURES.include?(file)
+        loaded << file
         env_before = ENV.to_h
         begin
           EnvReads::ON[0] = true
@@ -488,6 +579,11 @@ module Speedrunner
       state.learned << file unless state.learned.include?(file)
     end
     state.import_env_read |= EnvReads::KEYS.uniq
+    if loaded.any? && cf_unsafe?
+      # Vetted one by one, yet together they did: none of them again.
+      loaded.each { |file| state.blacklist[file] = "used CoreFoundation in the daemon, with others" }
+      return "#{loaded.size} files used CoreFoundation in the daemon"
+    end
     nil
   end
 
@@ -562,7 +658,11 @@ module Speedrunner
   # rest, since whatever it left behind would taint later verdicts. A file
   # that loads one of refused is bad. So is one that opens other namespaces
   # than expect has for it, as natively (see native_namespaces).
-  def self.probe(gems, files, tty = nil, refused = [], expect = {})
+  #
+  # On macOS, once they are loaded, whether CoreFoundation was used (see
+  # probe_imports in speedrunner_daemon.py): if so, the verdict is cf, all
+  # to retry with each, which checks after each file.
+  def self.probe(gems, files, tty = nil, refused = [], expect = {}, each: false)
     in_child({ "ok" => [], "bad" => files.to_h { |f| [f, "probe crashed or hung"] }, "retry" => [] }) do
       verdict = { "ok" => [], "bad" => {}, "retry" => [] }
       activate_gems(gems)
@@ -603,7 +703,8 @@ module Speedrunner
           elsif argv_read then "reads the command line at load"
           elsif ENV.to_h != env_before then "changes the env at load"
           elsif threads_running? then "starts a thread at load"
-          else mismatch.call(file)
+          elsif (m = mismatch.call(file)) then m
+          elsif each && cf_unsafe? then "uses CoreFoundation at load"
           end
         rescue Refused => e
           e.message
@@ -616,6 +717,10 @@ module Speedrunner
           break
         end
         verdict["ok"] << file
+      end
+      # With threads (a bad one's), the canary itself is unreliable.
+      if MACOS && !each && verdict["ok"].any? && (threads_running? || cf_unsafe?)
+        verdict = { "ok" => [], "bad" => {}, "retry" => files, "cf" => true }
       end
       verdict
     end
@@ -731,7 +836,8 @@ module Speedrunner
     end
     if job[:files].any?
       verdict = probe(state.learned_gems, job[:files], state.tty, state.blacklist.keys + skipped_paths(state),
-                      job[:expect])
+                      job[:expect], each: job[:each])
+      job[:each] ||= verdict["cf"] # from then on, for this job
       state.blacklist.update(verdict["bad"])
       why = import_in_daemon(state, verdict["ok"])
       if why
@@ -784,14 +890,15 @@ module Speedrunner
 
   # --- child: one invocation -----------------------------------------------
 
-  def self.why_not_fast(state, req, peer_gid, fds)
+  def self.why_not_fast(state, req, peer_gid, fds, peer_groups = nil)
     return state.disabled if state.disabled
     return "script path mismatch" unless req.argv[0] == b(state.script)
     if state.gem_binstub && req.argv[1].to_s =~ /\A_(.*)_\z/n && Gem::Version.correct?($1)
       return "gem version chosen on the command line"
     end
     return "stale: installed files changed" if stale?(state)
-    if peer_gid != Process.gid || req.groups.uniq.sort != Process.groups.uniq.sort
+    groups = peer_groups || req.groups
+    if peer_gid != Process.gid || groups.uniq.sort != own_groups.uniq.sort
       return "credentials differ from the daemon's"
     end
     client = startup_env(req.env)
@@ -870,7 +977,7 @@ module Speedrunner
     end
     STDOUT.sync = false # as at startup: STDERR alone is synchronous
     STDERR.sync = true
-    Dir.chdir("/proc/self/fd/#{cwd.fileno}")
+    chdir_to(cwd)
     fds[0, 4].each(&:close)
     bridge_tty(fds[4]) if fds.size > 4 # kept open, close-on-exec, for the run
     File.umask(req.umask)
@@ -994,7 +1101,7 @@ module Speedrunner
   def self.serve_child(state, conn)
     deadline = now + HANDSHAKE_TIMEOUT_S
     begin
-      _pid, uid, gid = conn.getsockopt(Socket::SOL_SOCKET, Socket::SO_PEERCRED).data.unpack("i3")
+      uid, gid, groups = peer_creds(conn)
       exit!(0) unless uid == Process.uid
       begin
         kind, body, fds = recv_request(conn, deadline)
@@ -1022,7 +1129,7 @@ module Speedrunner
         send_msg(conn, "N", "missing file descriptors")
         exit!(0)
       end
-      reason = why_not_fast(state, req, gid, fds)
+      reason = why_not_fast(state, req, gid, fds, groups)
       if reason
         if reason.start_with?("stale")
           mark_exiting(state)

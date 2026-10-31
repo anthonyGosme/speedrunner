@@ -164,6 +164,20 @@ module Rbtest
       p [Rbtest::LazyPlain::VALUE, Rbtest::LazyEnv::VALUE, Rbtest::LazyArgv::VALUE]
     end
 
+    def cmd_proxies(_args)
+      # CoreFoundation used at run time, in the child.
+      require "rbtest/proxies"
+      puts "proxies #{Rbtest::Proxies.found?}"
+    end
+
+    def cmd_lazy_cf(args)
+      # What level 2 learns, and must not keep: a file that uses
+      # CoreFoundation as it loads.
+      require "rbtest/lazy_plain"
+      require "rbtest/cf"
+      cmd_proxies(args)
+    end
+
     def cmd_reopen(_args)
       require "rbtest/lazy_alias"
       require "rbtest/lazy_reopen"

@@ -1,6 +1,6 @@
 # macOS, Intel and Apple Silicon: the client's unit tests and build, then
-# the Python matrix, the shell and the script suites, with the runner's own
-# Python. The Ruby, PHP and Node daemons are served on Linux only so far.
+# the Python matrix, the shell, script, Ruby and stress suites, with the
+# runner's own Python and Ruby. The Node daemon is served on Linux only.
 name: macos
 
 on:
@@ -34,6 +34,19 @@ jobs:
           "$RUNNER_TEMP/venv-aws/bin/pip" install -q awscli
           echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
           echo "HS_PATH=$RUNNER_TEMP/venv-test/bin:$RUNNER_TEMP/venv-aws/bin" >> "$GITHUB_ENV"
+      - name: rbtest gem
+        run: |
+          cp -r tests/fixture/rbtest "$RUNNER_TEMP/rbtest-build"
+          (cd "$RUNNER_TEMP/rbtest-build" && gem build rbtest.gemspec)
+          GEM_HOME="$RUNNER_TEMP/gems-rbtest" gem install --local --no-document "$RUNNER_TEMP/rbtest-build/rbtest-0.1.0.gem"
+          echo "RB_GEM_HOME=$RUNNER_TEMP/gems-rbtest" >> "$GITHUB_ENV"
       - run: python3 tests/test_matrix.py -v
       - run: python3 tests/test_shell.py -v
       - run: python3 tests/test_scripts.py -v
+      - run: ruby --version && python3 tests/test_ruby.py -v
+        env:
+          HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
+      - run: python3 tests/test_stress.py -v
+        env:
+          STRESS_SECONDS: 60
+          HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
