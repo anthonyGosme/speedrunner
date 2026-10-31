@@ -288,6 +288,9 @@ def shadowed(state, cwd_fd):
     return None
 
 
+PTY_QUIET_S = 0.01
+
+
 def capture_fds_during(fn, tty=None):
     """Run fn() with fds 1 and 2 captured; return their bytes.
 
@@ -328,6 +331,11 @@ def capture_fds_during(fn, tty=None):
                 os.lseek(sink, 0, os.SEEK_SET)
             chunks = []
             while True:
+                # A pty hands what was written to its master a little later
+                # (the kernel's flip buffer): read until it stays quiet, or
+                # the rest would be blamed on the next import.
+                if sink not in memfds and not select.select([sink], [], [], PTY_QUIET_S)[0]:
+                    break
                 try:
                     chunk = os.read(sink, 65536)
                 except (BlockingIOError, OSError):  # a drained pty

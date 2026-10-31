@@ -202,8 +202,6 @@ module Speedrunner
   end
 
   # Run the block with fds 1 and 2 captured; return their bytes. At fd
-  # level, so that IO objects created meanwhile stay the real ones.
-  # Run the block with fds 1 and 2 captured; return their bytes. At fd
   # level, so that IO objects created meanwhile stay the real ones. On the
   # fds a TtyStandIn covers, a pty stands in, so that code checking for a
   # terminal finds what the client that started us has.
@@ -236,9 +234,15 @@ module Speedrunner
     (sinks || []).each { |f| f.close if f.is_a?(File) }
   end
 
+  # A pty hands what was written to its master a little later (the
+  # kernel's flip buffer): read until it stays quiet, or the rest would be
+  # blamed on the next file loaded.
+  PTY_QUIET_S = 0.01
+
   def self.drain(master)
     data = "".b
     loop do
+      break unless IO.select([master], nil, nil, PTY_QUIET_S)
       chunk = master.read_nonblock(65_536, exception: false)
       break if chunk.nil? || chunk == :wait_readable
       data << chunk
