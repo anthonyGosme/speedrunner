@@ -85,8 +85,13 @@ def run(mode, argv, input=b"", cwd=None, env=None, tty=False, umask=None,
         if preexec is not None:
             preexec()
 
-    return subprocess.run(cmd, input=input, capture_output=True, cwd=cwd,
-                          env=full_env, preexec_fn=setup, timeout=60)
+    p = subprocess.run(cmd, input=input, capture_output=True, cwd=cwd,
+                       env=full_env, preexec_fn=setup, timeout=60)
+    if tty and MACOS:
+        # BSD script(1) now and then turns a line's \r\n into \r\r\n on a
+        # long output, natively as served (CI, aws's skeleton): not the tool's.
+        p.stdout = p.stdout.replace(b"\r\r\n", b"\r\n")
+    return p
 
 
 def outcome(p, normalize=None):
