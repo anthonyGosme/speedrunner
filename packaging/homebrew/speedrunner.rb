@@ -3,19 +3,19 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.3.1"
+  version "0.3.2"
   license any_of: ["MIT", "Apache-2.0"]
 
   depends_on :linux
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.3.1/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "45d82ef103a1b411a5841d451ac1b54addf22b8e5f323b900e0d42ff47da586b"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.3.2/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "4e53c4ba37f2e89ab770968bed7d13d5ff9900088748f6295b2499efc543271f"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.3.1/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "763bd67544b57641f99b75c6a813482d58ab119ea6841d8671fcc97fb26845df"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.3.2/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "2a2dc4ec7aaa1da287f026f4d00d78eb508b29c03d4c8014392e0ed8b6109c37"
     end
   end
 
