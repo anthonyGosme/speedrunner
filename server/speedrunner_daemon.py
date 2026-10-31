@@ -539,6 +539,19 @@ def compute_fingerprint(paths):
     return tuple(out)
 
 
+def sizes_environ(frame):
+    """Whether os.environ is read, from `frame` up, by pre-commit's xargs
+    measuring the environment's size as it loads: each child measures it
+    again (apply_request), so no value read there is kept."""
+    for _ in range(3):
+        if frame is None:
+            return False
+        if frame.f_code.co_name == "_environ_size" and frame.f_globals.get("__name__") == "pre_commit.xargs":
+            return True
+        frame = frame.f_back
+    return False
+
+
 class EnvReads:
     """Records the os.environ keys read while active, e.g. by module-level code."""
 
@@ -551,7 +564,9 @@ class EnvReads:
 
         def getitem(env, key):
             # A key of the wrong type raises TypeError natively: not a read.
-            if env is os.environ and isinstance(key, str):
+            if sizes_environ(sys._getframe(1)):
+                pass
+            elif env is os.environ and isinstance(key, str):
                 keys.add(key)
             elif env is getattr(os, "environb", None) and isinstance(key, bytes):
                 keys.add(os.fsdecode(key))
@@ -1084,6 +1099,13 @@ def apply_request(state, req, fds):
     os.environ.update(req.env)
     # Same startup env as ours (why_not_fast): CPython would set the same.
     os.environ.update(state.interpreter_env)
+    # Adapter: pre-commit's xargs bounds a command line by ARG_MAX less the
+    # environment's size, measured as it loads (before pre-commit's main
+    # drops keys at import), into a default argument: measured for this run.
+    xargs = sys.modules.get("pre_commit.xargs")
+    defaults = getattr(getattr(xargs, "xargs", None), "__kwdefaults__", None)
+    if defaults and "_max_length" in defaults and hasattr(xargs, "_get_platform_max_length"):
+        defaults["_max_length"] = xargs._get_platform_max_length()
     for key in state.import_env_deleted:
         os.environ.pop(key, None)
     os.environ.update(state.import_env_changed)

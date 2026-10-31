@@ -72,6 +72,9 @@ fn main() {
             .collect();
         process::exit(cmd_run(&rest));
     }
+    if invoked == b"bash" {
+        process::exit(run_as_bash(&args));
+    }
     // Called under a tool's name: one of the links `activate` puts first on
     // PATH. `aws s3 ls` is then `speedrunner run aws -- s3 ls`.
     if invoked != b"speedrunner" && !invoked.is_empty() {
@@ -312,21 +315,19 @@ impl Target {
                 break;
             }
         }
-        let entry = match argv.get(i) {
-            Some(a) if &a[..] == b"-m" && i + 1 < argv.len() => Some(true),
-            Some(a) if !a.starts_with(b"-") && i < argv.len() => Some(false),
-            _ => None, // -c, -, or nothing to run: as is
-        };
-        let module = match entry {
-            Some(module) => module,
-            None => return Err(launch),
+        // The module, and where the tool's arguments start.
+        let (module_name, next) = match argv.get(i) {
+            Some(a) if &a[..] == b"-m" && i + 1 < argv.len() => (Some(argv[i + 1].clone()), i + 2),
+            // -mpre_commit, as pre-commit's git hook writes it
+            Some(a) if a.len() > 2 && a.starts_with(b"-m") => (Some(a[2..].to_vec()), i + 1),
+            Some(a) if !a.starts_with(b"-") => (None, i + 1),
+            _ => return Err(launch), // -c, -, or nothing to run: as is
         };
         let flags = argv[1.min(i)..i].to_vec();
-        let rest = |from: usize| argv[from..].iter().map(|a| OsString::from_vec(a.clone()));
-        let (argv0, module_name, args) = if module {
-            (b"-m".to_vec(), Some(argv[i + 1].clone()), rest(i + 1).collect())
-        } else {
-            (argv[i].clone(), None, rest(i + 1).collect())
+        let rest = argv[next..].iter().map(|a| OsString::from_vec(a.clone()));
+        let (argv0, args) = match &module_name {
+            Some(m) => (b"-m".to_vec(), std::iter::once(OsString::from_vec(m.clone())).chain(rest).collect()),
+            None => (argv[i].clone(), rest.collect()),
         };
         Ok(Target { flags, module: module_name, argv0, args, launch })
     }
@@ -501,15 +502,16 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
         tool = script;
         args = &args[1..];
     } else if tool.is_launcher() {
-        return run_launcher(&tool, args, lazy);
+        return run_launcher(&tool, tool.name, args, lazy);
     } else if read_shebang(&tool.path).is_err() {
         fall_back(&tool, args, "not a script of a runtime speedrunner serves");
     }
     serve(&tool, args, lazy)
 }
 
-/// Run a launcher natively until it execs the interpreter, then serve that.
-fn run_launcher(tool: &Tool, args: &[OsString], lazy: Option<&Path>) -> i32 {
+/// Run a launcher natively until it execs the interpreter, then serve that,
+/// by a daemon named `name`.
+fn run_launcher(tool: &Tool, name: &OsStr, args: &[OsString], lazy: Option<&Path>) -> i32 {
     let argv: Vec<Vec<u8>> = std::iter::once(tool.name.as_bytes().to_vec())
         .chain(args.iter().map(|a| a.as_bytes().to_vec()))
         .collect();
@@ -521,12 +523,39 @@ fn run_launcher(tool: &Tool, args: &[OsString], lazy: Option<&Path>) -> i32 {
             Err(launch) => fall_back_launch(tool, &launch, "the launcher execs no script or module"),
             Ok(target) => {
                 let args = target.args.clone();
-                let target = Tool::for_target(tool.name, target);
-                tool.remember(&target);
+                let target = Tool::for_target(name, target);
+                if name == tool.name {
+                    tool.remember(&target);
+                }
                 serve(&target, &args, lazy)
             }
         },
     }
+}
+
+/// Called as `bash`, through the link `activate` and `exec` put next to
+/// pre-commit's: git runs pre-commit's hook by its path, and the hook
+/// starts Python by its absolute path, but its `#!/usr/bin/env bash` looks
+/// bash up on PATH. That hook is followed as a launcher, served by a
+/// `pre-commit` daemon; anything else is the real bash, at once.
+fn run_as_bash(args: &[OsString]) -> i32 {
+    let name = OsStr::new("bash");
+    let bash = match Tool::resolve(name) {
+        Some(t) => t,
+        None => {
+            eprintln!("speedrunner: bash: command not found");
+            return 127;
+        }
+    };
+    let args = &args[1..];
+    // As the kernel runs a shebang: `bash /path/to/hook hook-args`.
+    let hook = args.first().map_or(false, |a| {
+        !a.as_bytes().starts_with(b"-") && launcher::is_precommit_hook(a.as_bytes())
+    });
+    if !hook {
+        exec_native(&bash, args);
+    }
+    run_launcher(&bash, OsStr::new("pre-commit"), args, lazy_counter(b"pre-commit").as_deref())
 }
 
 fn serve(tool: &Tool, args: &[OsString], lazy: Option<&Path>) -> i32 {
@@ -1588,6 +1617,8 @@ fn prepare_auto_links(origin: &str, script: Option<(String, PathBuf)>, eager_all
         }
         std::fs::write(&marker, &stamp)?;
     }
+    // Outside the rescan: a directory made by an older client gets it too.
+    link_bash_for_precommit(&dir)?;
     if env::var_os("SPEEDRUNNER_NO_AUTOSTART").is_none() {
         // The script's tools first, in the order it first runs them.
         let mut eager: Vec<OsString> = Vec::new();
@@ -1596,7 +1627,7 @@ fn prepare_auto_links(origin: &str, script: Option<(String, PathBuf)>, eager_all
             let counts = script::command_counts(&text, &script_dir);
             for (name, _) in counts.into_iter().filter(|(_, n)| *n >= wanted) {
                 let name = OsString::from(name);
-                if dir.join(&name).exists() && !eager.contains(&name) {
+                if dir.join(&name).exists() && name != "bash" && !eager.contains(&name) {
                     eager.push(name);
                 }
             }
@@ -1678,7 +1709,24 @@ fn prepare_links(extra: &[OsString], origin: &str, script: Option<(String, PathB
             std::os::unix::fs::symlink(&me, &link)?;
         }
     }
+    link_bash_for_precommit(&dir)?;
     Ok(dir)
+}
+
+/// A `bash` link too when pre-commit has one: git runs pre-commit's hook by
+/// its path, and only the hook's `#!/usr/bin/env bash` looks a program up
+/// on PATH (see run_as_bash). Without pre-commit, bash is left alone.
+fn link_bash_for_precommit(dir: &Path) -> io::Result<()> {
+    let me = match std::fs::read_link(dir.join("pre-commit")) {
+        Ok(me) => me,
+        Err(_) => return Ok(()),
+    };
+    let link = dir.join("bash");
+    if std::fs::read_link(&link).ok() != Some(me.clone()) && resolve_in_path(b"bash").is_some() {
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&me, &link)?;
+    }
+    Ok(())
 }
 
 fn sh_quote(b: &[u8]) -> String {
