@@ -7,6 +7,11 @@
 #
 # Enrolled tools are listed in ${XDG_CONFIG_HOME:-~/.config}/speedrunner/tools.
 
+# macOS's own bash is 3.2, without associative arrays: nothing is set up there.
+if (( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] < 402 )); then
+  echo "speedrunner: the bash hook needs bash 4.2 or later, this is $BASH_VERSION (srr works as is)" >&2
+else
+
 declare -gA _speedrunner_tools=()    # enrolled tool -> 1
 declare -gA _speedrunner_wrapped=()  # tool -> the wrapper we defined, as bash prints it
 declare -gi _speedrunner_warmed=0    # set once the current line warmed a daemon
@@ -82,4 +87,6 @@ if [[ $- == *i* ]]; then
     fi
   done
   unset _speedrunner_map
+fi
+
 fi

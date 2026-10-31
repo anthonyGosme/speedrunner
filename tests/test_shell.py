@@ -12,6 +12,7 @@ import select
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -19,6 +20,17 @@ import unittest
 HS_BIN = os.environ.get("HS_BIN")
 ZSH = shutil.which("zsh")
 BASH = shutil.which("bash")
+
+
+def bash_version(path):
+    p = subprocess.run([path, "-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'],
+                       capture_output=True, text=True)
+    return tuple(int(n) for n in p.stdout.split())
+
+
+BASH_OK = bool(BASH) and bash_version(BASH) >= (4, 2)
+# macOS's own: 3.2.
+OLD_BASH = "/bin/bash" if os.path.exists("/bin/bash") and bash_version("/bin/bash") < (4, 2) else None
 SCRIPT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "shell", "speedrunner.zsh"))
 BASH_SCRIPT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "shell", "speedrunner.bash"))
 PROMPT = "READY> "
@@ -26,7 +38,8 @@ PROMPT = "READY> "
 
 class ShellBase(unittest.TestCase):
     def setUp(self):
-        self.root = tempfile.mkdtemp(prefix="hs-shell-")
+        # Under /tmp: macOS's own temp dir is too deep for a socket path (104 bytes).
+        self.root = tempfile.mkdtemp(prefix="hs-shell-", dir="/tmp" if sys.platform == "darwin" else None)
         self.addCleanup(shutil.rmtree, self.root, True)
         d = lambda *p: os.path.join(self.root, *p)
         for sub in ("bin", "home", "config", "cache", "zdot"):
@@ -174,7 +187,18 @@ class Shell(ShellBase):
         self.assertEqual(self.logged("prewarm"), ["prewarm hstest"])
 
 
-@unittest.skipUnless(HS_BIN and BASH, "needs the speedrunner client and bash")
+@unittest.skipUnless(OLD_BASH, "needs a bash older than 4.2 (macOS's own)")
+class OldBash(unittest.TestCase):
+    def test_hook_says_so_and_sets_nothing_up(self):
+        p = subprocess.run([OLD_BASH, "--norc", "--noprofile", "-ic",
+                            f"source {BASH_SCRIPT}; echo rc=$?; type -t _speedrunner_load"],
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(p.stdout, "rc=0\n")
+        [line] = [l for l in p.stderr.splitlines() if l.startswith("speedrunner:")]
+        self.assertIn("needs bash 4.2 or later", line)
+
+
+@unittest.skipUnless(HS_BIN and BASH_OK, "needs the speedrunner client and bash >= 4.2")
 class Bash(ShellBase):
     def bash(self, code):
         return subprocess.run([BASH, "--norc", "--noprofile", "-c", f"source {BASH_SCRIPT}; {code}"],
