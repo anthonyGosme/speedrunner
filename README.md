@@ -235,6 +235,12 @@ starts the daemon as you type the tool's name, so that even the first call is fa
 `aws s3 ls` on a slow link), for tools that start threads as they load (vite), and for native binaries:
 there is nothing to preload.
 
+**pre-commit, git hooks?** speedrunner serves what goes through it: `srr`, the wrappers, or the links
+`speedrunner exec` puts at the head of PATH. pre-commit's default hooks run from environments of its own,
+by absolute path, so only pre-commit itself gains (x1.2). Declare the hooks `language: system` and commit
+with `speedrunner exec git commit`: black, isort, flake8 and mypy on a changed file, 1.12 s → 0.49 s
+([details](bench/results/20261031T185251Z-precommit-docker/ANALYSE.md)).
+
 **Node?** Supported since 0.3, as experimental. To fork V8, the daemon runs Node single-threaded
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
 learn what a tool loads.

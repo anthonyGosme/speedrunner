@@ -1,0 +1,9 @@
+# The same hooks, taken from PATH (language: system): through speedrunner's
+# links when the commit runs under `speedrunner exec`.
+repos:
+  - repo: local
+    hooks:
+      - {id: black, name: black, entry: black, language: system, types: [python]}
+      - {id: isort, name: isort, entry: isort, args: [--profile, black], language: system, types: [python]}
+      - {id: flake8, name: flake8, entry: flake8, args: [--max-line-length, "100"], language: system, types: [python]}
+      - {id: mypy, name: mypy, entry: mypy, language: system, types: [python]}

@@ -329,6 +329,7 @@ Une release est un seul fichier : le client embarque les quatre démons, l'addon
 - **Un pty livre en différé.** Ce qui est écrit sur l'esclave arrive au maître un peu plus tard (le tampon « flip » du noyau). Les démons Python et Ruby lisaient le maître aussitôt l'import fini : sur une machine lente, la sortie d'un import arrivait pendant le suivant, accusé à tort d'afficher quelque chose, et le démon redémarrait. Ils lisent maintenant jusqu'à 10 ms de silence. Seulement avec un démon lancé depuis un terminal : la CI lance ses conteneurs avec `-t`.
 - **`subprocess` avec `timeout`** attend par paliers croissants, plafonnés à 50 ms : une mesure de temps doit attendre sans timeout.
 - **Faux serveurs dans les tests.** Un processus forké depuis le lanceur de tests doit finir par `os._exit` quoi qu'il arrive, sinon il exécute le reste de la suite en parallèle. Un faux serveur qui écrit à un client parti meurt de `BrokenPipe`. Dans les deux cas, on obtient un démon fantôme.
+- **`PATH` lu à l'import, et `speedrunner exec`.** pre-commit lit `PATH` en se chargeant. Son démon, démarré par `srr`, avait un `PATH` sans le dossier de liens de `exec` ; sous `exec`, chaque appel partait en natif (« import-time env differs: PATH »). Les démons Python, Ruby et Node comparent désormais ce `PATH` sans leurs propres dossiers `bin-*` du dossier runtime, qui mènent aux mêmes outils : au pire, un sous-outil lancé par l'outil n'est pas servi. Trouvé par le bench pre-commit ; test `test_tool_reading_path_at_import_served_under_exec`.
 
 ## 12. Limites connues
 
@@ -385,7 +386,7 @@ Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licenc
 Suite :
 
 - paquets : AUR, `.deb`, Homebrew sur Linux ;
-- un bench `pre-commit` de bout en bout ;
+- servir pre-commit quand git lance son hook (le script installé finit par un `if … exec python -m pre_commit … elif …`, que le suivi des lanceurs ne reconnaît pas) ;
 - macOS, où le fork sans exec est fragile (CoreFoundation, Objective-C) et où manquent inotify et `/proc` ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
 - traduire ce document en anglais.

@@ -1,0 +1,12 @@
+Docker Desktop on a laptop (Intel i7-9750H), image bench/precommit/Dockerfile (python:3.11-slim-bookworm)
+speedrunner: client built from the tree (commit after 67086c6: import-time PATH without our link directories)
+Linux 7.0.14-linuxkit x86_64
+CPUs: 12
+speedrunner 0.3.1
+Python 3.11.18
+git version 2.39.5
+pre-commit 4.7.0
+black, 26.10.1 (compiled: yes)
+isort 9.0.2 (compiled yes)
+7.5.0 (mccabe: 0.7.0, pycodestyle: 2.15.0, pyflakes: 4.1.0) CPython 3.11.18 on
+mypy 2.4.1 (compiled: yes)
