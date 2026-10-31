@@ -389,7 +389,7 @@ Suite :
 
 - publier le paquet AUR et le tap Homebrew (prêts dans `packaging/`) ;
 - servir pre-commit quand git lance son hook (le script installé finit par un `if … exec python -m pre_commit … elif …`, que le suivi des lanceurs ne reconnaît pas) ;
-- macOS, où le fork sans exec est fragile (CoreFoundation, Objective-C) et où manquent inotify et `/proc` ;
+- macOS : go/no-go M0 **GO** pour Python (plafonds x5 à x50, 2 000 forks sans échec après usage de CoreFoundation ; la détection de proxy lance des threads, que le démon doit compter par `proc_pidinfo`). Reste à porter le démon Python et le client (M1), puis Ruby et PHP, puis Node : voir `bench/results/…-macos-m0-mac/ANALYSE.md` ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
 - traduire ce document en anglais.
 
