@@ -68,3 +68,5 @@ jobs:
           echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
           echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(dirname "$(command -v php)")" >> "$GITHUB_ENV"
       - run: python3 tests/test_php.py -v
+      - if: failure()
+        run: tail -n 60 /tmp/hs-matrix-*/run/speedrunner/*.log /tmp/hs-matrix-*/*/run/speedrunner/*.log || true
