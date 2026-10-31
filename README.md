@@ -7,10 +7,20 @@
       |_|                                                     
 ```
 
-Run Python, Ruby, PHP and Node command-line tools from a preloaded, forked daemon, typically 3x to 15x faster
-(up to 90x for `dbt --help`):
+Run Python, Ruby, PHP and Node command-line tools from a preloaded, forked daemon:
 the interpreter start, the imports and the configuration are done once, and
-each call starts with them already done. Output is identical to the native run.
+each call starts with them already done.
+
+- **A real script.** The bash script below runs a small shop's nightly checks: black, pytest, poetry,
+  rubocop, rspec, phpunit, artisan, aws and ansible, dozens of calls doing real work. 22.8 s natively,
+  7.3 s with `speedrunner exec`, its daemons started by the script itself; 5.6 s once they are warm
+  (2-vCPU VPS).
+- **An editor's save.** eslint on one file: 328 → 43 ms; mypy: 213 → 50 ms. Faster than the tools'
+  own daemons, eslint_d and dmypy ([below](#against-the-tools-own-daemons)).
+- **Never run twice.** Until a call has started, any problem sends it to the real tool, natively.
+  Once it has started, speedrunner never runs it again, whatever dies.
+- **Same output.** Identical to the native run on all 96 commands measured below; what speedrunner
+  cannot serve faithfully runs natively.
 
 ![speedrunner demo: the same bash script, run natively and with speedrunner](bench/speedrunner.gif)
 
@@ -209,7 +219,29 @@ speedrunner rebuilds on every call (dmypy's incremental state, typescript-eslint
 program) and may come out ahead; this panel does not measure that.
 [Protocol and analysis](bench/results/20261031T181813Z-daemons-docker/ANALYSE.md).
 
-How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+## FAQ
+
+**How much memory?** One daemon per tool, while you use it: 28 to 40 MB for a typical Python, Ruby or
+PHP tool (median PSS, shared pages split fairly), about 60 MB for a Node tool, up to 200 MB for the
+largest. Eleven tools at once: 341 MB. A daemon exits after 4 hours unused
+(`SPEEDRUNNER_IDLE_TIMEOUT`, in seconds), or at once with `speedrunner stop <tool>`.
+
+**And the first call?** It runs natively while the tool's daemon starts beside it (a little slower than
+native: 15 to 40 ms for aws); the gain starts with the second call. In zsh, `speedrunner init zsh`
+starts the daemon as you type the tool's name, so that even the first call is fast. In a script,
+`speedrunner exec` starts, before they are reached, the daemons of the tools it will call more than once.
+
+**When does it not help?** When the command's own work or the network dominates (`phpstan analyse`,
+`aws s3 ls` on a slow link), for tools that start threads as they load (vite), and for native binaries:
+there is nothing to preload.
+
+**Node?** Supported since 0.3, as experimental. To fork V8, the daemon runs Node single-threaded
+(`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
+learn what a tool loads.
+
+**macOS, Windows?** Not yet: Linux, x86_64 or aarch64, any distribution.
+
+How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
 
 ## License
 

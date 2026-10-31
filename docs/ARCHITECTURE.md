@@ -1,6 +1,6 @@
 # speedrunner — architecture et reprise du projet
 
-Ce document décrit ce qui est construit, comment les pièces s'emboîtent, où en est le projet et ce qu'il faut savoir pour continuer sans retomber dans les pièges déjà rencontrés. État au 2026-10-28, fin de l'étape 4.
+Ce document décrit ce qui est construit, comment les pièces s'emboîtent, où en est le projet et ce qu'il faut savoir pour continuer sans retomber dans les pièges déjà rencontrés. État au 2026-10-31, version 0.3.1 : Python, Ruby, PHP et Node (expérimental), Linux x86_64 et aarch64.
 
 ## 1. En une phrase
 
@@ -23,7 +23,7 @@ client/build.rs           embarque l'addon Node, compilé pour glibc et pour mus
 client/src/launcher.rs    suivi des lanceurs (az, gcloud) sous ptrace
 shell/speedrunner.zsh       wrappers et anticipation pour zsh ≥ 5.3
 tests/
-  test_matrix.py          matrice de non-régression (brief §5), natif contre speedrunner
+  test_matrix.py          matrice de non-régression, natif contre speedrunner
   test_shell.py           intégration zsh, pilotée dans un vrai pty
   test_ruby.py            matrice Ruby (rbtest), sur le harnais de test_matrix.py
   test_php.py             matrice PHP (phptest, composer, artisan)
@@ -130,7 +130,7 @@ Corps d'un `R` : liste d'argv (u32 compte, puis blobs u32+octets ; argv[0] = che
 
 Socket de contrôle parent ↔ enfant : `A` (+ fd client : « j'ai accepté »), `L(json)` (« voici ce que j'ai importé et chargé », envoyé après X), `Q` (parent → spare : « retire-toi »), et en PHP `K` (parent → enfant : « j'ai ta copie »). Un enfant PHP ne rend sa fin que par le W du démon : il attend `K` avant de servir. S'il voit la fin de fichier à la place (démon tué par `kill -9`, que le noyau libère pendant quelques millisecondes pendant lesquelles le spare prend encore des appels), il ferme la connexion avant la réponse `R`, et le client part en natif. Trouvé par le stress sur arm64.
 
-**Règle n°1 (brief) : jamais de double exécution.** Avant `G`, toute anomalie (pas de socket, refus N, poignée de main ratée, empreinte périmée) mène à `exec` de la vraie CLI. Après `G`, on ne relance jamais : sans X ni W, le client affiche « lost track … not re-running it » et sort en 125. `SPEEDRUNNER_REQUIRE_FAST=1` remplace le repli natif par une sortie en 124, pour les tests et les benches.
+**Règle n°1 : jamais de double exécution.** Avant `G`, toute anomalie (pas de socket, refus N, poignée de main ratée, empreinte périmée) mène à `exec` de la vraie CLI. Après `G`, on ne relance jamais : sans X ni W, le client affiche « lost track … not re-running it » et sort en 125. `SPEEDRUNNER_REQUIRE_FAST=1` remplace le repli natif par une sortie en 124, pour les tests et les benches.
 
 ## 5. Cycle de vie du démon
 
@@ -232,7 +232,7 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
 ```
 
 - Sans `HS_BIN`, la matrice compare le natif à lui-même, ce qui valide le harnais.
-- Après une modification de `tests/fixture/hstest`, le réinstaller dans `venv-test` depuis une copie (commande dans le brief §7).
+- Après une modification de `tests/fixture/hstest`, le réinstaller dans `venv-test` depuis une copie : le venv n'a pas `wheel`, il faut l'isolation de build (`cp -r tests/fixture/hstest /tmp/x && venv-test/bin/pip install --no-deps --force-reinstall /tmp/x`).
 - Classes de la matrice :
   - `OutputsAndExitCodes`, `Terminal`, `Signals`, `Context`, `Randomness`, `Teardown` : fidélité ;
   - `FailOpen` : repli natif ;
@@ -246,7 +246,7 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
 - **Sécurité** : seuls les autres utilisateurs de la machine sont des attaquants. Côté client (classe `Security` de `test_matrix.py`, valable pour tous les runtimes) : dossier runtime trop ouvert ou d'un autre uid, socket servi par un autre uid, lien symbolique à la place du repli `/tmp/speedrunner-<uid>`. Côté démon (classe `Security` de chaque suite, Python, Ruby, PHP et Node) : un pair d'un autre uid n'obtient pas de réponse (le test se connecte avec l'uid effectif 65534, que rapporte `SO_PEERCRED`, mais l'uid de système de fichiers 0, pour traverser le dossier en 0700) ; lancé à la main avec la ligne de commande et l'env d'un vrai démon, mais un socket dans un mauvais dossier, le démon refuse de démarrer. Les tests qui changent d'uid demandent root ; la cible `non-root` les saute.
 - **Courses** : `tests/test_stress.py`. Pendant `STRESS_SECONDS` (90 s par défaut), `STRESS_WORKERS` threads (8) appellent en parallèle les outils de test de chaque runtime installé, au terminal ou non, avec des commandes qui apprennent, échouent ou affichent. Pendant ce temps, un perturbateur arrête les démons, les tue (`kill -9`) ou touche leurs scripts pour les rendre périmés. Chaque appel doit finir, sortir comme en natif (un repli natif est permis), ne jamais sortir en 125 (sauf `kill -9` d'un démon PHP, où seul son W rapporte la fin) et ne s'exécuter qu'une fois (un marqueur par appel). `docker/test-all.sh stress stress-node`, avec un terminal attaché ; job `stress` de la CI, 120 s par cible. `STRESS_SEED` rejoue un tirage.
 - Après chaque passage, vérifier qu'aucun démon ne reste : `ps -eo args | grep -c '[h]eadstart_daemon'` doit renvoyer 0.
-- Règles du brief : tests d'abord, bench avant/après commité pour toute optimisation, petits commits, validation par l'humain à la fin de chaque étape.
+- Règles de travail : tests d'abord, bench avant/après commité pour toute optimisation, petits commits, validation par l'humain à la fin de chaque étape.
 
 ## 10 bis. Distribution
 
@@ -330,7 +330,7 @@ Une release est un seul fichier : le client embarque les trois démons et le hoo
 
 ## 12. Limites connues
 
-Elles sont listées dans le brief §5 (« Limites connues »). Les principales :
+Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis un démon change par nature :
 
 - graine de hachage partagée entre les enfants ;
 - pas de terminal de contrôle dans l'enfant : un sous-processus qui ouvre `/dev/tty` échoue ;
@@ -369,22 +369,24 @@ Elles sont listées dans le brief §5 (« Limites connues »). Les principales :
 | L1 Suivi des lanceurs, `-m module`, `sys.path` appris | fait | az x1,9–x4,3, gcloud x3,5–x4,2, sans réglage ; matrice de 67 tests verte |
 | Panel des candidats (47 commandes de plus, Docker) | fait | 45 servies, 45 sorties identiques, médiane x7,7 ; dbt x80, airflow x23, openstack x22, checkov x12 ; 6 bugs corrigés ; 70 + 37 tests verts |
 | N0 Go/no-go Node | fait | GO sous conditions : fork sûr (1 000 appels sur 1 000), plafonds x3 à x18 |
-| N1 Démon Node | fait | voir bench/results/…-node-panel-docker ; matrice Node de 28 tests verte |
+| N1 Démon Node | fait | 13/13 sorties identiques ; eslint x14 et x6, next x8,6 ; matrice Node de 31 tests verte |
+| Suite de stress, tests de sécurité côté démon | fait | ~38 000 appels sous `kill -9`, arrêts et péremptions, sans échec, une fois corrigés les bugs de course trouvés |
+| Contre les démons dédiés | fait | eslint x7,6 (eslint_d x3,1), mypy x4,2 (dmypy x1,4) ; blackd + curl gagne |
 | 4 bis Instantané du driver (niveau 4) | reporté | propre à aws |
-| 5 Bench comparatif et vidéo (vhs ou asciinema) | à faire | |
+| 5 Bench comparatif et vidéo | fait | script de démo 22,8 s → 7,3 s (5,6 s chaud) ; vidéo asciinema |
+| Release 0.3.1 | fait | binaires statiques x86_64 et aarch64, attestations de provenance signées |
 
-Décisions ouvertes, côté humain (brief §8) :
+Décision ouverte : quand le client meurt (`kill -9`), l'enfant va aujourd'hui jusqu'au bout ; lui envoyer SIGHUP serait plus proche du natif, mais moins sûr pour une commande comme `aws s3 rm`.
 
-- nom : décidé, **speedrunner**, avec `srr` (« speedrunner ») comme commande courte ;
-- dépôt public ;
-- comportement quand le client meurt.
+Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licence MIT OR Apache-2.0 ; un démon par outil, pas par environnement (fidélité et vitesse d'abord, mémoire mesurée dans le panel).
 
-Décidé : double licence MIT OR Apache-2.0 ; un démon par outil, pas par environnement (fidélité et vitesse d'abord, mémoire mesurée dans le panel).
+Suite :
 
-Pistes au-delà du PoC :
-
-- Ruby, avec la même architecture ;
+- anticipation dans bash (le hook n'existe que pour zsh) ;
+- paquets : AUR, `.deb`, Homebrew sur Linux ;
+- un bench `pre-commit` de bout en bout ;
+- macOS, où le fork sans exec est fragile (CoreFoundation, Objective-C) et où manquent inotify et `/proc` ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
-- macOS, en second.
+- traduire ce document en anglais.
 
 Un nouvel OS a été écarté sur mesure (VPS, hyperfine, 30 runs). Le temps noyau ne fait que 44 ms sur 218 pour `aws --version` et 70 ms sur 304 pour le squelette ec2. Un noyau parfait plafonnerait donc à x1,25, et ce temps noyau vient lui-même surtout de l'initialisation que speedrunner supprime (ouvertures de fichiers, allocations). Pour `wget --version`, le total n'est que de 2,2 ms.
