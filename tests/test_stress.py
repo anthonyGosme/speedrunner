@@ -57,6 +57,9 @@ COMMANDS = {
                  (["wrapped-exit", "natural"], {"env": {"NODETEST_WRAPPER": "1"}}), (["tty"], {"tty": True})],
     "nodetty": [([], {}), ([], {"tty": True})],
 }
+if m.MACOS:  # CoreFoundation, in the child only, whatever happens to the daemon
+    COMMANDS["hstest"] += [(["proxies"], {}), (["lazy-cf"], {})]
+    COMMANDS["hscf"] = [([], {})]
 HOLD = re.compile(rb"ready \d+")
 
 
