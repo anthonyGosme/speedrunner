@@ -1197,7 +1197,9 @@ module Speedrunner
 
     exiting = false
     begin
-      loop do
+      # while, not loop: the children run the tool from inside this loop, and
+      # since Ruby 3.3 Kernel#loop is a frame of its own in their backtraces.
+      while true
         # Stopping: out of the way first, so that new clients start a fresh
         # daemon; then the runs in progress, some of which report their end
         # only through our wait status (killed by a signal).
