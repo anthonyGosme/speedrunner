@@ -14,7 +14,7 @@
 # The client is built once, static (musl), as releases are, and mounted in
 # every container. Logs: docker/logs/<platform>/<target>.log (git-ignored).
 set -uo pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 jobs=${JOBS:-$(( $(getconf _NPROCESSORS_ONLN) / 2 > 0 ? $(getconf _NPROCESSORS_ONLN) / 2 : 1 ))}
 # Always explicit: a base image pulled for another platform keeps its tag,
 # and would then be used, emulated (QEMU has no ptrace), for "native" runs.
@@ -67,6 +67,7 @@ run_target() {
   local name=$1 file=$2 args=$3 opts=$4 cmd=${SUITES:+suites $SUITES} log=$logs/$1.log
   local image=speedrunner-test-$1-${arch//\//-}
   cmd=${cmd:-$5}
+  # shellcheck disable=SC2206  # $platform: empty, or --platform and its value
   local build=(docker build -q $platform -t "$image" -f "$file")
   [ -n "${STRESS_SECONDS:-}" ] && opts="$opts -e STRESS_SECONDS=$STRESS_SECONDS"
   [ -n "$args" ] && build+=(--build-arg "$args")

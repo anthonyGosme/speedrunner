@@ -82,7 +82,9 @@ fetch "$base/$asset" "$tmp/$asset" || die "cannot download $base/$asset"
 fetch "$base/$asset.sha256" "$tmp/$asset.sha256" || die "cannot download its checksum"
 expected=$(cut -d ' ' -f 1 < "$tmp/$asset.sha256")
 actual=$(sha256 "$tmp/$asset")
-[ -n "$expected" ] && [ "$expected" = "$actual" ] || die "checksum mismatch for $asset: not installed"
+if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+    die "checksum mismatch for $asset: not installed"
+fi
 
 tar xzf "$tmp/$asset" -C "$tmp"
 mkdir -p "$bin_dir"

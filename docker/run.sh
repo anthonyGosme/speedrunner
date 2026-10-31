@@ -88,7 +88,8 @@ if [ "${1:-}" = suites ]; then
 else
     "$@" || status=$?
 fi
-for d in $(ls bench/results); do
+for p in bench/results/*; do
+    d=${p##*/}
     if ! grep -qx "$d" <<< "$before"; then cp -r "bench/results/$d" /src/bench/results/; fi
 done
 exit $status
