@@ -165,8 +165,12 @@ class AutoScripts(ScriptCase):
         self.addCleanup(m.stop, "aws", self.env)
         script = os.path.join(self.root, "order.sh")
         with open(script, "w") as f:
+            # Waits for hstest's daemon rather than for a fixed time: aws's
+            # may take a while to preload on a busy machine.
             f.write("later() { for i in 1 2; do hstest argv $i; done; }\n"
-                    "sleep 3\nfor i in 1 2; do aws --version; done\nlater\n")
+                    "sleep 3\nfor i in 1 2; do aws --version; done\n"
+                    f"for i in $(seq 300); do {shlex.quote(HS_BIN)} status hstest | grep -q ^ready && break; "
+                    "sleep 0.1; done\nlater\n")
         p = subprocess.run([HS_BIN, "exec", "bash", script], capture_output=True, timeout=60,
                            env={**m.BASE_ENV, **self.env, "SPEEDRUNNER_START_JOBS": "1"})
         self.assertEqual(p.returncode, 0, p.stderr)
