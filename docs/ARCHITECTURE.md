@@ -108,7 +108,7 @@ Même produit, même protocole ; seuls les mécanismes du système changent. Cô
 |---|---|---|
 | Uid (et gid) du pair | `SO_PEERCRED` | client : `getpeereid` ; démon : `LOCAL_PEERCRED` (`struct xucred`) |
 | Threads natifs du démon | `/proc/self/task` | `proc_pidinfo(PROC_PIDTASKINFO)`, `pti_threadnum` ; un échec compte comme des threads |
-| Fichiers de modules surveillés | inotify, un `select()` | `stat` de chacun dans l'enfant (pas de kqueue : un fd par fichier) |
+| Fichiers de modules surveillés | inotify, un `select()` dans l'enfant | kqueue dans le parent seul ; l'enfant reçoit son verdict (plus bas) |
 | Env reçu au lancement | `/proc/self/environ` | `sysctl KERN_PROCARGS2`, et les empreintes de l'env du client (plus bas) |
 | cwd passé à l'enfant | `O_PATH` | `O_SEARCH` (pas besoin du droit de lecture non plus) ; chemin par `F_GETPATH` |
 | Sortie des imports capturée | `memfd_create` | fichier créé puis aussitôt supprimé dans le dossier runtime |
@@ -126,6 +126,10 @@ Même produit, même protocole ; seuls les mécanismes du système changent. Cô
 - **le canari** (`cf_unsafe`) : un enfant jetable appelle `_scproxy._get_proxy_settings()`, le seul appel trouvé qui déclenche la vérification de CoreFoundation ; s'il meurt, ce processus ne doit plus forker. Coût : un fork et un aller-retour à configd, ~2 ms sur un M6, 10 à 17 ms sur un i7. Il ne tourne que quand l'état préchargé change : après chaque import de niveau 1 (qui est alors sauté, « uses CoreFoundation at import », comme un import qui lance un thread), après le module de `-m`, après chaque lot d'imports appris appliqué dans le parent (en cas d'échec, le lot est mis en liste noire et le démon redémarre), et dans la sonde ;
 - dans la sonde, un canari par module coûterait trop : un seul, quand le lot est importé. S'il meurt, ou si un module refusé a laissé des threads (le canari n'est alors plus fiable : il passe sur l'Intel après `getproxies`), tout le lot est rejugé avec un canari après chaque module, jusqu'à la fin de cet apprentissage ;
 - un outil qui utilise CoreFoundation pendant son exécution (le cas courant : une requête HTTP) le fait dans l'enfant, depuis un parent qui ne l'a jamais utilisé : sans danger.
+
+**L'empreinte par kqueue.** Une file kqueue n'est pas héritée au fork, et `EVFILT_VNODE` demande un fd par fichier (`O_EVTONLY`). Le parent seul surveille donc les fichiers de modules. Il relève sa limite de fichiers ouverts (jusqu'à 10 240 ; celle d'un Terminal est 256), et chaque spare ferme ces fds et rend la limite avant d'accepter : l'outil voit la même qu'en natif (test `test_open_file_limit`). Au message `A` d'un enfant, le parent lit la file et répond `F` (rien) ou `S` (périmé) sur le socket de contrôle ; le noyau range l'événement pendant l'écriture même, comme pour inotify. Sans réponse en 20 ms (parent occupé à apprendre, ou disparu), l'enfant fait un `stat` de chaque fichier. Comme sous Linux, le parent s'arrête dès qu'un événement arrive. Pas de `NOTE_ATTRIB` : une extension `.so` en reçoit un chaque fois qu'un autre processus la charge, sans changement ; écriture, extension, suppression, renommage (pip qui remplace un fichier) restent vus. Gain : la phase connexion → prêt de black passe de 8,9 à 3,4 ms sur un i7.
+
+**Le canari ne fait pas de rapport de crash.** Un enfant qui plante fait écrire un rapport par macOS et ouvrir la fenêtre « Python a quitté de manière imprévue » sur l'écran de l'utilisateur. L'enfant canari transforme donc SIGSEGV, SIGBUS, SIGILL, SIGTRAP et SIGABRT en `_exit(signal)` : statut non nul, pas de rapport (vérifié sur le Mac mini).
 
 **L'env que voit l'outil.** Sous macOS, `python3.x` est souvent un lanceur qui fait lui-même un `exec` : celui de python.org ajoute `__CF_USER_TEXT_ENCODING` (absent d'une session ssh), `/usr/bin/python3` ajoute `SDKROOT`, `CPATH`, `LIBRARY_PATH` et `MANPATH`. `KERN_PROCARGS2` donne l'env de l'interpréteur après ce lanceur, sans dire ce qui venait du client. Le client passe donc au démon, dans `SPEEDRUNNER_LAUNCH_ENV`, une empreinte FNV-1a 64 de chaque entrée de son env, suivie de son nom. Le démon en déduit ce que le lanceur et CPython ont ajouté ou changé, et l'ajoute à l'env de chaque requête, comme en natif. Une clé de démarrage (`PYTHON*`, `LC_*`, `LANG`) changée par le lanceur fait partir l'appel en natif.
 
@@ -204,7 +208,7 @@ Avant de répondre `R` (`why_not_fast`), sinon `N` et exécution native :
 
 - l'UID du pair (`SO_PEERCRED`, `LOCAL_PEERCRED` sur macOS), le gid et les groupes du client identiques à ceux du démon ;
 - le chemin du script, tel que le client l'a lancé : absolu, ou relatif à son cwd (`./manage.py`) s'il désigne le même fichier ; pour un module, `-m` suivi de son nom, et aucun fichier du cwd qui masque un module préchargé ;
-- l'empreinte : `stat` du script, de l'interpréteur, des dossiers de `sys.path` et des `RECORD`, plus un `select()` sur la file inotify des fichiers de modules (sur macOS, un `stat` de chacun : 3 à 6 ms sur un i7 pour black) ;
+- l'empreinte : `stat` du script, de l'interpréteur, des dossiers de `sys.path` et des `RECORD`, plus un `select()` sur la file inotify des fichiers de modules (sur macOS, le verdict du parent, §2 quinquies) ;
 - l'env de démarrage : `PYTHON*`, `LC_ALL`, `LC_CTYPE`, `LANG` identiques à ceux du démon ;
 - l'env figé à l'import : les clés modifiées *ou lues* par le code de haut niveau doivent avoir la même valeur qu'au démarrage du démon. Exemples réels : botocore fige `AWS_NEW_RETRIES_2026` et un chemin dérivé de `HOME`, et gettext fige la langue.
 
@@ -406,7 +410,7 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 - Node, un import qui parcourt les clés de l'environnement fait partir en natif un client dont l'ensemble des clés diffère (hors `PWD`, `OLDPWD`, `SHLVL`, `_` et `SPEEDRUNNER_*`) ; une pile capturée pendant l'évaluation du point d'entrée, et que l'outil affiche lui-même, montre les frames du démon.
 - pour un lanceur, `prewarm` exécute le préambule sans argument : sans effet pour az et gcloud, mais un lanceur qui ferait autre chose que préparer son exec le ferait aussi à chaque préchauffage.
 - hook git de pre-commit : servi seulement sous `speedrunner exec` ou `activate` (git lancé hors d'eux ne voit pas le lien `bash`), et si pre-commit est sur le `PATH` ou nommé. Sous eux, tout `bash` appelé par son nom passe par le client (un démarrage de plus, +4 ms mesurés dans Docker Desktop), et `$BASH` y nomme le lien, qui mène au même bash. Le démon du hook (`python -mpre_commit`) est distinct de celui du script `pre-commit` : `speedrunner status pre-commit` et `stop pre-commit` visent le second, le premier s'arrête après 4 h sans appel.
-- macOS : Python seulement (Ruby, PHP et Node partent en natif) ; lanceurs en natif ; l'empreinte des fichiers de modules se vérifie par `stat` à chaque appel (3 à 6 ms sur un i7, ~1 ms sur un M6) ; un outil qui utilise CoreFoundation en se chargeant (détection de proxy, boucle d'exécution) voit ce module rechargé à chaque appel ; le hook bash demande bash ≥ 4.2, celui du système est 3.2 (zsh, le shell par défaut, n'a pas cette limite).
+- macOS : Python seulement (Ruby, PHP et Node partent en natif) ; lanceurs en natif ; l'empreinte kqueue ne voit pas un simple changement d'attributs (`touch`, `chmod`) d'un fichier de module ; un outil qui utilise CoreFoundation en se chargeant (détection de proxy, boucle d'exécution) voit ce module rechargé à chaque appel ; le hook bash demande bash ≥ 4.2, celui du système est 3.2 (zsh, le shell par défaut, n'a pas cette limite).
 
 ## 13. État et suite
 
@@ -437,7 +441,7 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 | 5 Bench comparatif et vidéo | fait | vidéo du script de démo : 24,0 s → 5,3 s, x4,5, démons chauds (médiane de trois enregistrements : 22,8 s → 5,6 s chaud, 7,3 s à froid) |
 | Release 0.3.1 | fait | binaires statiques x86_64 et aarch64, attestations de provenance signées |
 | M0 macOS, go/no-go | fait | GO pour Python : plafonds x5 à x50 ; CoreFoundation tue les enfants d'un parent qui l'a utilisé |
-| M1 macOS : démon Python et client | fait | Intel x4,4 (aws) à x16 (pip), M6 x3,9 à x12,5 ; 16/16 sorties identiques ; matrice verte sur les deux ; règle CoreFoundation (canari) |
+| M1 macOS : démon Python et client | fait | Intel x4,4 (aws) à x20,6 (pip), M6 x4,2 à x16,6 ; 16/16 sorties identiques ; matrice verte sur les deux ; règle CoreFoundation (canari) ; empreinte par kqueue |
 
 Décision ouverte : quand le client meurt (`kill -9`), l'enfant va aujourd'hui jusqu'au bout ; lui envoyer SIGHUP serait plus proche du natif, mais moins sûr pour une commande comme `aws s3 rm`.
 
@@ -446,7 +450,7 @@ Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licenc
 Suite :
 
 - publier le paquet AUR et le tap Homebrew (prêts dans `packaging/`) ;
-- macOS : le démon Python et le client sont portés (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Restent Ruby et PHP (M2), puis Node (M3) ; l'empreinte par kqueue dans le parent plutôt que par `stat` dans l'enfant ; et la distribution (binaire universel, formule Homebrew pour macOS), à décider ;
+- macOS : le démon Python et le client sont portés (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Restent Ruby et PHP (M2), puis Node (M3), et la distribution (binaire universel, formule Homebrew pour macOS), à décider ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
 - traduire ce document en anglais.
 

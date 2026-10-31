@@ -112,6 +112,11 @@ def cmd_lazy_cf(args):
     cmd_proxies(args)
 
 
+def cmd_limits(args):
+    import resource
+    print(resource.getrlimit(resource.RLIMIT_NOFILE))
+
+
 def cmd_cwd(args):
     print(os.getcwd())
     print(os.environ.get("PWD"))

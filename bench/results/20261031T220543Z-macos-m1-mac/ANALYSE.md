@@ -8,22 +8,25 @@ Question : le démon Python et le client, portés sur macOS, servent-ils les out
 
 | Commande | Intel natif | Intel servi | Gain | M6 natif | M6 servi | Gain |
 |---|---:|---:|---:|---:|---:|---:|
-| `black --version` | 317 ms | 27 ms | x11,7 | 54 ms | 6,1 ms | x8,9 |
-| `black --check sample.py` | 327 ms | 35 ms | x9,3 | 55 ms | 6,6 ms | x8,3 |
-| `pip --version` | 524 ms | 32 ms | x16,3 | 67 ms | 6,8 ms | x9,8 |
-| `aws --version` | 720 ms | 149 ms | x4,8 | 121 ms | 28 ms | x4,4 |
-| `aws configure list` | 743 ms | 170 ms | x4,4 | 126 ms | 32 ms | x3,9 |
-| `http --version` | 437 ms | 48 ms | x9,1 | 81 ms | 10,5 ms | x7,7 |
-| `poetry --version` | 805 ms | 54 ms | x14,9 | 132 ms | 10,6 ms | x12,5 |
-| `ansible --version` | 746 ms | 48 ms | x15,4 | 90 ms | 7,2 ms | x12,5 |
+| `black --version` | 311 ms | 22,7 ms | x13,7 | 54 ms | 4,4 ms | x12,3 |
+| `black --check sample.py` | 335 ms | 30,5 ms | x11,0 | 55 ms | 5,1 ms | x10,7 |
+| `pip --version` | 508 ms | 24,7 ms | x20,6 | 67 ms | 5,1 ms | x13,1 |
+| `aws --version` | 698 ms | 137 ms | x5,1 | 121 ms | 25 ms | x4,8 |
+| `aws configure list` | 723 ms | 163 ms | x4,4 | 126 ms | 30 ms | x4,2 |
+| `http --version` | 427 ms | 41,8 ms | x10,2 | 81 ms | 8,8 ms | x9,2 |
+| `poetry --version` | 770 ms | 43,1 ms | x17,9 | 132 ms | 8,0 ms | x16,5 |
+| `ansible --version` | 725 ms | 40,4 ms | x17,9 | 90 ms | 5,4 ms | x16,6 |
 
-**16 sorties sur 16 identiques** (code, stdout, stderr). Détail : `warm-intel.jsonl`, `warm-arm.jsonl`, machines dans `machine*.txt`.
+**16 sorties sur 16 identiques** (code, stdout, stderr). Détail : `warm-intel.jsonl`, `warm-arm.jsonl`, machines dans `machine*.txt`. Avant kqueue (empreinte par `stat` dans l'enfant) : `warm-*-stat.jsonl`, par exemple black 27 ms (Intel) et 6,1 ms (M6), poetry 54 et 10,6 ms.
 
-## Où passe le reste (Intel, black)
+## L'empreinte : de `stat` à kqueue
 
-`bench/phase_client.py`, démon chaud : 8,9 ms de la connexion à la réponse R, 10,4 ms d'exécution. Dans l'enfant, `why_not_fast` prend 6,2 ms, dont l'empreinte : sans inotify, l'enfant fait un `stat` de chaque fichier de module (286 pour black), soit 1,6 ms de `stat` et 1,8 ms de pages recopiées (les compteurs de références des chemins, au premier passage après le fork). Sous Linux, inotify ramène cette vérification à un `select()`.
+`bench/phase_client.py`, black chaud sur l'Intel. Avec un `stat` de chaque fichier de module dans l'enfant (pas d'inotify), la phase connexion → prêt prenait 8,9 ms, dont 6,2 ms dans `why_not_fast` : 1,6 ms de `stat` (286 fichiers) et 1,8 ms de pages recopiées (les compteurs de références des chemins, au premier passage après le fork).
 
-Piste, non faite : kqueue `EVFILT_VNODE` dans le parent seulement (un fd par fichier, `RLIMIT_NOFILE` à relever puis à rendre aux enfants), et l'enfant qui demande au parent, sur le socket de contrôle, s'il a vu un événement, avec un repli sur `stat` si le parent ne répond pas à temps (apprentissage en cours). Gain attendu : 3 à 6 ms par appel sur l'Intel, ~1 ms sur le M6.
+Avec kqueue dans le parent (une file n'est pas héritée au fork), qui répond `F` ou `S` à chaque enfant sur le socket de contrôle : **3,4 ms**. Sur le bench, black passe de 27 à 22,7 ms (Intel) et de 6,1 à 4,4 ms (M6), poetry de 54 à 43 ms et de 10,6 à 8,0 ms. Deux pièges :
+
+- `NOTE_ATTRIB` arrive sur une extension `.so` chaque fois qu'un autre processus la charge, sans rien changer (ctime intact) : le démon se croyait périmé dès le premier appel. Il n'est pas demandé ; écriture, extension, suppression et renommage suffisent.
+- La limite de fichiers ouverts d'un Terminal est 256, moins que les fichiers de modules d'aws : le parent la relève, chaque spare la rend avant d'accepter. Matrice passée sous `ulimit -n 256` sur les deux Mac, test `test_open_file_limit`.
 
 ## La règle CoreFoundation
 
@@ -48,8 +51,12 @@ Tests : classe `CoreFoundation` de `tests/test_matrix.py` (un outil qui l'utilis
 
 | Suite | Portable (Intel, 3.12) | Mac mini (M6, 3.9) |
 |---|---|---|
-| `test_matrix.py` | 77 tests, 9 sautés, vert | 77 tests, 9 sautés, vert |
+| `test_matrix.py` | 78 tests, 9 sautés, vert (`ulimit -n 256`) | 78 tests, 9 sautés, vert (`ulimit -n 256`) |
 | `test_shell.py` | 15, vert (bash 5 de Homebrew) | 15, 8 sautés (bash 3.2 seulement), vert |
-| `test_scripts.py` | 19, vert | 19, vert |
+| `test_scripts.py` | 26, 4 sautés (hook pre-commit : lanceur), vert | 26, 4 sautés, vert |
 
 Sautés, faute de sens sur macOS : les 6 tests de lanceurs (ptrace, Linux seulement ; le test « sans ptrace, en natif et une seule fois » tourne), les 3 tests de sécurité qui demandent root (comme sous Linux en utilisateur), et le pair d'un autre uid (pas de `setfsuid`). Sous Linux, dans Docker : debian, alpine, no-ptrace, py3.9, py3.14, node24 et stress, tous verts.
+
+Stress (`tests/test_stress.py`, avec les commandes CoreFoundation sur macOS) : ~10 000 appels en 90 s sur l'Intel, ~29 000 en 60 s sur le M6, sous `kill -9`, arrêts et péremptions, sans échec.
+
+Le canari ne laisse pas de rapport de crash : l'enfant qui le fait transforme les signaux de plantage en `_exit`. Sans cela, chaque détection ouvrait une fenêtre « Python a quitté de manière imprévue » sur l'écran (vu sur le portable pendant ce travail).
