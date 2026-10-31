@@ -1,6 +1,7 @@
 # macOS, Intel and Apple Silicon: the client's unit tests and build, then
 # the Python matrix, the shell, script, Ruby and stress suites, with the
-# runner's own Python and Ruby. The Node daemon is served on Linux only.
+# runner's own Python and Ruby, and PHP in a job of its own. The Node daemon
+# is served on Linux only.
 name: macos
 
 on:
@@ -50,3 +51,20 @@ jobs:
         env:
           STRESS_SECONDS: 60
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
+
+  php:  # PHP is on the Intel image; Homebrew's, on Apple Silicon
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - run: command -v php || brew install php
+      - run: php -v && php -m | grep -iE '^(ffi|pcntl|posix|zend opcache)$'
+      - run: cargo build --locked --release --manifest-path client/Cargo.toml
+      - run: |
+          echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
+          echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(dirname "$(command -v php)")" >> "$GITHUB_ENV"
+      - run: python3 tests/test_php.py -v
