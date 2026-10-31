@@ -30,6 +30,7 @@ import time
 import unittest
 
 HS_BIN = os.environ.get("HS_BIN")
+MACOS = sys.platform == "darwin"
 TOOLS = ("hstest", "aws")
 EXIT_NOT_FAST = 124
 
@@ -53,7 +54,8 @@ def make_env(root):
     return env
 
 
-ROOT = tempfile.mkdtemp(prefix="hs-matrix-")
+# Under /tmp: macOS's own temp dir is too deep for a socket path (104 bytes).
+ROOT = tempfile.mkdtemp(prefix="hs-matrix-", dir="/tmp" if MACOS else None)
 BASE_ENV = make_env(ROOT)
 
 
@@ -73,7 +75,9 @@ def run(mode, argv, input=b"", cwd=None, env=None, tty=False, umask=None,
         cmd = ["bash", "-c", f'{shlex.join(cmd)} | {pipe_to}; echo "status=${{PIPESTATUS[0]}}" >&2']
     if tty:
         # script(1) gives the command a pty of a known size.
-        cmd = ["script", "-qec", "stty cols 123 rows 45; " + shlex.join(cmd), "/dev/null"]
+        line = "stty cols 123 rows 45; " + shlex.join(cmd)
+        cmd = (["script", "-q", "/dev/null", "sh", "-c", line] if MACOS
+               else ["script", "-qec", line, "/dev/null"])
 
     def setup():
         if umask is not None:
@@ -546,7 +550,10 @@ main()
 
 def ptrace_allowed():
     """Whether a process may be traced by its parent (PTRACE_TRACEME), as the
-    client does to follow a launcher: seccomp or Yama may forbid it."""
+    client does to follow a launcher: seccomp or Yama may forbid it. The
+    client follows launchers on Linux only."""
+    if sys.platform != "linux":
+        return False
     import ctypes
     libc = ctypes.CDLL(None, use_errno=True)
     pid = os.fork()
@@ -556,7 +563,8 @@ def ptrace_allowed():
 
 
 PTRACE = ptrace_allowed()
-needs_ptrace = unittest.skipUnless(PTRACE, "ptrace is not allowed here")
+needs_ptrace = unittest.skipUnless(PTRACE, "ptrace is not allowed here" if sys.platform == "linux"
+                                   else "launchers are followed on Linux only")
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
@@ -867,6 +875,56 @@ class Preload(Matrix):
             stop("hstest", env)
 
 
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+@unittest.skipUnless(MACOS, "CoreFoundation is macOS's")
+class CoreFoundation(Matrix):
+    """macOS: once a process used CoreFoundation, a forked child that uses it
+    again is killed (Apple Silicon: urllib's proxy lookup; both: after a run
+    loop). The daemon must never fork after using it: imports that do are
+    skipped (level 1) or blacklisted (level 2), and each run that uses it,
+    in the child, is served as natively."""
+
+    daemon = Preload.daemon
+    learn = Preload.learn
+    cache = Preload.cache
+
+    def test_tool_using_it_at_run_time_is_served(self):
+        for _ in range(3):
+            _, out, _ = self.assertSame(["hstest", "proxies"])
+            self.assertEqual(out, b"proxies True\n")
+
+    def test_entry_module_using_it_is_skipped(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(stop, "hscf", env)
+        run("hs", ["hscf"], env=env, require_fast=False)  # starts the daemon, which skips cfmain
+        served_soon(["hscf"], env=env)
+        for _ in range(3):
+            _, out, _ = self.assertSame(["hscf"], env=env)
+            self.assertEqual(out, b"cf main True\n")
+        [skip] = glob.glob(os.path.join(env["XDG_CACHE_HOME"], "speedrunner", "hscf.skip-*.json"))
+        with open(skip) as f:
+            self.assertEqual(json.load(f), {"hstest.cfmain": "uses CoreFoundation at import"})
+
+    def test_learned_modules_using_it_are_blacklisted(self):
+        env = self.daemon("hstest", "1,2")
+        try:
+            self.learn("hstest", env, [["hstest", "lazy-cf"]])
+            self.assertTrue(status("hstest", env).startswith("ready"))
+            cache = self.cache(env, "hstest")
+            self.assertIn("hstest.lazy_plain", cache["modules"])
+            # Found by the canary alone: no thread to show for it.
+            self.assertEqual(cache["blacklist"].get("hstest.cf"), "uses CoreFoundation at import")
+            self.assertIn(cache["blacklist"].get("hstest.lazy_proxy"),
+                          ("starts a thread at import", "uses CoreFoundation at import"))
+            for _ in range(3):
+                _, out, _ = self.assertSame(["hstest", "lazy-cf"], env=env)
+                self.assertEqual(out, b"proxies True\n")
+        finally:
+            stop("hstest", env)
+
+
 def private_daemon(tool):
     """A daemon of our own, in a fresh runtime dir: tests may kill it."""
     root = tempfile.mkdtemp(dir=ROOT)
@@ -999,7 +1057,10 @@ class Failures(Matrix):
             self.assertEqual(run("hs", ["hsedit"], env=env).stdout, b"v1\n")
             write_lib("v2", time.time())
             self.assertEqual(run("hs", ["hsedit"], env=env, require_fast=False).stdout, b"v2\n")
-            self.assertEqual(run("hs", ["hsedit"], env=env).returncode, EXIT_NOT_FAST)
+            # Never the stale daemon: natively while it restarts, or its
+            # successor, on a machine fast enough to have it ready already.
+            p = run("hs", ["hsedit"], env=env)
+            self.assertIn((p.returncode, p.stdout), [(EXIT_NOT_FAST, b""), (0, b"v2\n")])
             deadline = time.monotonic() + 30
             while True:  # restarted in the background, then fast again
                 text = status("hsedit", env)
@@ -1053,6 +1114,8 @@ def ask_as(sock_path, euid):
 def check_peer_uid(test, tool):
     """A daemon serves a peer of its own uid only: another one gets no
     answer (at most the wait status of the child that turned it away)."""
+    if MACOS:
+        test.skipTest("no setfsuid on macOS: a peer of another uid cannot reach the 0700 directory")
     root, env = private_daemon(tool)
     try:
         sock = daemon_socket(env)
@@ -1063,6 +1126,30 @@ def check_peer_uid(test, tool):
         stop(tool, env)
 
 
+def process_args(pid):
+    """A process's argv and env entries, as bytes: /proc on Linux, sysctl
+    KERN_PROCARGS2 on macOS (argc, the executable path and padding, argv,
+    then env up to an empty string)."""
+    if not MACOS:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            argv = f.read().split(b"\0")[:-1]
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            return argv, f.read().split(b"\0")
+    libc = ctypes.CDLL(None, use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, pid)
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, ctypes.c_size_t(0)):
+        raise OSError(ctypes.get_errno(), f"KERN_PROCARGS2 of {pid}")
+    buf = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, ctypes.c_size_t(0)):
+        raise OSError(ctypes.get_errno(), f"KERN_PROCARGS2 of {pid}")
+    data = buf.raw[:size.value]
+    argc = struct.unpack_from("<i", data)[0]
+    items = data[4:].partition(b"\0")[2].lstrip(b"\0").split(b"\0")
+    env = items[argc:]
+    return items[:argc], env[:env.index(b"")] if b"" in env else env
+
+
 def check_daemon_refuses_bad_dir(test, tool):
     """A daemon started by hand (as the client would start it: same command
     line, same env) with its socket in a runtime dir that is not ours with
@@ -1070,10 +1157,8 @@ def check_daemon_refuses_bad_dir(test, tool):
     root, env = private_daemon(tool)
     try:
         pid = int(status_field(status(tool, env), "pid"))
-        with open(f"/proc/{pid}/cmdline", "rb") as f:
-            argv = f.read().split(b"\0")[:-1]
-        with open(f"/proc/{pid}/environ", "rb") as f:
-            environ = dict(e.split(b"=", 1) for e in f.read().split(b"\0") if b"=" in e)
+        argv, entries = process_args(pid)
+        environ = dict(e.split(b"=", 1) for e in entries if b"=" in e)
     finally:
         stop(tool, env)
     if b"--lock-fd" in argv:
@@ -1227,13 +1312,16 @@ class Distribution(Matrix):
                                           "speedrunner_daemon.py"))
         with open(daemon, "rb") as f, open(os.path.join(self.REPO, "server", "speedrunner_daemon.py"), "rb") as g:
             self.assertEqual(f.read(), g.read())
-        running = []
-        for pid in filter(str.isdigit, os.listdir("/proc")):
-            try:
-                with open(f"/proc/{pid}/cmdline", "rb") as f:
-                    running.append(f.read())
-            except OSError:
-                pass
+        if MACOS:
+            running = subprocess.run(["ps", "-axo", "args="], capture_output=True).stdout.splitlines()
+        else:
+            running = []
+            for pid in filter(str.isdigit, os.listdir("/proc")):
+                try:
+                    with open(f"/proc/{pid}/cmdline", "rb") as f:
+                        running.append(f.read())
+                except OSError:
+                    pass
         self.assertTrue(any(daemon.encode() in c for c in running))
         native = outcome(subprocess.run(["hstest", "argv", "x"], env=full, capture_output=True))
         fast = outcome(subprocess.run([lone, "run", "hstest", "--", "argv", "x"], capture_output=True,
