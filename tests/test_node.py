@@ -306,5 +306,17 @@ class Failures(m.Matrix):
             m.stop("nodetest", env)
 
 
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class Security(m.Matrix):
+    """The daemon's own checks, behind the client's (see test_matrix.py)."""
+
+    @unittest.skipUnless(os.getuid() == 0, "needs root to connect as another uid")
+    def test_daemon_refuses_peer_of_other_uid(self):
+        m.check_peer_uid(self, "nodetest")
+
+    def test_daemon_refuses_bad_runtime_dir(self):
+        m.check_daemon_refuses_bad_dir(self, "nodetest")
+
+
 if __name__ == "__main__":
     unittest.main()

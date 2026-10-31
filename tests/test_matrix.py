@@ -10,6 +10,7 @@ Env:
 Run: python3 tests/test_matrix.py -v
 """
 import concurrent.futures
+import ctypes
 import glob
 import gzip
 import json
@@ -21,6 +22,7 @@ import re
 import shlex
 import shutil
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1010,6 +1012,100 @@ class Failures(Matrix):
             stop("hsedit", env)
 
 
+def daemon_socket(env):
+    """The one socket in a private daemon's runtime dir."""
+    sock_dir = os.path.join(env["XDG_RUNTIME_DIR"], "speedrunner")
+    [name] = [n for n in os.listdir(sock_dir) if n.endswith(".sock")]
+    return os.path.join(sock_dir, name)
+
+
+def ask_as(sock_path, euid):
+    """Sends a status request (P) to a daemon from a process of effective
+    uid euid, which SO_PEERCRED reports, but filesystem uid 0, so that it
+    still reaches the 0700 runtime dir: the daemon's own check, behind the
+    client's. Returns the kind of the first reply, b"" at end of file."""
+    r, w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        try:  # never let this copy of the test runner go on
+            os.close(r)
+            if euid != os.geteuid():
+                os.seteuid(euid)
+                ctypes.CDLL(None, use_errno=True).setfsuid(0)
+            s = socket.socket(socket.AF_UNIX)
+            s.settimeout(10)
+            s.connect(sock_path)
+            s.sendall(b"HS1P" + struct.pack("<I", 0))
+            os.write(w, b"=" + s.recv(1))
+        except BaseException as exc:
+            os.write(w, b"!" + repr(exc).encode())
+        finally:
+            os._exit(0)
+    os.close(w)
+    with os.fdopen(r, "rb") as f:
+        out = f.read()
+    os.waitpid(pid, 0)
+    if not out.startswith(b"="):
+        raise RuntimeError(out.decode(errors="replace"))
+    return out[1:]
+
+
+def check_peer_uid(test, tool):
+    """A daemon serves a peer of its own uid only: another one gets no
+    answer (at most the wait status of the child that turned it away)."""
+    root, env = private_daemon(tool)
+    try:
+        sock = daemon_socket(env)
+        test.assertEqual(ask_as(sock, os.getuid()), b"P")
+        test.assertIn(ask_as(sock, 65534), (b"", b"W"))
+        test.assertEqual(ask_as(sock, os.getuid()), b"P")  # and still serves
+    finally:
+        stop(tool, env)
+
+
+def check_daemon_refuses_bad_dir(test, tool):
+    """A daemon started by hand (as the client would start it: same command
+    line, same env) with its socket in a runtime dir that is not ours with
+    mode 0700 refuses to start, and binds nothing there."""
+    root, env = private_daemon(tool)
+    try:
+        pid = int(status_field(status(tool, env), "pid"))
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            argv = f.read().split(b"\0")[:-1]
+        with open(f"/proc/{pid}/environ", "rb") as f:
+            environ = dict(e.split(b"=", 1) for e in f.read().split(b"\0") if b"=" in e)
+    finally:
+        stop(tool, env)
+    if b"--lock-fd" in argv:
+        i = argv.index(b"--lock-fd")
+        del argv[i:i + 2]
+    i = argv.index(b"--socket") + 1
+    cases = [("too-open", 0o755, None)]
+    if os.getuid() == 0:
+        cases.append(("other-uid", 0o700, 65534))
+    for name, mode, uid in cases:
+        with test.subTest(dir=name):
+            d = os.path.join(root, name, "speedrunner")
+            os.makedirs(d)
+            os.chmod(d, mode)
+            if uid is not None:
+                os.chown(d, uid, -1)
+            sock = os.path.join(d, os.path.basename(argv[i].decode()))
+            p = subprocess.run(argv[:i] + [sock.encode()] + argv[i + 1:], env=environ, cwd=root,
+                               stdin=subprocess.DEVNULL, capture_output=True, timeout=30)
+            test.assertNotEqual(p.returncode, 0, p.stderr[-500:])
+            test.assertFalse(os.path.exists(sock))
+            test.assertIn(b"0700", p.stdout + p.stderr + open_log(sock))
+
+
+def open_log(sock):
+    try:
+        with open(sock + ".log", "rb") as f:
+            return f.read()
+    except OSError:
+        return b""
+
+
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class Security(Matrix):
     """Brief §5 « Sécurité »: anything not provably ours means native."""
@@ -1040,6 +1136,35 @@ class Security(Matrix):
     @unittest.skipUnless(os.getuid() == 0, "needs root to give the directory away")
     def test_runtime_dir_owned_by_other_uid(self):
         self.check_native_only(self.bad_runtime_dir(0o700, uid=65534))
+
+    @unittest.skipUnless(os.getuid() == 0, "needs root to connect as another uid")
+    def test_daemon_refuses_peer_of_other_uid(self):
+        check_peer_uid(self, "hstest")
+
+    def test_daemon_refuses_bad_runtime_dir(self):
+        check_daemon_refuses_bad_dir(self, "hstest")
+
+    def test_tmp_fallback_symlink(self):
+        # Without XDG_RUNTIME_DIR, the runtime dir is /tmp/speedrunner-<uid>:
+        # a name anyone can take first. A symlink there, even to a 0700
+        # directory of ours, is refused: native runs, nothing bound.
+        path = f"/tmp/speedrunner-{os.getuid()}"
+        if os.path.lexists(path):
+            self.skipTest(f"{path} exists")
+        target = tempfile.mkdtemp(dir=ROOT)
+        os.chmod(target, 0o700)
+        os.symlink(target, path)
+        try:
+            env = {"XDG_RUNTIME_DIR": ""}
+            argv = ["hstest", "argv"]
+            self.assertEqual(run("hs", argv, env=env).returncode, EXIT_NOT_FAST)
+            self.assertEqual(outcome(run("hs", argv, env=env, require_fast=False)),
+                             outcome(run("native", argv)))
+            time.sleep(0.5)  # a daemon would have bound its socket by now
+            self.assertEqual(os.listdir(target), [])
+            self.assertEqual(daemon_roots(path), [])
+        finally:
+            os.unlink(path)
 
     @unittest.skipUnless(os.getuid() == 0, "needs root to listen as another uid")
     def test_socket_served_by_other_uid(self):

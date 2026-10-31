@@ -362,5 +362,17 @@ class Interactive(m.Matrix):
         self.assertEqual(transcripts[0], transcripts[1])
 
 
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class Security(m.Matrix):
+    """The daemon's own checks, behind the client's (see test_matrix.py)."""
+
+    @unittest.skipUnless(os.getuid() == 0, "needs root to connect as another uid")
+    def test_daemon_refuses_peer_of_other_uid(self):
+        m.check_peer_uid(self, "phptest")
+
+    def test_daemon_refuses_bad_runtime_dir(self):
+        m.check_daemon_refuses_bad_dir(self, "phptest")
+
+
 if __name__ == "__main__":
     unittest.main()
