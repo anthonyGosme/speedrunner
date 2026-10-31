@@ -1254,11 +1254,12 @@ class Distribution(Matrix):
         self.assertIn("median gain", out)
         self.assertEqual(status("aws", env), "down")
 
-    def test_init_zsh_prints_the_hook(self):
-        p = subprocess.run([HS_BIN, "init", "zsh"], capture_output=True)
-        with open(os.path.join(self.REPO, "shell", "speedrunner.zsh"), "rb") as f:
-            self.assertEqual((p.returncode, p.stdout), (0, f.read()))
-        self.assertEqual(subprocess.run([HS_BIN, "init", "bash"], capture_output=True).returncode, 2)
+    def test_init_prints_the_hooks(self):
+        for shell in ("zsh", "bash"):
+            p = subprocess.run([HS_BIN, "init", shell], capture_output=True)
+            with open(os.path.join(self.REPO, "shell", f"speedrunner.{shell}"), "rb") as f:
+                self.assertEqual((p.returncode, p.stdout), (0, f.read()), shell)
+        self.assertEqual(subprocess.run([HS_BIN, "init", "fish"], capture_output=True).returncode, 2)
 
 
 def pty_transcript(argv, env, answers, timeout=30):

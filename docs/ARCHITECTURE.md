@@ -22,9 +22,10 @@ client/src/main.rs        le client, Rust, seule dépendance : libc (=0.2.175)
 client/build.rs           embarque l'addon Node, compilé pour glibc et pour musl
 client/src/launcher.rs    suivi des lanceurs (az, gcloud) sous ptrace
 shell/speedrunner.zsh       wrappers et anticipation pour zsh ≥ 5.3
+shell/speedrunner.bash      la même chose pour bash ≥ 4.2
 tests/
   test_matrix.py          matrice de non-régression, natif contre speedrunner
-  test_shell.py           intégration zsh, pilotée dans un vrai pty
+  test_shell.py           intégration zsh et bash, pilotée dans un vrai pty
   test_ruby.py            matrice Ruby (rbtest), sur le harnais de test_matrix.py
   test_php.py             matrice PHP (phptest, composer, artisan)
   test_node.py            matrice Node (nodetest, nodetty)
@@ -187,6 +188,7 @@ Après `G` (`apply_request`, puis `run_tool`) :
 
 - `shell/speedrunner.zsh` lit `${XDG_CONFIG_HOME:-~/.config}/speedrunner/tools` et définit `aws() { command speedrunner run aws -- "$@" }` pour chaque outil inscrit, sauf alias ou fonction de l'utilisateur. Une fonction `speedrunner` recharge les wrappers juste après `speedrunner enroll`.
 - Anticipation : widget sur `zle-line-pre-redraw`. Une fois par ligne, quand le premier mot (après d'éventuels `VAR=valeur`) est complet et inscrit, il lance `speedrunner prewarm <outil> &!`. Le coût est d'environ 2 µs par frappe dans les cas courants, et l'unique fork (~0,5 ms) part en arrière-plan.
+- **bash** (`shell/speedrunner.bash`, `eval "$(speedrunner init bash)"`) : mêmes wrappers, même rechargement après `enroll`. bash n'a pas de crochet par frappe ; l'anticipation passe par `bind -x` sur la touche espace (keymaps emacs et vi-insert), puisqu'un nom de commande est complet quand un espace le suit. La fonction insère elle-même l'espace à `READLINE_POINT` (en caractères : testé avec du texte multi-octets), puis applique la même règle que zsh. Elle est réarmée à chaque ligne par `PROMPT_COMMAND`, placée en tête et qui rend le `$?` reçu, pour les prompts qui l'affichent. Si la touche espace fait déjà autre chose chez l'utilisateur (`magic-space`…), elle n'est pas touchée : seule l'anticipation est perdue.
 - **Scripts, sans préfixe** : `eval "$(speedrunner activate [outils…])"` en tête du script, ou `speedrunner exec [-t outil]… commande` (y compris en shebang : `#!/usr/bin/env -S speedrunner exec bash`).
   - **Principe.** Un dossier `$XDG_RUNTIME_DIR/speedrunner/bin-<hash>/` contient des liens nommés d'après les outils, qui pointent tous vers le client ; il est placé en tête du `PATH`. Appelé sous le nom d'un outil, le client le sert : `aws args` équivaut à `speedrunner run aws -- args`. Pour trouver le vrai outil, `resolve_in_path` saute tout candidat qui se résout en notre propre binaire, ce qui exclut toute boucle. Le `PATH` étant hérité, `xargs`, `make` et les sous-scripts sont couverts.
   - **Mode automatique**, sans outil nommé : dossier `bin-auto-<hash du PATH>`, un lien par script Python ou Ruby trouvé sur le `PATH`, avec la règle de recherche de `PATH` (la première entrée d'un nom l'emporte). Le dossier n'est reparcouru que si un dossier du `PATH` change : son tampon est dans `.auto`. Les outils inscrits sont préchauffés tout de suite, et ceux que le script appellera plus d'une fois aussi. Pour le savoir, `script::command_counts` ([client/src/script.rs](../client/src/script.rs)) lit le script : celui du shell parent (`/proc/<ppid>/cmdline`, `-c TEXTE` ou le fichier ; à défaut, le fd 255 de bash) pour `activate`, ou celui de la commande pour `exec`.
@@ -250,10 +252,10 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
 
 ## 10 bis. Distribution
 
-Une release est un seul fichier : le client embarque les trois démons et le hook zsh (`include_bytes!`, `include_str!`).
+Une release est un seul fichier : le client embarque les quatre démons, l'addon Node et les hooks zsh et bash (`include_bytes!`, `include_str!`).
 
 - **Démons.** Faute de démon trouvé à côté du binaire, le client écrit sa copie embarquée dans `$XDG_DATA_HOME/speedrunner/daemons/<empreinte des trois>/`, sous un nom temporaire, puis la renomme. Une copie déjà présente ne sert que si ses octets correspondent : une mise à jour ne lance jamais le démon d'une autre version. Les dossiers voisins du binaire restent prioritaires, pour le développement : sur le VPS, on modifie `server/` sans recompiler.
-- **Hook.** `eval "$(speedrunner init zsh)"` dans `~/.zshrc` remplace `source shell/speedrunner.zsh`. Le hook n'a aucun `return` au niveau global, il supporte donc d'être évalué.
+- **Hook.** `eval "$(speedrunner init zsh)"` dans `~/.zshrc` remplace `source shell/speedrunner.zsh` ; de même `init bash` dans `~/.bashrc`. Le hook n'a aucun `return` au niveau global, il supporte donc d'être évalué.
 - **Version.** `speedrunner --version`.
 - **Releases.** Un tag `v*` lance `.github/workflows/release.yml`. Le workflow vérifie que le tag correspond à la version du `Cargo.toml`, puis compile en musl statique sur un runner x86_64 et sur un runner arm64 natif. Il vérifie ensuite que le binaire est statique et qu'il démarre, et publie `speedrunner-<arch>-unknown-linux-musl.tar.gz`, sa somme `.sha256` et `install.sh` avec `gh release create`. Les noms d'archive ne portent pas de version, pour que `releases/latest/download/` marche.
 - **`install.sh`**, en sh POSIX (testé sous dash) : une ligne, `curl -fsSL https://raw.githubusercontent.com/anthonyGosme/speedrunner/main/install.sh | sh`. Il détecte l'architecture, télécharge l'archive et sa somme, refuse si elles ne concordent pas, et installe par un nom temporaire puis `mv`, avec le lien `srr`, là où le shell le trouve sans étape de plus : `/usr/local/bin` en root ; sinon `~/.local/bin` ou `~/bin` s'il est déjà dans le `PATH` ; sinon `~/.local/bin`, ajouté au `PATH` dans `~/.profile`, `~/.bashrc` et `~/.zshrc`, une fois et marqué. Le shell qui a lancé l'installation ne voit ce dernier ajout qu'une fois relancé : un processus enfant ne peut pas changer le `PATH` de son parent. Variables : `SPEEDRUNNER_VERSION`, `SPEEDRUNNER_BIN_DIR`, `SPEEDRUNNER_NO_MODIFY_PATH=1`, et `SPEEDRUNNER_BASE_URL` pour le tester contre un serveur local. Testé dans Debian : en root, en utilisateur avec et sans `~/.local/bin` dans le `PATH`, et pour une réinstallation.
@@ -382,7 +384,6 @@ Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licenc
 
 Suite :
 
-- anticipation dans bash (le hook n'existe que pour zsh) ;
 - paquets : AUR, `.deb`, Homebrew sur Linux ;
 - un bench `pre-commit` de bout en bout ;
 - macOS, où le fork sans exec est fragile (CoreFoundation, Objective-C) et où manquent inotify et `/proc` ;

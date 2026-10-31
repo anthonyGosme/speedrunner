@@ -130,7 +130,9 @@ cat << EOF
   speedrunner exec ./script.sh       # a whole script: every tool it calls, preloaded
   eval "\$(speedrunner activate)"     # or this line at the top of the script itself
 
-  For zsh (wrappers, and daemons warmed up while you type), add to ~/.zshrc:
+  For wrappers, and daemons warmed up while you type, add to ~/.zshrc:
     eval "\$(speedrunner init zsh)"
+  or to ~/.bashrc:
+    eval "\$(speedrunner init bash)"
 
 EOF

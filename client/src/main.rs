@@ -42,7 +42,7 @@ static CHILD_PID: AtomicI32 = AtomicI32::new(0);
 static NATIVE_PID: AtomicI32 = AtomicI32::new(0);
 static CHILD_PIDFD: AtomicI32 = AtomicI32::new(-1);
 
-// The daemons and the zsh hook, built in: a release is this one file. The
+// The daemons and the shell hooks, built in: a release is this one file. The
 // Node daemon's addon comes per libc, as build.rs made it (empty if not).
 const EMBEDDED: [(&str, &[u8]); 6] = [
     ("speedrunner_daemon.py", include_bytes!("../../server/speedrunner_daemon.py")),
@@ -53,6 +53,7 @@ const EMBEDDED: [(&str, &[u8]); 6] = [
     ("speedrunner_node-musl.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-musl.node"))),
 ];
 const ZSH_HOOK: &str = include_str!("../../shell/speedrunner.zsh");
+const BASH_HOOK: &str = include_str!("../../shell/speedrunner.bash");
 
 fn main() {
     let args: Vec<OsString> = env::args_os().collect();
@@ -110,7 +111,7 @@ fn usage() {
          speedrunner exec [--eager] [-t <tool>]... [--] <command> [args...]\n       \
          speedrunner enroll [<tool>...]\n       \
          speedrunner prewarm|status|stop <tool>   (or: php <script>)\n       \
-         eval \"$(speedrunner init zsh)\"     (in ~/.zshrc: wrappers, warm-up while typing)\n       \
+         eval \"$(speedrunner init zsh|bash)\"     (in ~/.zshrc or ~/.bashrc: wrappers, warm-up while typing)\n       \
          speedrunner demo [--runs N]     (the gain on this machine, with the tools it has)\n       \
          speedrunner --version"
     );
@@ -246,19 +247,24 @@ fn median_ms(runs: usize, mut f: impl FnMut() -> bool) -> f64 {
     times[times.len() / 2]
 }
 
-/// `eval "$(speedrunner init zsh)"` in ~/.zshrc: the built-in hook.
+/// `eval "$(speedrunner init zsh)"` in ~/.zshrc, or `init bash` in
+/// ~/.bashrc: the built-in hook.
 fn cmd_init(rest: &[OsString]) -> i32 {
     match rest.first().map(|a| a.as_bytes()) {
         Some(b"zsh") => {
             print!("{}", ZSH_HOOK);
             0
         }
+        Some(b"bash") => {
+            print!("{}", BASH_HOOK);
+            0
+        }
         Some(other) => {
-            eprintln!("speedrunner: init {}: only zsh is supported for now", String::from_utf8_lossy(other));
+            eprintln!("speedrunner: init {}: only zsh and bash are supported", String::from_utf8_lossy(other));
             2
         }
         None => {
-            eprintln!("usage: eval \"$(speedrunner init zsh)\"   (in ~/.zshrc)");
+            eprintln!("usage: eval \"$(speedrunner init zsh)\"   (in ~/.zshrc; or init bash, in ~/.bashrc)");
             2
         }
     }
@@ -1773,7 +1779,7 @@ fn enrolled() -> Vec<String> {
         .collect()
 }
 
-/// Add tools to the list shell/speedrunner.zsh wraps and warms up. Only
+/// Add tools to the list shell/speedrunner.zsh and .bash wrap and warm up. Only
 /// Python scripts are accepted: a native binary has nothing to gain.
 fn cmd_enroll(rest: &[OsString]) -> i32 {
     let mut tools = enrolled();

@@ -29,8 +29,8 @@ each call starts with them already done.
 srr aws s3 ls                      # any Python, Ruby, PHP or Node tool, nothing to set up
 speedrunner exec ./script.sh       # a whole script: every tool it calls, preloaded
 eval "$(speedrunner activate)"     # at the top of a script: no prefix needed after
-eval "$(speedrunner init zsh)"     # in ~/.zshrc: daemons warm up while you type
-speedrunner enroll aws             # then plain `aws s3 ls` in zsh
+eval "$(speedrunner init zsh)"     # in ~/.zshrc (or init bash, in ~/.bashrc): daemons warm up while you type
+speedrunner enroll aws             # then plain `aws s3 ls` in zsh or bash
 ```
 
 ## Install
@@ -227,7 +227,7 @@ largest. Eleven tools at once: 341 MB. A daemon exits after 4 hours unused
 (`SPEEDRUNNER_IDLE_TIMEOUT`, in seconds), or at once with `speedrunner stop <tool>`.
 
 **And the first call?** It runs natively while the tool's daemon starts beside it (a little slower than
-native: 15 to 40 ms for aws); the gain starts with the second call. In zsh, `speedrunner init zsh`
+native: 15 to 40 ms for aws); the gain starts with the second call. In zsh or bash, `speedrunner init zsh` (or `bash`)
 starts the daemon as you type the tool's name, so that even the first call is fast. In a script,
 `speedrunner exec` starts, before they are reached, the daemons of the tools it will call more than once.
 
