@@ -8,6 +8,9 @@
 //! command line and environment are read, then it is killed. What it would
 //! have run is served by a daemon, or execed as is. The tool itself has not
 //! started, so following a launcher never runs anything twice.
+//!
+//! Linux only: elsewhere `trace` fails, and the launcher runs natively.
+#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
 
 use std::ffi::{CString, OsStr};
 use std::fs::{self, File};
@@ -123,6 +126,7 @@ fn head_and_tail(path: &[u8]) -> io::Result<(Vec<u8>, (u64, Vec<u8>))> {
     Ok((head, (from, tail)))
 }
 
+#[cfg(target_os = "linux")]
 fn wait(pid: i32) -> io::Result<i32> {
     let mut status = 0;
     loop {
@@ -137,15 +141,17 @@ fn wait(pid: i32) -> io::Result<i32> {
 }
 
 // The request's type differs between the glibc and musl bindings.
-#[cfg(target_env = "musl")]
+#[cfg(all(target_os = "linux", target_env = "musl"))]
 type Request = libc::c_int;
-#[cfg(not(target_env = "musl"))]
+#[cfg(all(target_os = "linux", not(target_env = "musl")))]
 type Request = libc::c_uint;
 
+#[cfg(target_os = "linux")]
 unsafe fn ptrace(request: Request, pid: i32, data: usize) -> libc::c_long {
     libc::ptrace(request, pid as libc::pid_t, ptr::null_mut::<libc::c_void>(), data as *mut libc::c_void)
 }
 
+#[cfg(target_os = "linux")]
 fn kill(pid: i32) {
     unsafe {
         libc::kill(pid, libc::SIGKILL);
@@ -156,6 +162,12 @@ fn kill(pid: i32) {
 /// Run the launcher at `path` with `argv`, until it execs an interpreter.
 /// `quiet`: a run of our own (to learn what it execs, for prewarm), with
 /// /dev/null for fds 0-2, killed rather than left to run natively.
+#[cfg(not(target_os = "linux"))]
+pub fn trace(_path: &[u8], _argv: &[Vec<u8>], _quiet: bool) -> io::Result<Traced> {
+    Err(io::Error::new(io::ErrorKind::Unsupported, "no ptrace on this platform"))
+}
+
+#[cfg(target_os = "linux")]
 pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
     let path_c = CString::new(path)?;
     let argv_c: Vec<CString> = argv.iter().map(|a| CString::new(&a[..])).collect::<Result<_, _>>()?;
@@ -242,6 +254,7 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn detach(pid: i32) -> Traced {
     unsafe {
         ptrace(libc::PTRACE_DETACH, pid, 0);
@@ -249,6 +262,7 @@ fn detach(pid: i32) -> Traced {
     Traced::Native(pid)
 }
 
+#[cfg(target_os = "linux")]
 fn split0(data: Vec<u8>) -> Vec<Vec<u8>> {
     let mut items: Vec<Vec<u8>> = data.split(|b| *b == 0).map(|s| s.to_vec()).collect();
     if items.last().map_or(false, |l| l.is_empty()) {
@@ -260,6 +274,7 @@ fn split0(data: Vec<u8>) -> Vec<Vec<u8>> {
 /// The stopped process's command line, environment, umask and ignored
 /// signals. With `ours`, None unless it has our cwd and fds 0-2, which a
 /// request passes from us.
+#[cfg(target_os = "linux")]
 fn read_launch(pid: i32, exe: &Path, ours: bool) -> Option<Launch> {
     let proc = format!("/proc/{}", pid);
     let argv = split0(fs::read(format!("{}/cmdline", proc)).ok()?);

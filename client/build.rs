@@ -17,6 +17,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SPEEDRUNNER_NODE_ADDONS");
     println!("cargo:rerun-if-env-changed=NODE_ADDON_CC");
     let given = env::var_os("SPEEDRUNNER_NODE_ADDONS");
+    // Node tools are served on Linux only so far.
+    let linux = env::var("CARGO_CFG_TARGET_OS").map_or(false, |os| os == "linux");
     let musl_host = fs::read_dir("/lib").map_or(false, |d| {
         d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("ld-musl"))
     });
@@ -30,7 +32,7 @@ fn main() {
                 println!("cargo:rerun-if-changed={}", from.display());
                 fs::copy(&from, &dest).is_ok()
             }
-            None if (libc == "musl") == musl_host => {
+            None if linux && (libc == "musl") == musl_host => {
                 let cc = env::var("NODE_ADDON_CC").unwrap_or_else(|_| "cc".to_string());
                 let ok = Command::new(&cc)
                     .args(["-O2", "-shared", "-fPIC", "-o"])

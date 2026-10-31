@@ -98,6 +98,20 @@ def cmd_lazy(args):
     print(lazy_plain.VALUE, lazy_env.VALUE, lazy_argv.VALUE)
 
 
+def cmd_proxies(args):
+    # CoreFoundation used at run time, in the child: as any tool making a
+    # request on macOS does (urllib's proxy lookup).
+    import urllib.request
+    print("proxies", isinstance(urllib.request.getproxies(), dict))
+
+
+def cmd_lazy_cf(args):
+    # What level 2 learns, and must not keep: modules that use CoreFoundation
+    # as they load, with a thread (lazy_proxy) or without one (cf).
+    from hstest import cf, lazy_plain, lazy_proxy  # noqa: F401
+    cmd_proxies(args)
+
+
 def cmd_cwd(args):
     print(os.getcwd())
     print(os.environ.get("PWD"))

@@ -6,6 +6,7 @@
 //! so a command can never run twice. Wire format: see server/speedrunner_daemon.py.
 
 mod launcher;
+mod platform;
 mod script;
 
 use std::env;
@@ -559,7 +560,7 @@ fn serve(tool: &Tool, args: &[OsString], lazy: Option<&Path>) -> i32 {
         Err(Refused::Io(e)) => fall_back(tool, args, &format!("handshake: {}", e)),
     };
 
-    CHILD_PIDFD.store(pidfd_open(pid), Ordering::SeqCst);
+    CHILD_PIDFD.store(platform::pidfd_open(pid), Ordering::SeqCst);
     CHILD_PID.store(pid, Ordering::SeqCst);
     install_relays();
     // Sending G commits. If it cannot be sent, the child never runs the tool.
@@ -583,8 +584,7 @@ fn handshake(sock: &UnixStream, tool: &Tool, args: &[OsString]) -> Result<i32, R
         }
     }
     let cwd = unsafe {
-        libc::open(b".\0".as_ptr() as *const libc::c_char,
-                   libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC)
+        libc::open(b".\0".as_ptr() as *const libc::c_char, platform::CWD_FLAGS)
     };
     if cwd < 0 {
         return Err(Refused::Io(io::Error::last_os_error()));
@@ -592,10 +592,7 @@ fn handshake(sock: &UnixStream, tool: &Tool, args: &[OsString]) -> Result<i32, R
     let msg = frame(b'R', &run_body(tool.argv0(), args, tool.target.as_ref().map(|t| &t.launch)));
     // Our controlling terminal, if any: the child has none, and tools open
     // /dev/tty for passwords.
-    let tty = unsafe {
-        libc::open(b"/dev/tty\0".as_ptr() as *const libc::c_char,
-                   libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC)
-    };
+    let tty = platform::open_tty();
     let mut fds = vec![0, 1, 2, cwd];
     if tty >= 0 {
         fds.push(tty);
@@ -695,9 +692,9 @@ extern "C" fn relay_native(sig: libc::c_int) {
     let pid = NATIVE_PID.load(Ordering::SeqCst);
     if pid > 0 {
         unsafe {
-            let errno = *libc::__errno_location();
+            let errno = *platform::errno();
             libc::kill(pid, sig);
-            *libc::__errno_location() = errno;
+            *platform::errno() = errno;
         }
     }
 }
@@ -761,19 +758,18 @@ extern "C" fn relay(sig: libc::c_int) {
         return;
     }
     unsafe {
-        let errno = *libc::__errno_location();
+        let errno = *platform::errno();
         if sig == libc::SIGTERM {
             let fd = CHILD_PIDFD.load(Ordering::SeqCst);
             if fd >= 0 {
-                libc::syscall(libc::SYS_pidfd_send_signal, fd, sig,
-                              ptr::null::<libc::siginfo_t>(), 0);
+                platform::pidfd_send_signal(fd, sig);
             } else {
                 libc::kill(pid, sig);
             }
         } else {
             libc::kill(-pid, sig);
         }
-        *libc::__errno_location() = errno;
+        *platform::errno() = errno;
     }
 }
 
@@ -829,10 +825,6 @@ fn die_by_signal(sig: i32) -> ! {
     process::exit(128 + sig);
 }
 
-fn pidfd_open(pid: i32) -> i32 {
-    unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) as i32 }
-}
-
 // --- wire format -----------------------------------------------------------
 
 fn put_u32(buf: &mut Vec<u8>, v: u32) {
@@ -864,14 +856,7 @@ fn run_body(script: &[u8], args: &[OsString], launch: Option<&launcher::Launch>)
     }
     let env: Vec<Vec<u8>> = match launch {
         Some(l) => l.env.clone(),
-        None => env::vars_os()
-            .map(|(k, v)| {
-                let mut e = k.into_vec();
-                e.push(b'=');
-                e.extend_from_slice(v.as_bytes());
-                e
-            })
-            .collect(),
+        None => environ(),
     };
     put_u32(&mut b, env.len() as u32);
     for e in &env {
@@ -896,6 +881,18 @@ fn run_body(script: &[u8], args: &[OsString], launch: Option<&launcher::Launch>)
         put_u32(&mut b, g);
     }
     b
+}
+
+/// Our env, as KEY=VALUE entries.
+fn environ() -> Vec<Vec<u8>> {
+    env::vars_os()
+        .map(|(k, v)| {
+            let mut e = k.into_vec();
+            e.push(b'=');
+            e.extend_from_slice(v.as_bytes());
+            e
+        })
+        .collect()
 }
 
 fn send_with_fds(sock: &UnixStream, data: &[u8], fds: &[RawFd]) -> io::Result<()> {
@@ -985,17 +982,8 @@ fn ensure_runtime_dir(dir: &Path) -> io::Result<()> {
 
 fn connect(sock: &Path) -> io::Result<UnixStream> {
     let s = UnixStream::connect(sock)?;
-    unsafe {
-        let mut cred: libc::ucred = mem::zeroed();
-        let mut len = mem::size_of::<libc::ucred>() as libc::socklen_t;
-        if libc::getsockopt(s.as_raw_fd(), libc::SOL_SOCKET, libc::SO_PEERCRED,
-                            &mut cred as *mut _ as *mut libc::c_void, &mut len) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        if cred.uid != libc::getuid() {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied,
-                                      "daemon runs as another user"));
-        }
+    if platform::peer_uid(s.as_raw_fd())? != unsafe { libc::getuid() } {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "daemon runs as another user"));
     }
     Ok(s)
 }
@@ -1329,8 +1317,15 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     ptrs.push(ptr::null());
     let interp = cstring(&interp);
     // A launcher's tool runs with the env the launcher made: so does its daemon.
-    let envp: Option<Vec<CString>> = tool.target.as_ref()
-        .map(|t| t.launch.env.iter().map(|e| cstring(e)).collect());
+    let mut env: Option<Vec<Vec<u8>>> = tool.target.as_ref().map(|t| t.launch.env.clone());
+    if cfg!(target_os = "macos") {
+        let mut given = env.take().unwrap_or_else(environ);
+        if let Some(var) = platform::launch_env_var(&given) {
+            given.push(var);
+        }
+        env = Some(given);
+    }
+    let envp: Option<Vec<CString>> = env.map(|env| env.iter().map(|e| cstring(e)).collect());
     let mut envp_p: Vec<*const libc::c_char> = envp.iter().flatten().map(|c| c.as_ptr()).collect();
     envp_p.push(ptr::null());
     let log = cstring(tool.sock.with_extension("log").as_os_str().as_bytes());
@@ -1518,12 +1513,9 @@ fn script_of(argv: &[Vec<u8>], cwd: &Path) -> Option<(String, PathBuf)> {
 /// that shell (or a subshell of it, with the same command line). bash also
 /// keeps the script open on fd 255.
 fn calling_script() -> Option<(String, PathBuf)> {
-    let proc_dir = PathBuf::from(format!("/proc/{}", unsafe { libc::getppid() }));
-    let cmdline = std::fs::read(proc_dir.join("cmdline")).ok()?;
-    let argv: Vec<Vec<u8>> = cmdline.split(|b| *b == 0).filter(|a| !a.is_empty()).map(<[u8]>::to_vec).collect();
-    let cwd = std::fs::read_link(proc_dir.join("cwd")).ok()?;
+    let (argv, cwd, fd255) = platform::parent_process(255)?;
     script_of(&argv, &cwd).or_else(|| {
-        let text = std::fs::read_to_string(proc_dir.join("fd/255")).ok()?;
+        let text = std::fs::read_to_string(fd255?).ok()?;
         Some((text, cwd))
     })
 }

@@ -12,7 +12,8 @@ Started by the client, with the tool's own interpreter and shebang flags:
 --tty: which of fds 0-2 were terminals for the client that started us (bit
        n for fd n), and its terminal size. Imports run with a pty on those.
 
-Standard library only. Linux only for now (SO_PEERCRED, /proc).
+Standard library only. Linux and macOS: what differs is in the platform
+section below.
 
 Protocol, little-endian, over the Unix socket:
 
@@ -80,10 +81,187 @@ MEMO_BUDGET = int(float(os.environ.get("SPEEDRUNNER_MEMO_MB", 16)) * 2**20)
 
 PARENT_PID = os.getpid()
 LOG_FD = os.dup(2)
+MACOS = sys.platform == "darwin"
+# Set by the client on macOS, where a launcher stub may change the env
+# between its exec and ours: digests of the env it started us with.
+LAUNCH_ENV = os.environ.pop("SPEEDRUNNER_LAUNCH_ENV", None) if MACOS else None
 
 
 def log(msg):
     os.write(LOG_FD, f"speedrunner[{os.getpid()}] {msg}\n".encode(errors="replace"))
+
+
+# --- platform ----------------------------------------------------------------
+# Linux: /proc, inotify, SO_PEERCRED, memfd. macOS: sysctl, libproc,
+# LOCAL_PEERCRED, a file in the runtime directory, and CoreFoundation.
+
+MSG_CLOEXEC = getattr(socket, "MSG_CMSG_CLOEXEC", 0)
+RUNTIME_DIR_FD = None  # set by serve()
+_LIBC = []
+
+
+def libc():
+    if not _LIBC:
+        _LIBC.append(ctypes.CDLL(None, use_errno=True))
+    return _LIBC[0]
+
+
+def received_fds(fds):
+    """Close-on-exec for fds received over a socket, as MSG_CMSG_CLOEXEC
+    makes them on Linux. macOS has no such flag; we have no other thread
+    that could fork meanwhile. By fcntl: os.set_inheritable's ioctl fails
+    on the cwd, opened O_SEARCH."""
+    if not MSG_CLOEXEC:
+        for fd in fds:
+            fcntl.fcntl(fd, fcntl.F_SETFD, fcntl.FD_CLOEXEC)
+    return fds
+
+
+def peer_creds(conn):
+    """(uid, gid) of the process at the other end of a Unix socket."""
+    if MACOS:
+        # struct xucred: u_int version; uid_t uid; short ngroups; gid_t groups[16],
+        # groups[0] the effective gid. Level SOL_LOCAL is 0.
+        data = conn.getsockopt(0, socket.LOCAL_PEERCRED, 76)
+        (uid,) = struct.unpack_from("<I", data, 4)
+        (gid,) = struct.unpack_from("<I", data, 12)
+        return uid, gid
+    creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    _pid, uid, gid = struct.unpack("3i", creds)
+    return uid, gid
+
+
+def native_thread_count():
+    if MACOS:
+        info = ctypes.create_string_buffer(96)  # struct proc_taskinfo
+        # PROC_PIDTASKINFO; unknown counts as threads: no fork.
+        if libc().proc_pidinfo(os.getpid(), 4, ctypes.c_uint64(0), info, 96) != 96:
+            return -1
+        return struct.unpack_from("<i", info, 84)[0]  # pti_threadnum
+    return len(os.listdir("/proc/self/task"))
+
+
+def anon_file(name):
+    """A file only we can reach, for output of any size."""
+    if not MACOS:
+        return os.memfd_create(name)
+    path = f".{name}-{os.getpid()}"
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o600, dir_fd=RUNTIME_DIR_FD)
+    except FileExistsError:  # left by a process of the same pid
+        os.unlink(path, dir_fd=RUNTIME_DIR_FD)
+        fd = os.open(path, flags, 0o600, dir_fd=RUNTIME_DIR_FD)
+    os.unlink(path, dir_fd=RUNTIME_DIR_FD)
+    return fd
+
+
+def dir_path(fd):
+    """A path that names the directory open as fd."""
+    if MACOS:
+        return os.fsdecode(fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024)).split(b"\0", 1)[0])
+    return f"/proc/self/fd/{fd}"
+
+
+def dir_deleted(fd):
+    if MACOS:
+        try:
+            st, now = os.fstat(fd), os.stat(dir_path(fd))
+        except OSError:
+            return True
+        return (st.st_ino, st.st_dev) != (now.st_ino, now.st_dev)
+    return os.readlink(f"/proc/self/fd/{fd}").endswith(" (deleted)")
+
+
+def exec_environ():
+    """The env we were exec'd with, as setenv() since leaves it, or None.
+    Linux: /proc/self/environ. macOS: sysctl KERN_PROCARGS2, which gives
+    argc, the executable path and padding, argv, then env up to an empty
+    string."""
+    if not MACOS:
+        try:
+            with open("/proc/self/environ", "rb") as f:
+                entries = f.read().split(b"\0")
+        except OSError:
+            return None
+    else:
+        size = ctypes.c_size_t(0)
+        mib = (ctypes.c_int * 3)(1, 49, os.getpid())  # CTL_KERN, KERN_PROCARGS2
+        if libc().sysctl(mib, 3, None, ctypes.byref(size), None, ctypes.c_size_t(0)):
+            return None
+        buf = ctypes.create_string_buffer(size.value)
+        if libc().sysctl(mib, 3, buf, ctypes.byref(size), None, ctypes.c_size_t(0)):
+            return None
+        data = buf.raw[:size.value]
+        (argc,) = struct.unpack_from("<i", data)
+        _path, _, rest = data[4:].partition(b"\0")
+        entries = rest.lstrip(b"\0").split(b"\0")[argc:]
+        entries = entries[:entries.index(b"")] if b"" in entries else entries
+    env = {}
+    for entry in entries:
+        key, sep, value = entry.partition(b"=")
+        if sep:
+            env[os.fsdecode(key)] = os.fsdecode(value)
+    return env
+
+
+def env_digest(key, value):
+    """FNV-1a 64 of KEY=VALUE, as the client computes it."""
+    h = 0xcbf29ce484222325
+    for b in os.fsencode(key) + b"=" + os.fsencode(value):
+        h = ((h ^ b) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def launch_environ():
+    """(start, added): the env the client started us with, and what the
+    interpreter added or changed since, as it does natively for the tool.
+    CPython: LC_CTYPE=C.UTF-8 in a C locale (PEP 538). On macOS a launcher
+    stub may too, before its own exec: python.org's sets
+    __CF_USER_TEXT_ENCODING, /usr/bin/python3 SDKROOT and more. What the
+    client gave, only it knows: digests of each entry, in LAUNCH_ENV."""
+    start = exec_environ()
+    if start is None:
+        start = dict(os.environ)
+    elif LAUNCH_ENV is not None:
+        given = {}
+        for entry in LAUNCH_ENV.split("="):
+            if len(entry) > 16:
+                given[entry[16:]] = int(entry[:16], 16)
+        changed = given.keys() - start.keys()
+        start = {k: v for k, v in start.items() if given.get(k) == env_digest(k, v)}
+        changed |= given.keys() - start.keys()
+        # What the client had for a key the stub changed is unknown: no
+        # request matches it (startup keys only are compared).
+        start.update(dict.fromkeys(changed))
+    added = {k: v for k, v in os.environ.items() if start.get(k) != v}
+    return start, added
+
+
+def cf_unsafe():
+    """macOS: whether a forked child of ours would be killed for using
+    CoreFoundation, because this process used it first (urllib's proxy
+    lookup, a run loop; bench/macos/cfcases.py). A throwaway child tries,
+    through _scproxy, the one call found to trip CoreFoundation's fork
+    check on both Intel and Apple Silicon. A fork and a call to configd,
+    a few milliseconds: only when the preloaded state changed."""
+    if not MACOS:
+        return False
+    sys.stdout.flush()
+    sys.stderr.flush()
+    pid = os.fork()
+    if pid == 0:
+        try:
+            signal.set_wakeup_fd(-1)
+            null = os.open(os.devnull, os.O_RDWR)
+            for fd in (0, 1, 2):
+                os.dup2(null, fd)  # "The process has forked and you cannot use..."
+            import _scproxy
+            _scproxy._get_proxy_settings()
+        finally:
+            os._exit(0)
+    _, status = os.waitpid(pid, 0)
+    return status != 0
 
 
 # --- wire format -----------------------------------------------------------
@@ -106,12 +284,12 @@ def recv_request(sock):
     """Return (kind, body, fds)."""
     header_len = len(MAGIC) + 1 + 4
     data, ancdata, _flags, _addr = sock.recvmsg(
-        header_len, socket.CMSG_SPACE(N_FDS * 4), socket.MSG_CMSG_CLOEXEC)
+        header_len, socket.CMSG_SPACE(N_FDS * 4), MSG_CLOEXEC)
     fds = []
     for level, ctype, cdata in ancdata:
         if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
             usable = len(cdata) - len(cdata) % 4
-            fds += list(struct.unpack(f"<{usable // 4}i", cdata[:usable]))
+            fds += received_fds(list(struct.unpack(f"<{usable // 4}i", cdata[:usable])))
     if not data:
         raise EOFError("client closed the connection")
     data += recv_exact(sock, header_len - len(data))
@@ -179,9 +357,8 @@ class State:
         self.sock_path = sock_path
         self.disabled = None  # reason string when the fast path is off
         # As the client that started us had it: compared with each client's.
-        self.start_env = initial_environ()
-        # What CPython itself set at startup, as natively for the tool.
-        self.interpreter_env = {k: v for k, v in os.environ.items() if self.start_env.get(k) != v}
+        # What the interpreter set at startup, as natively for the tool.
+        self.start_env, self.interpreter_env = launch_environ()
         self.pre_import_env = {}
         self.import_env_changed = {}
         self.import_env_deleted = set()
@@ -211,23 +388,6 @@ class State:
 
 def preload_levels(text):
     return {int(x) for x in text.split(",") if x.strip() in ("1", "2", "3")}
-
-
-def initial_environ():
-    """The env we were started with, as /proc/self/environ still has it.
-    CPython may have added to os.environ since: in a C locale, LC_CTYPE=C.UTF-8
-    (PEP 538). Natively it does the same for the tool."""
-    try:
-        with open("/proc/self/environ", "rb") as f:
-            data = f.read()
-    except OSError:
-        return dict(os.environ)
-    env = {}
-    for entry in data.split(b"\0"):
-        key, sep, value = entry.partition(b"=")
-        if sep:
-            env[os.fsdecode(key)] = os.fsdecode(value)
-    return env
 
 
 def startup_env(env):
@@ -271,8 +431,8 @@ IMPORT_SUFFIXES = tuple(importlib.machinery.all_suffixes())
 def shadowed(state, cwd_fd):
     """A preloaded module that `python -m`, with the cwd first on sys.path,
     would import from a file in the cwd instead: its name, or None."""
-    cwd = f"/proc/self/fd/{cwd_fd}"
     try:
+        cwd = dir_path(cwd_fd)
         entries = os.listdir(cwd)
     except OSError:
         return None  # natively unreadable too: nothing found there
@@ -310,7 +470,7 @@ def capture_fds_during(fn, tty=None):
                 sinks[fd] = tty.master[fd]
                 os.dup2(tty.slave[fd], fd)
             else:
-                sinks[fd] = os.memfd_create("hs-out" if fd == 1 else "hs-err")
+                sinks[fd] = anon_file("hs-out" if fd == 1 else "hs-err")
                 memfds.append(sinks[fd])
                 os.dup2(sinks[fd], fd)
         if tty is not None and tty.covers(0):
@@ -457,10 +617,6 @@ def track_std_streams():
             setattr(sys, f"__{name}__", new)
 
 
-def native_thread_count():
-    return len(os.listdir("/proc/self/task"))
-
-
 def fingerprint_paths(script):
     paths = [p for p in (script, sys.executable) if p]
     for entry in sys.path:
@@ -515,7 +671,7 @@ def extend_fingerprint(state, paths, watch=False):
     inotify when watch is set and that works, by stat otherwise."""
     new = [p for p in dict.fromkeys(paths) if p not in state.fingerprint_set]
     state.fingerprint_set.update(new)
-    if watch:
+    if watch and not MACOS:  # no inotify: stat (kqueue would need a fd per file)
         if state.watch is None:
             state.watch = FileWatch()
         new = [p for p in new if not state.watch.add(p)]
@@ -647,13 +803,16 @@ def preload(state):
             # reads with any command line, so it cannot be skipped.
             if reads_argv(lambda: setattr(state, "script", module_main(state.module)))[1]:
                 raise ImportError(f"{state.module}'s packages read the command line at import")
+            if cf_unsafe():
+                raise ImportError(f"{state.module}'s packages use CoreFoundation at import")
         names = script_imports(state.script) if 1 in state.levels else []
         for name in [n for n in names if n not in skip]:
             why = ("reads the command line at import" if reads_argv(lambda: importlib.import_module(name))[1]
-                   else "starts a thread at import" if threads_running() else None)
+                   else "starts a thread at import" if threads_running()
+                   else "uses CoreFoundation at import" if cf_unsafe() else None)
             if why:
                 # Already run with the daemon's command line, or a thread
-                # that forbids forking, which cannot be undone: skip it from
+                # or CoreFoundation that forbid forking, which cannot be undone: skip it from
                 # now on, in a fresh daemon. Level 2 still learns what it
                 # imports, short of what starts the thread.
                 skip[name] = why
@@ -723,8 +882,10 @@ class ExtraPath:
 def import_in_daemon(state, names):
     """Import vetted modules in the daemon, in order. A module that fails is
     blacklisted. Returns why the daemon must restart, or None."""
+    imported = []
     for name in names:
         if name not in sys.modules:
+            imported.append(name)
             before = dict(os.environ)
             try:
                 with EnvReads() as reads, TtyReads() as ttys, ExtraPath(state.learned_paths):
@@ -746,6 +907,11 @@ def import_in_daemon(state, names):
                 state.import_tty_read.setdefault(fd, was)
         if name not in state.learned:
             state.learned.append(name)
+    if imported and cf_unsafe():
+        # Vetted one by one, yet together they did: none of them again.
+        for name in imported:
+            state.blacklist[name] = "used CoreFoundation in the daemon, with others"
+        return f"{len(imported)} modules used CoreFoundation in the daemon"
     return None
 
 
@@ -769,13 +935,19 @@ class RefuseImports:
         return None
 
 
-def probe_imports(names, tty=None, paths=(), origins=None, refused=()):
+def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=False):
     """Import names one by one in a throwaway child, with paths in front of
     sys.path; sort them into ok, bad (with the reason) and retry. A module
     found elsewhere than in the child that imported it (origins), or that
-    imports one of refused, is bad."""
+    imports one of refused, is bad.
+
+    On macOS, once they are imported, whether CoreFoundation was used
+    (cf_unsafe: a fork and a call, too dear for each module): if so, by
+    them or by the bad one that ended the probe, or if that one left
+    threads, the verdict is cf, all to retry with each, which checks after
+    each module."""
     origins = origins or {}
-    r, w = os.pipe2(os.O_CLOEXEC)
+    r, w = os.pipe()
     pid = os.fork()
     if pid == 0:
         try:
@@ -802,6 +974,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=()):
                            else "starts a thread at import" if threads_running()
                            else "found in another file than at run time"
                            if origins.get(name, file_of(name)) != file_of(name)
+                           else "uses CoreFoundation at import" if each and cf_unsafe()
                            else None)
                 except Refused as exc:
                     why = str(exc)
@@ -814,6 +987,9 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=()):
                     verdict["retry"] = names[i + 1:]
                     break
                 verdict["ok"].append(name)
+            # With threads (a bad one's), the canary itself is unreliable.
+            if MACOS and not each and verdict["ok"] and (threads_running() or cf_unsafe()):
+                verdict = {"ok": [], "bad": {}, "retry": names, "cf": True}
             write_all(w, json.dumps(verdict).encode())
         finally:
             os._exit(0)
@@ -993,7 +1169,7 @@ def names_script(state, argv0, cwd_fd):
     if os.path.isabs(argv0):
         return False
     try:
-        return os.path.samefile(os.path.join(f"/proc/self/fd/{cwd_fd}", argv0), state.script)
+        return os.path.samefile(os.path.join(dir_path(cwd_fd), argv0), state.script)
     except OSError:
         return False
 
@@ -1029,7 +1205,7 @@ def why_not_fast(state, req, peer_gid, fds):
             return f"import-time terminal state differs: fd {fd}"
     if state.cwd_first:
         # The child puts os.getcwd() first on sys.path, after go.
-        if os.readlink(f"/proc/self/fd/{fds[3]}").endswith(" (deleted)"):
+        if dir_deleted(fds[3]):
             return "the cwd is deleted"
         name = shadowed(state, fds[3])
         if name:
@@ -1339,8 +1515,7 @@ def serve_child(state, conn):
     """Serve one accepted connection. Returns the tool's exit code, or never returns."""
     try:
         conn.settimeout(HANDSHAKE_TIMEOUT_S)
-        creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
-        _pid, uid, gid = struct.unpack("3i", creds)
+        uid, gid = peer_creds(conn)
         if uid != os.getuid():
             os._exit(0)
         try:
@@ -1455,6 +1630,7 @@ class Learning:
 
     def __init__(self, names, files, before, origins, t0):
         self.names, self.files, self.before, self.origins, self.t0 = names, files, before, origins, t0
+        self.each = False  # probe_imports' each
 
 
 class Child:
@@ -1475,11 +1651,11 @@ class Child:
 
 def read_ctl(sock):
     """One message from a child's control socket: (kind, payload, fds), kind None at EOF."""
-    data, ancdata, _flags, _addr = sock.recvmsg(5, socket.CMSG_SPACE(4), socket.MSG_CMSG_CLOEXEC)
+    data, ancdata, _flags, _addr = sock.recvmsg(5, socket.CMSG_SPACE(4), MSG_CLOEXEC)
     fds = []
     for level, ctype, cdata in ancdata:
         if level == socket.SOL_SOCKET and ctype == socket.SCM_RIGHTS:
-            fds += list(struct.unpack(f"<{len(cdata) // 4}i", cdata[:len(cdata) // 4 * 4]))
+            fds += received_fds(list(struct.unpack(f"<{len(cdata) // 4}i", cdata[:len(cdata) // 4 * 4])))
     if not data:
         return None, b"", fds
     data += recv_exact(sock, 5 - len(data))
@@ -1595,7 +1771,9 @@ class Parent:
                 return None
         if job.names:
             verdict = probe_imports(job.names, state.tty, state.learned_paths, job.origins,
-                                    set(state.blacklist) | set(state.skip))
+                                    set(state.blacklist) | set(state.skip), job.each)
+            # From then on, for this job: which one did, and any other.
+            job.each = job.each or bool(verdict.get("cf"))
             state.blacklist.update(verdict["bad"])
             why = import_in_daemon(state, verdict["ok"])
             if why:
@@ -1709,6 +1887,8 @@ def serve(state):
         return 0
     # Relative to the verified directory from here on.
     os.fchdir(dir_fd)
+    global RUNTIME_DIR_FD
+    RUNTIME_DIR_FD = dir_fd
     name = os.path.basename(state.sock_path)
     try:
         os.unlink(name)
@@ -1737,7 +1917,9 @@ def serve(state):
     log(f"preloaded {state.tool} in {state.preload_s * 1000:.0f} ms, started by "
         f"{state.origin}; {status_text(state)}")
 
-    wake_r, wake_w = os.pipe2(os.O_NONBLOCK | os.O_CLOEXEC)
+    wake_r, wake_w = os.pipe()
+    os.set_blocking(wake_r, False)
+    os.set_blocking(wake_w, False)
     signal.set_wakeup_fd(wake_w)
     stop = {"why": None}
     signal.signal(signal.SIGCHLD, lambda *_: None)
