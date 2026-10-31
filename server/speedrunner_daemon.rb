@@ -311,7 +311,14 @@ module Speedrunner
   # Ruby 3.3 starts with a timer thread of its own, which fork handles:
   # only threads beyond those we started with count.
   BASE_THREADS = native_thread_count
-  def self.threads_running? = Thread.list.size != 1 || native_thread_count > BASE_THREADS
+  def self.threads_running?
+    return true if Thread.list.size != 1
+    # Each fork replaces that timer thread in the parent too; on a busy
+    # machine the old one may still be there for a couple of milliseconds.
+    deadline = now + 0.1
+    sleep(0.001) while native_thread_count > BASE_THREADS && now < deadline
+    native_thread_count > BASE_THREADS
+  end
 
   def self.stat_key(path)
     st = File.stat(path)
