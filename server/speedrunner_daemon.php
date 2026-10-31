@@ -729,7 +729,25 @@ final class Daemon
         $idle = (float) (getenv('SPEEDRUNNER_IDLE_TIMEOUT') ?: 4 * 3600);
         $lastActivity = self::now();
 
-        while ($stop === null) {
+        $exiting = false;
+        while (true) {
+            // Stopping: out of the way first, so that new clients start a
+            // fresh daemon; then the runs in progress, whose end only our
+            // wait status reports (PHP gives no exit code before it stops).
+            if ($stop !== null && !$exiting) {
+                $exiting = true;
+                self::log("exiting: $stop");
+                self::markExiting();
+                self::unlinkSocket();
+                self::$state['disabled'] ??= 'exiting';
+                if ($spare !== null && $children[$spare]['ctl'] !== null) {
+                    $c->close($children[$spare]['ctl']); // the spare sees the end, and leaves
+                    $children[$spare]['ctl'] = null;
+                }
+            }
+            if ($exiting && !$children) {
+                break;
+            }
             if ($spare === null && !self::$state['disabled']) {
                 $sv = $c->new('int[2]');
                 $c->socketpair(self::AF_UNIX, self::SOCK_STREAM | self::SOCK_CLOEXEC, 0, $sv);
@@ -769,7 +787,7 @@ final class Daemon
                 $pfds[$i]->revents = 0;
                 $i++;
             }
-            $timeout = max(1.0, $lastActivity + $idle - self::now());
+            $timeout = $exiting ? 0.05 : max(1.0, $lastActivity + $idle - self::now());
             // A child whose control socket closed is exiting, but may not have
             // been reapable at the last waitpid; its SIGCHLD then came while
             // PHP ran here, outside poll, and wakes nothing: look again soon.
@@ -849,10 +867,9 @@ final class Daemon
                 $active = $active || $ch['conn'] !== null;
             }
             if (!$active && self::now() >= $lastActivity + $idle) {
-                $stop = 'idle timeout';
+                $stop ??= 'idle timeout';
             }
         }
-        self::log("exiting: $stop");
         self::markExiting();
         self::unlinkSocket();
         exit(0);

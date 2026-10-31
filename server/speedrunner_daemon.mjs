@@ -787,7 +787,26 @@ async function serve(opts) {
   const idle = Number(realEnv.SPEEDRUNNER_IDLE_TIMEOUT || 4 * 3600) * 1000;
   let lastActivity = performance.now();
 
-  while (stop === null) {
+  let leaving = false;
+  for (;;) {
+    // Stopping: out of the way first, so that new clients start a fresh
+    // daemon; then the runs in progress, some of which report their end
+    // only through our wait status (an uncaught exception).
+    if (stop !== null && !leaving) {
+      leaving = true;
+      log(`exiting: ${stop}`);
+      markExiting();
+      unlinkSocket();
+      sys.close(lsock); // clients queued on it fall back at once
+      state.disabled ??= "exiting";
+      if (spare !== null) {
+        try {
+          sendMsg(children.get(spare).ctl, "Q");
+        } catch {}
+        spare = null;
+      }
+    }
+    if (leaving && children.size === 0) break;
     if (spare === null && !state.disabled) {
       const [a, b] = sys.socketpair();
       const pid = sys.fork();
@@ -804,12 +823,12 @@ async function serve(opts) {
     }
     // Learn while no child serves a client.
     const busy = [...children].some(([pid, ch]) => pid !== spare && ch.conn !== null);
-    if (pending.length && !busy) {
+    if (pending.length && !busy && !leaving) {
       const r = await applyLearned(pending.splice(0));
       if (r === "child") return null;
       if (r === "stop") {
-        stop = "a learned module misbehaved";
-        break;
+        stop ??= "a learned module misbehaved";
+        continue;
       }
       if (r === "changed" && spare !== null) {
         try {
@@ -820,13 +839,14 @@ async function serve(opts) {
       }
     }
     const ctls = [...children.values()].map((ch) => ch.ctl).filter((fd) => fd !== null);
-    const watch = [sigfd, state.inotify, ...ctls];
-    const timeout = pending.length ? 50 : Math.max(1000, lastActivity + idle - performance.now());
+    // Once stale, the inotify fd stays readable: not watched while leaving.
+    const watch = [sigfd, leaving ? -1 : state.inotify, ...ctls];
+    const timeout = leaving ? 50 : pending.length ? 50 : Math.max(1000, lastActivity + idle - performance.now());
     const r = sys.poll(watch, Math.ceil(timeout));
     if (Array.isArray(r)) {
-      if (r[1] !== 0) {
-        stop = "a preloaded file changed";
-        break;
+      if (r[1] !== 0 && !leaving) {
+        stop ??= "a preloaded file changed";
+        continue;
       }
       for (const [pid, ch] of children) {
         const i = ch.ctl === null ? -1 : watch.indexOf(ch.ctl);
@@ -889,11 +909,8 @@ async function serve(opts) {
       }
     }
     const active = [...children.values()].some((ch) => ch.conn !== null);
-    if (!active && performance.now() >= lastActivity + idle) stop = "idle timeout";
+    if (!active && performance.now() >= lastActivity + idle) stop ??= "idle timeout";
   }
-  log(`exiting: ${stop}`);
-  markExiting();
-  unlinkSocket();
   return 0;
 }
 

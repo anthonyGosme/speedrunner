@@ -1195,8 +1195,20 @@ module Speedrunner
     spare_failures = 0
     last_activity = now
 
+    exiting = false
     begin
-      while stop[0].nil?
+      loop do
+        # Stopping: out of the way first, so that new clients start a fresh
+        # daemon; then the runs in progress, some of which report their end
+        # only through our wait status (killed by a signal).
+        if stop[0] && !exiting
+          exiting = true
+          log("exiting: #{stop[0]}")
+          mark_exiting(state)
+          unlink_socket(state)
+          state.disabled ||= "exiting"
+        end
+        break if exiting && children.empty?
         if spare.nil? && !state.disabled
           if threads_running?
             state.disabled = "threads appeared in the daemon"
@@ -1221,15 +1233,16 @@ module Speedrunner
         end
         watch = [wake_r] + children.values.filter_map(&:ctl)
         watch << server if state.disabled
-        watch << state.watch.io if state.watch&.io
+        watch << state.watch.io if state.watch&.io && !exiting # stays readable once stale
         timeout = [1.0, last_activity + IDLE_TIMEOUT_S - now].max
         # Its next step, once the spare is replaced.
         timeout = 0 if state.learning && !children.values.any?(&:conn)
+        timeout = 0.05 if exiting
         readable, = IO.select(watch, nil, nil, timeout)
         readable ||= []
-        if state.watch&.io && readable.include?(state.watch.io)
-          stop[0] = "stale: a preloaded file changed"
-          break
+        if state.watch&.io && readable.include?(state.watch.io) && !exiting
+          stop[0] ||= "stale: a preloaded file changed"
+          next
         end
         on_ctl = lambda do |child|
           kind, payload, ios = begin
@@ -1296,14 +1309,14 @@ module Speedrunner
           conn = server.accept_nonblock(exception: false)
           if conn != :wait_readable
             last_activity = now
-            stop[0] = "stop request" unless handle_inline(state, conn)
+            stop[0] ||= "stop request" unless handle_inline(state, conn)
           end
         end
         active = children.values.any?(&:conn)
         if (state.pending.any? || state.pending_gems.any? || state.learning) && !state.disabled && !active
           changed, why = apply_learned(state)
           if why
-            stop[0] = "learned requires misbehaved: #{why}"
+            stop[0] ||= "learned requires misbehaved: #{why}"
           elsif changed
             if spare # replace it: it was forked before this
               spare.retired = true
@@ -1312,9 +1325,8 @@ module Speedrunner
             end
           end
         end
-        stop[0] = "idle timeout" if !active && now >= last_activity + IDLE_TIMEOUT_S
+        stop[0] ||= "idle timeout" if !active && now >= last_activity + IDLE_TIMEOUT_S
       end
-      log("exiting: #{stop[0]}")
     ensure
       if Process.pid == PARENT_PID
         mark_exiting(state)

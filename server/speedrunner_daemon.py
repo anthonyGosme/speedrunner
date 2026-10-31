@@ -1779,6 +1779,25 @@ def serve(state):
                     and time.monotonic() >= parent.last_activity + IDLE_TIMEOUT_S):
                 stop["why"] = "idle timeout"
         log(f"exiting: {stop['why']}")
+        # Out of the way first, so that new clients start a fresh daemon;
+        # then the runs in progress, some of which report their end only
+        # through our wait status (killed by a signal).
+        mark_exiting(state)
+        unlink_socket(state)
+        lsock.close()  # clients queued on it fall back at once
+        parent.retire_spare()
+        while parent.children:
+            ctls = [c.ctl for c in parent.children.values() if c.ctl is not None]
+            readable, _, _ = select.select([wake_r] + ctls, [], [], 0.05)
+            for child in list(parent.children.values()):
+                if child.ctl is not None and child.ctl in readable:
+                    parent.on_ctl(child)
+            try:
+                while os.read(wake_r, 512):
+                    pass
+            except BlockingIOError:
+                pass
+            parent.reap()
         return 0
     finally:
         if os.getpid() == PARENT_PID:
