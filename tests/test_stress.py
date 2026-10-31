@@ -9,10 +9,7 @@ Every call must:
     correct, only slower);
   - never exit 125 ("lost track"), but where that is the documented outcome:
     a daemon killed by kill -9 while serving a run that only its wait status
-    reports (PHP; Node after an uncaught exception). That includes a run
-    that came just after the kill: the kernel frees a dying process's
-    memory before its file descriptors, so for a few milliseconds its spare
-    still sees a live daemon, and takes the call (KILL_SLACK);
+    reports (PHP);
   - run once: each `hold` call marks a file of its own, start then done.
 
 Env: as test_matrix.py (HS_PATH with the fixtures' bin directories),
@@ -40,7 +37,6 @@ if os.environ.get("RB_GEM_HOME"):  # where tests/fixture/rbtest is installed
 SECONDS = float(os.environ.get("STRESS_SECONDS", "90"))
 WORKERS = int(os.environ.get("STRESS_WORKERS", "8"))
 SEED = int(os.environ.get("STRESS_SEED", str(int(time.time()))))
-KILL_SLACK = 0.5  # s: how long a daemon killed by kill -9 may still take calls
 MARK = "{mark}"  # a fresh marker file, in a hold call's arguments
 
 # tool -> [(args, options)], options: tty, input, env, wait_only (reports
@@ -57,7 +53,7 @@ COMMANDS = {
                 (["globals"], {"wait_only": True}), (["hold", "0.2", MARK], {"wait_only": True}),
                 (["tty"], {"tty": True, "wait_only": True})],
     "nodetest": [(["argv", "x"], {}), (["lazy"], {}), (["exit", "code:3"], {}),
-                 (["exit", "throw"], {"wait_only": True}), (["hold", "0.2", MARK], {}),
+                 (["exit", "throw"], {}), (["hold", "0.2", MARK], {}),
                  (["wrapped-exit", "natural"], {"env": {"NODETEST_WRAPPER": "1"}}), (["tty"], {"tty": True})],
     "nodetty": [([], {}), ([], {"tty": True})],
 }
@@ -129,13 +125,9 @@ class Stress(unittest.TestCase):
             got = (p.returncode, HOLD.sub(b"ready N", p.stdout), p.stderr)
             calls[tool] += 1
             if p.returncode == 125:
-                killed = any(t0 - KILL_SLACK <= t <= time.monotonic() for t in kills[tool])
-                if opts.get("wait_only") and killed:
-                    calls["lost track after a kill"] += 1
-                else:
-                    last = max(kills[tool], default=None)
-                    when = f"last kill {t0 - last:.3f} s before it" if last else "no kill"
-                    failures.append(f"{' '.join(argv)}: lost track (125, {when}): {p.stderr[-200:]!r}")
+                killed = any(t0 <= t <= time.monotonic() for t in kills[tool])
+                if not (opts.get("wait_only") and killed):
+                    failures.append(f"{' '.join(argv)}: lost track (125): {p.stderr[-200:]!r}")
                 return
             if got != want:
                 failures.append(f"{' '.join(argv)}: differs from native\n  native {want!r}\n  served {got!r}")

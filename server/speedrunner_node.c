@@ -153,12 +153,15 @@ static napi_value Exit(napi_env env, napi_callback_info info) {
 static int cleanup_fd = -1, cleanup_code;
 static void write_all(int fd, const char *p, size_t n);
 
-static void on_cleanup(void *unused) {
+// X(code) on fd, then _exit(code).
+static void send_exit(int fd, int code) {
   unsigned char x[9] = {'X', 4, 0, 0, 0};
-  memcpy(x + 5, &cleanup_code, 4); // little-endian, as the protocol
-  write_all(cleanup_fd, (const char *)x, sizeof x);
-  _exit(cleanup_code);
+  memcpy(x + 5, &code, 4); // little-endian, as the protocol
+  if (fd >= 0) write_all(fd, (const char *)x, sizeof x);
+  _exit(code);
 }
+
+static void on_cleanup(void *unused) { send_exit(cleanup_fd, cleanup_code); }
 
 static napi_value ExitOnCleanup(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
@@ -177,15 +180,17 @@ static napi_value Getppid(napi_env env, napi_callback_info info) { return num(en
 
 // After an uncaught exception, Node prints it on stderr, ends with a
 // "Node.js vX.Y.Z" line, then exits; in a child that exit aborts, on a
-// failed join of worker threads only the parent has. reportThenExit(code,
-// footer, frame): stderr goes through a pipe that a thread copies to the
-// real one, line by line, until the footer; there it exits with code. On
+// failed join of worker threads only the parent has. reportThenExit(fd,
+// code, footer, frame): stderr goes through a pipe that a thread copies to
+// the real one, line by line, until the footer; there it sends X(code) on
+// fd and exits, so that the client needs no wait status from the daemon
+// (which may be gone: a kill -9, or a stop that did not wait). On
 // the way, the frames of the daemon's own code (speedrunner_daemon.mjs,
 // and the timers frame that called it) give way to frame, the one a
 // native run ends with. If the main thread dies first (an abort, or a
 // crash in the teardown), it closes the pipe and waits for that thread to
 // pass on what is left.
-static int report_fd = -1, real_err = -1, report_code;
+static int report_fd = -1, real_err = -1, report_conn = -1, report_code;
 static pthread_t report_thread;
 static char report_footer[64], report_frame[256];
 
@@ -219,7 +224,7 @@ static void *copy_report(void *unused) {
         write_all(real_err, line, n);
       }
       line = nl + 1;
-      if (done) _exit(report_code);
+      if (done) send_exit(report_conn, report_code);
     }
     len -= line - buf;
     memmove(buf, line, len);
@@ -229,20 +234,21 @@ static void *copy_report(void *unused) {
     }
   }
   write_all(real_err, buf, len);
-  _exit(report_code);
+  send_exit(report_conn, report_code);
 }
 
 static void wait_for_report(int sig) {
-  if (pthread_equal(pthread_self(), report_thread)) _exit(report_code);
+  if (pthread_equal(pthread_self(), report_thread)) send_exit(report_conn, report_code);
   close(2);
   for (;;) pause();
 }
 
 static napi_value ReportThenExit(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
-  report_code = int_arg(&a, 0);
-  str_arg(&a, 1, report_footer, sizeof report_footer);
-  str_arg(&a, 2, report_frame, sizeof report_frame);
+  report_conn = int_arg(&a, 0);
+  report_code = int_arg(&a, 1);
+  str_arg(&a, 2, report_footer, sizeof report_footer);
+  str_arg(&a, 3, report_frame, sizeof report_frame);
   int p[2];
   if (pipe2(p, O_CLOEXEC) < 0) return result(env, -1);
   real_err = fcntl(2, F_DUPFD_CLOEXEC, 3);

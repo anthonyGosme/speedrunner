@@ -468,10 +468,10 @@ let ctl = -1;
 // process.exit) or from Node's environment cleanup (at a natural end), and
 // no teardown. After an uncaught exception, Node prints it only once "exit"
 // was emitted: the addon passes that report on, as a native run would
-// print it, and exits; the client takes the wait status.
+// print it, then sends X and exits.
 function exiting(code) {
   if (serving.dying) {
-    sys.reportThenExit(code, `Node.js ${process.version}`, state.mainFrame ?? "");
+    sys.reportThenExit(conn, code, `Node.js ${process.version}`, state.mainFrame ?? "");
     return;
   }
   if (learning) {
@@ -790,8 +790,8 @@ async function serve(opts) {
   let leaving = false;
   for (;;) {
     // Stopping: out of the way first, so that new clients start a fresh
-    // daemon; then the runs in progress, some of which report their end
-    // only through our wait status (an uncaught exception).
+    // daemon; then the runs in progress, whose end only our wait status
+    // reports if they die of a signal.
     if (stop !== null && !leaving) {
       leaving = true;
       log(`exiting: ${stop}`);
