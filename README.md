@@ -12,9 +12,8 @@ the interpreter start, the imports and the configuration are done once, and
 each call starts with them already done.
 
 - **A real script.** The bash script below runs a small shop's nightly checks: black, pytest, poetry,
-  rubocop, rspec, phpunit, artisan, aws and ansible, dozens of calls doing real work. 22.8 s natively,
-  7.3 s with `speedrunner exec`, its daemons started by the script itself; 5.6 s once they are warm
-  (2-vCPU VPS).
+  rubocop, rspec, phpunit, artisan, aws and ansible, dozens of calls doing real work. 24.0 s natively,
+  5.3 s with `speedrunner exec`, its daemons warm: x4.5, same output (2-vCPU VPS).
 - **An editor's save.** eslint on one file: 328 → 43 ms; mypy: 213 → 50 ms. Faster than the tools'
   own daemons, eslint_d and dmypy ([below](#against-the-tools-own-daemons)).
 - **Never run twice.** Until a call has started, any problem sends it to the real tool, natively.

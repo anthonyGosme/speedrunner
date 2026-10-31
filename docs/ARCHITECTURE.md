@@ -378,7 +378,7 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 | Suite de stress, tests de sécurité côté démon | fait | ~38 000 appels sous `kill -9`, arrêts et péremptions, sans échec, une fois corrigés les bugs de course trouvés |
 | Contre les démons dédiés | fait | eslint x7,6 (eslint_d x3,1), mypy x4,2 (dmypy x1,4) ; blackd + curl gagne |
 | 4 bis Instantané du driver (niveau 4) | reporté | propre à aws |
-| 5 Bench comparatif et vidéo | fait | script de démo 22,8 s → 7,3 s (5,6 s chaud) ; vidéo asciinema |
+| 5 Bench comparatif et vidéo | fait | vidéo du script de démo : 24,0 s → 5,3 s, x4,5, démons chauds (médiane de trois enregistrements : 22,8 s → 5,6 s chaud, 7,3 s à froid) |
 | Release 0.3.1 | fait | binaires statiques x86_64 et aarch64, attestations de provenance signées |
 
 Décision ouverte : quand le client meurt (`kill -9`), l'enfant va aujourd'hui jusqu'au bout ; lui envoyer SIGHUP serait plus proche du natif, mais moins sûr pour une commande comme `aws s3 rm`.
