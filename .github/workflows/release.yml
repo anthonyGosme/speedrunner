@@ -1,17 +1,23 @@
 # On a version tag (v0.1.0): static Linux binaries for x86_64 and aarch64,
 # their SHA-256 sums and install.sh, published as the GitHub release that
-# `curl -fsSL .../install.sh | sh` downloads from.
+# `curl -fsSL .../install.sh | sh` downloads from. Each archive gets a
+# signed build provenance attestation: `gh attestation verify <archive>
+# --repo anthonyGosme/speedrunner` checks it was built here, by this
+# workflow, from the tagged commit.
 name: release
 
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+permissions: {}  # each job says what it needs
 
 jobs:
   build:
+    permissions:
+      contents: read
+      id-token: write  # to sign the attestations (Sigstore)
+      attestations: write
     strategy:
       matrix:
         include:
@@ -51,16 +57,23 @@ jobs:
           cp "client/target/$TARGET/release/speedrunner" LICENSE-MIT LICENSE-APACHE README.md "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: speedrunner-*.tar.gz
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.arch }}
           path: speedrunner-*.tar.gz*
 
   platforms:
+    permissions:
+      contents: read
     uses: ./.github/workflows/platforms.yml
 
   publish:
     needs: [build, platforms]
+    permissions:
+      contents: write  # to create the release
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
