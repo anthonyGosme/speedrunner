@@ -254,6 +254,8 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
 
 Une release est un seul fichier : le client embarque les quatre démons, l'addon Node et les hooks zsh et bash (`include_bytes!`, `include_str!`).
 
+- **Paquets** ([packaging/](../packaging/README.md)) : un `.deb` par architecture, construit, installé, désinstallé et signé par le workflow de release ; un `PKGBUILD` pour l'AUR (`speedrunner-bin`) et une formule pour un tap Homebrew. Tous livrent le binaire statique de la release tel quel. `packaging/update.sh <version>` met l'AUR et la formule à la version publiée ; les publier demande les comptes du mainteneur.
+
 - **Démons.** Faute de démon trouvé à côté du binaire, le client écrit sa copie embarquée dans `$XDG_DATA_HOME/speedrunner/daemons/<empreinte des trois>/`, sous un nom temporaire, puis la renomme. Une copie déjà présente ne sert que si ses octets correspondent : une mise à jour ne lance jamais le démon d'une autre version. Les dossiers voisins du binaire restent prioritaires, pour le développement : sur le VPS, on modifie `server/` sans recompiler.
 - **Hook.** `eval "$(speedrunner init zsh)"` dans `~/.zshrc` remplace `source shell/speedrunner.zsh` ; de même `init bash` dans `~/.bashrc`. Le hook n'a aucun `return` au niveau global, il supporte donc d'être évalué.
 - **Version.** `speedrunner --version`.
@@ -385,7 +387,7 @@ Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licenc
 
 Suite :
 
-- paquets : AUR, `.deb`, Homebrew sur Linux ;
+- publier le paquet AUR et le tap Homebrew (prêts dans `packaging/`) ;
 - servir pre-commit quand git lance son hook (le script installé finit par un `if … exec python -m pre_commit … elif …`, que le suivi des lanceurs ne reconnaît pas) ;
 - macOS, où le fork sans exec est fragile (CoreFoundation, Objective-C) et où manquent inotify et `/proc` ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;

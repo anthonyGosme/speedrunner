@@ -1,7 +1,8 @@
 # On a version tag (v0.1.0): static Linux binaries for x86_64 and aarch64,
-# their SHA-256 sums and install.sh, published as the GitHub release that
+# as archives and .deb packages, their SHA-256 sums and install.sh,
+# published as the GitHub release that
 # `curl -fsSL .../install.sh | sh` downloads from. Each archive gets a
-# signed build provenance attestation: `gh attestation verify <archive>
+# signed build provenance attestation (each .deb too): `gh attestation verify <archive>
 # --repo anthonyGosme/speedrunner` checks it was built here, by this
 # workflow, from the tagged commit.
 name: release
@@ -57,13 +58,25 @@ jobs:
           cp "client/target/$TARGET/release/speedrunner" LICENSE-MIT LICENSE-APACHE README.md "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - name: Debian package, installed and removed once
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          deb=$(packaging/deb.sh "client/target/$TARGET/release/speedrunner" "${GITHUB_REF_NAME#v}" "${{ matrix.arch }}" .)
+          sha256sum "$deb" > "$deb.sha256"
+          sudo dpkg -i "$deb" && speedrunner --version && test "$(readlink /usr/bin/srr)" = speedrunner
+          sudo dpkg -r speedrunner && test ! -e /usr/bin/speedrunner
       - uses: actions/attest-build-provenance@v4
         with:
-          subject-path: speedrunner-*.tar.gz
+          subject-path: |
+            speedrunner-*.tar.gz
+            speedrunner_*.deb
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.arch }}
-          path: speedrunner-*.tar.gz*
+          path: |
+            speedrunner-*.tar.gz*
+            speedrunner_*.deb*
 
   platforms:
     permissions:

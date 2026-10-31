@@ -1,0 +1,25 @@
+# Maintainer: speedrunner contributors <39555936+anthonyGosme@users.noreply.github.com>
+# The release's static binary, as packaging/update.sh sets version and sums.
+pkgname=speedrunner-bin
+pkgver=0.3.1
+pkgrel=1
+pkgdesc="Python, Ruby, PHP and Node command-line tools, preloaded: each tool stays loaded in a daemon that forks it on every call"
+arch=('x86_64' 'aarch64')
+url="https://github.com/anthonyGosme/speedrunner"
+license=('MIT OR Apache-2.0')
+provides=('speedrunner')
+conflicts=('speedrunner')
+options=('!strip' '!debug')
+source_x86_64=("$url/releases/download/v$pkgver/speedrunner-x86_64-unknown-linux-musl.tar.gz")
+source_aarch64=("$url/releases/download/v$pkgver/speedrunner-aarch64-unknown-linux-musl.tar.gz")
+sha256sums_x86_64=('45d82ef103a1b411a5841d451ac1b54addf22b8e5f323b900e0d42ff47da586b')
+sha256sums_aarch64=('763bd67544b57641f99b75c6a813482d58ab119ea6841d8671fcc97fb26845df')
+
+package() {
+  cd "speedrunner-$CARCH-unknown-linux-musl"
+  install -Dm755 speedrunner "$pkgdir/usr/bin/speedrunner"
+  ln -s speedrunner "$pkgdir/usr/bin/srr"
+  install -Dm644 LICENSE-MIT "$pkgdir/usr/share/licenses/$pkgname/LICENSE-MIT"
+  install -Dm644 LICENSE-APACHE "$pkgdir/usr/share/licenses/$pkgname/LICENSE-APACHE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
