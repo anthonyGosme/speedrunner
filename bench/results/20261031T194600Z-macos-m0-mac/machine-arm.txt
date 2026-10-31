@@ -1,0 +1,13 @@
+ProductName:		macOS
+ProductVersion:		27.0.1
+BuildVersion:		26A434
+arm64
+Apple M6
+CPUs: 12, RAM: 16 GB
+Python 3.9.6
+ansible-core        2.15.13
+awscli              1.44.87
+black               25.11.0
+httpie              3.2.4
+pip                 26.0.1
+poetry              2.2.1

@@ -2,7 +2,7 @@
 
 Question : le principe de speedrunner (un parent Python préchargé qui forke un enfant par appel) tient-il sur macOS, où le fork sans exec est réputé fragile, et que rapporterait-il ? Mesuré sur le portable (macOS 26.7, Intel i7-9750H, Python 3.12) avec `bench/macos/ceiling.py`, un prototype sans client ni socket : c'est un plafond, comme l'étape 0 sous Linux.
 
-## Résultat : GO, pour Python d'abord
+## Résultat : GO pour Python, Intel et Apple Silicon, à une condition stricte (plus bas)
 
 | Commande | Natif | Fork préchargé | Plafond | Sortie |
 |---|---:|---:|---:|---|
@@ -25,6 +25,37 @@ Question : le principe de speedrunner (un parent Python préchargé qui forke un
 - **2 000 forks** d'un parent qui a fait de gros imports (httpie, awscli) et utilisé CoreFoundation (détection de proxy d'`urllib`), SSL et `platform`, chaque enfant refaisant ces appels : **aucun échec** (`forkstress.json`, `bench/macos/forkstress.py`).
 - **Mais la détection de proxy lance deux threads natifs** (`bench/macos/threads.py`) : SystemConfiguration démarre ses propres threads. Les imports, SSL et `platform` n'en lancent aucun. Le démon doit donc, comme sous Linux, compter ses threads natifs avant chaque fork et refuser de forker s'il y en a : un outil qui touche CoreFoundation **à l'import** partira en natif (sûr), un outil qui le fait **à l'exécution** (une requête HTTP, le cas habituel) le fera dans l'enfant, après le fork, sans risque. Sur macOS, le compte passe par `proc_pidinfo(PROC_PIDTASKINFO)` au lieu de `/proc/self/task`.
 
+## Apple Silicon (Mac mini M6, macOS 27, Python 3.9 du système)
+
+Même panel (`ceiling-arm.jsonl`, `machine-arm.txt`). Sans CoreFoundation dans le parent, tout est servi à l'identique (ansible mis à part, même raison qu'au-dessus) :
+
+| Commande | Natif | Fork préchargé | Plafond |
+|---|---:|---:|---:|
+| `black --version` | 62 ms | 2,3 ms | x27 |
+| `black --check sample.py` | 57 ms | 3,0 ms | x19 |
+| `pip --version` | 70 ms | 2,6 ms | x27 |
+| `aws --version` | 127 ms | 25 ms | x5,1 |
+| `aws configure list` | 130 ms | 30 ms | x4,4 |
+| `http --version` | 81 ms | 6,1 ms | x13 |
+| `poetry --version` | 132 ms | 5,0 ms | x26 |
+
+**Mais ici, le danger de CoreFoundation est réel.** Quand le parent a fait la détection de proxy, *chaque* enfant qui la refait est tué (SIGKILL, 160 sur 160 dans le panel ; les chiffres `--touch-cf` de `ceiling-arm.jsonl` ne valent donc rien). `bench/macos/cfcases.py` sépare les cas (`cfcases-arm.txt`) :
+
+| Parent | Enfant | Échecs |
+|---|---|---:|
+| CoreFoundation | CoreFoundation | **20 / 20** |
+| — | CoreFoundation | 0 / 20 |
+| CoreFoundation | — | 0 / 20 |
+| — | — | 0 / 20 |
+
+`OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` n'y change rien : c'est CoreFoundation lui-même qui refuse d'être utilisé dans un enfant forké d'un processus où il a servi. Sur l'Intel (macOS 26, Python 3.12), le même cas passait : on ne peut pas s'y fier.
+
+Conséquences pour le démon :
+
+- **Le cas courant est sûr** : un outil qui fait une requête pendant son exécution touche CoreFoundation dans l'enfant seulement.
+- **Le cas mortel est déjà bloqué par la règle des threads** : dans le parent, la détection de proxy laisse 3 threads natifs, et le démon refuse de forker dès qu'un thread tourne (l'appel part en natif). Sur macOS, cette règle n'est pas une précaution : elle est vitale.
+- **En plus, sur macOS** : refuser de forker si `_scproxy` est chargé dans le parent, et refuser à l'apprentissage tout module qui fait apparaître CoreFoundation ou un thread dans la sonde.
+
 ## Ce qu'il faut porter
 
 Tout le reste du produit suppose Linux. Par pièce :
@@ -43,7 +74,7 @@ Tout le reste du produit suppose Linux. Par pièce :
 
 ## Proposition
 
-1. **M1 — Python et le client** : le démon Python et le client Rust sur macOS (Intel et Apple Silicon), avec la matrice Python, sur les runners macOS de GitHub. Les lanceurs partent en natif. Estimation : quelques jours.
+1. **M1 — Python et le client** : le démon Python et le client Rust sur macOS (Intel et Apple Silicon), avec la matrice Python, sur les runners macOS de GitHub et sur le Mac mini. Les lanceurs partent en natif ; la règle des threads et le refus de `_scproxy` sont testés en premier. Estimation : quelques jours.
 2. **M2 — Ruby et PHP** : mêmes remplacements, dans leurs démons.
 3. **M3 — Node** : à part ; l'addon et le fork de V8 sont à réétudier sur macOS.
 4. **Distribution** : un binaire universel dans les releases, et la formule Homebrew étendue à macOS (`on_macos`).

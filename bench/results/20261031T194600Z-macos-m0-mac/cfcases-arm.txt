@@ -1,0 +1,7 @@
+Mac mini (Apple M6, macOS 27.0.1, Python 3.9.6), bench/macos/cfcases.py: a fresh
+parent per case, 20 children each; "failed" = killed (status 9: SIGKILL).
+parent_cf=True  child_cf=True  parent native threads=3 failed 20/20
+parent_cf=False child_cf=True  parent native threads=1 failed 0/20
+parent_cf=True  child_cf=False parent native threads=3 failed 0/20
+parent_cf=False child_cf=False parent native threads=1 failed 0/20
+With OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES: parent_cf=True child_cf=True failed 20/20.
