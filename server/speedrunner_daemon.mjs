@@ -798,6 +798,9 @@ async function serve(opts) {
       markExiting();
       unlinkSocket();
       sys.close(lsock); // clients queued on it fall back at once
+      // The lock only says who serves the socket: a new daemon may start
+      // now, however long the runs we wait for last.
+      sys.close(lockFd);
       state.disabled ??= "exiting";
       if (spare !== null) {
         try {

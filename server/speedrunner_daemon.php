@@ -760,6 +760,14 @@ final class Daemon
                 self::log("exiting: $stop");
                 self::markExiting();
                 self::unlinkSocket();
+                // The lock only says who serves the socket: a new daemon may
+                // start now, however long the runs we wait for last.
+                if (isset(self::$state['lock_stream'])) {
+                    fclose(self::$state['lock_stream']);
+                    unset(self::$state['lock_stream']);
+                } elseif ($lockFd >= 0) {
+                    $c->close($lockFd);
+                }
                 self::$state['disabled'] ??= 'exiting';
                 if ($spare !== null && $children[$spare]['ctl'] !== null) {
                     $c->close($children[$spare]['ctl']); // the spare sees the end, and leaves
@@ -896,9 +904,7 @@ final class Daemon
                 $stop ??= 'idle timeout';
             }
         }
-        self::markExiting();
-        self::unlinkSocket();
-        exit(0);
+        exit(0); // the lock was let go of on the way out
     }
 }
 

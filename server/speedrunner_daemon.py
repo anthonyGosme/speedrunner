@@ -1786,6 +1786,10 @@ def serve(state):
         unlink_socket(state)
         lsock.close()  # clients queued on it fall back at once
         parent.retire_spare()
+        # The lock only says who serves the socket: a new daemon may start
+        # now, however long the runs we wait for last.
+        os.close(lock_fd)
+        lock_fd = None
         while parent.children:
             ctls = [c.ctl for c in parent.children.values() if c.ctl is not None]
             readable, _, _ = select.select([wake_r] + ctls, [], [], 0.05)
@@ -1800,7 +1804,7 @@ def serve(state):
             parent.reap()
         return 0
     finally:
-        if os.getpid() == PARENT_PID:
+        if os.getpid() == PARENT_PID and lock_fd is not None:
             mark_exiting(state)
             unlink_socket(state)
             os.close(lock_fd)

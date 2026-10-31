@@ -895,6 +895,26 @@ class Failures(Matrix):
         self.assertEqual(line[0], b"ready", line)
         return p, int(line[1])
 
+    def test_stopped_mid_run_lets_a_new_daemon_start(self):
+        # A stopping daemon waits for its runs, but not with the startup
+        # lock: its successor starts at once, not once a long run is over.
+        root, env = private_daemon("hstest")
+        try:
+            daemon = int(status_field(status("hstest", env), "pid"))
+            marker = os.path.join(root, "marker")
+            p, _ = self.start_hold(env, marker, seconds="8")
+            stop("hstest", env)
+            self.assertEqual(run("hs", ["hstest", "argv"], env=env, require_fast=False).returncode, 0)
+            text = wait_ready("hstest", env, timeout=6)
+            self.assertNotEqual(int(status_field(text, "pid")), daemon)
+            self.assertIsNone(p.poll())  # the long run is still going
+            self.assertEqual(run("hs", ["hstest", "argv"], env=env).returncode, 0)
+            out, _ = p.communicate(timeout=30)
+            self.assertEqual((p.returncode, out), (0, b"done\n"))
+            self.assertEqual(read_lines(marker), ["start", "done"])
+        finally:
+            stop("hstest", env)
+
     def test_daemon_killed_mid_run(self):
         root, env = private_daemon("hstest")
         try:

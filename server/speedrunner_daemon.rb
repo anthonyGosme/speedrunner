@@ -1215,6 +1215,9 @@ module Speedrunner
           log("exiting: #{stop[0]}")
           mark_exiting(state)
           unlink_socket(state)
+          # The lock only says who serves the socket: a new daemon may start
+          # now, however long the runs we wait for last.
+          lock.close
           state.disabled ||= "exiting"
         end
         break if exiting && children.empty?
@@ -1337,7 +1340,7 @@ module Speedrunner
         stop[0] ||= "idle timeout" if !active && now >= last_activity + IDLE_TIMEOUT_S
       end
     ensure
-      if Process.pid == PARENT_PID
+      if Process.pid == PARENT_PID && !lock.closed?
         mark_exiting(state)
         unlink_socket(state)
         lock.close
