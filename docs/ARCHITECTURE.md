@@ -128,7 +128,7 @@ Petit-boutiste, sur le socket Unix. Toute trame : `kind (1 octet) + u32 longueur
 
 Corps d'un `R` : liste d'argv (u32 compte, puis blobs u32+octets ; argv[0] = chemin du script), liste d'env (`CLÉ=valeur`), u32 umask, u64 masque des signaux ignorés hérités, groupes (u32 compte + u32 chacun). Fds : 0, 1, 2, un `O_PATH` du cwd, et `/dev/tty` si le client a un terminal de contrôle.
 
-Socket de contrôle parent ↔ enfant : `A` (+ fd client : « j'ai accepté »), `L(json)` (« voici ce que j'ai importé et chargé », envoyé après X), `Q` (parent → spare : « retire-toi »).
+Socket de contrôle parent ↔ enfant : `A` (+ fd client : « j'ai accepté »), `L(json)` (« voici ce que j'ai importé et chargé », envoyé après X), `Q` (parent → spare : « retire-toi »), et en PHP `K` (parent → enfant : « j'ai ta copie »). Un enfant PHP ne rend sa fin que par le W du démon : il attend `K` avant de servir. S'il voit la fin de fichier à la place (démon tué par `kill -9`, que le noyau libère pendant quelques millisecondes pendant lesquelles le spare prend encore des appels), il ferme la connexion avant la réponse `R`, et le client part en natif. Trouvé par le stress sur arm64.
 
 **Règle n°1 (brief) : jamais de double exécution.** Avant `G`, toute anomalie (pas de socket, refus N, poignée de main ratée, empreinte périmée) mène à `exec` de la vraie CLI. Après `G`, on ne relance jamais : sans X ni W, le client affiche « lost track … not re-running it » et sort en 125. `SPEEDRUNNER_REQUIRE_FAST=1` remplace le repli natif par une sortie en 124, pour les tests et les benches.
 

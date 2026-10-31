@@ -634,7 +634,28 @@ final class Daemon
         }
         $c->close($lsock);
         // The parent keeps a copy, to send the wait status and replace us.
+        // Its K says it has it: only that wait status reports our end, so
+        // a daemon killed just now (still alive to the kernel for a few ms)
+        // must not leave us serving. At end of file, the call has not
+        // started: closing it sends the client to a native run.
         self::sendWithFd($ctl, 'A' . pack('V', 0), $conn);
+        while (true) {
+            try {
+                [$kind, , $fds] = self::readCtl($ctl);
+            } catch (\Throwable $e) {
+                [$kind, $fds] = [null, []];
+            }
+            foreach ($fds as $fd) {
+                $c->close($fd);
+            }
+            if ($kind === 'K') {
+                break;
+            }
+            if ($kind === null) {
+                $c->close($conn);
+                exit(0);
+            }
+        }
         self::serveChild($conn);
     }
 
@@ -806,6 +827,11 @@ final class Daemon
                     [$kind, , $fds] = self::readCtl($fd);
                     if ($kind === 'A' && $fds) {
                         $children[$pid]['conn'] = array_shift($fds);
+                        try {
+                            self::sendMsg($fd, 'K'); // the child may start
+                        } catch (\Throwable $e) {
+                            // died meanwhile: reaped below
+                        }
                         $lastActivity = self::now();
                         if ($pid === $spare) {
                             $spare = null;
