@@ -1,0 +1,8 @@
+{"command": "black --version", "same_output": true, "native": {"median_ms": 54.1, "min_ms": 53.6, "max_ms": 54.6}, "served": {"median_ms": 6.1, "min_ms": 5.9, "max_ms": 6.3}, "gain": 8.9}
+{"command": "black --check /tmp/srr-sample.py", "same_output": true, "native": {"median_ms": 54.6, "min_ms": 54.3, "max_ms": 55.4}, "served": {"median_ms": 6.6, "min_ms": 6.4, "max_ms": 6.8}, "gain": 8.3}
+{"command": "pip --version", "same_output": true, "native": {"median_ms": 66.7, "min_ms": 66.3, "max_ms": 67.4}, "served": {"median_ms": 6.8, "min_ms": 6.7, "max_ms": 7.3}, "gain": 9.8}
+{"command": "aws --version", "same_output": true, "native": {"median_ms": 120.8, "min_ms": 119.2, "max_ms": 124.6}, "served": {"median_ms": 27.7, "min_ms": 27.4, "max_ms": 28.5}, "gain": 4.4}
+{"command": "aws configure list", "same_output": true, "native": {"median_ms": 125.7, "min_ms": 124.7, "max_ms": 126.9}, "served": {"median_ms": 32.1, "min_ms": 31.7, "max_ms": 32.4}, "gain": 3.9}
+{"command": "http --version", "same_output": true, "native": {"median_ms": 81.3, "min_ms": 80.7, "max_ms": 81.9}, "served": {"median_ms": 10.5, "min_ms": 10.3, "max_ms": 10.7}, "gain": 7.7}
+{"command": "poetry --version", "same_output": true, "native": {"median_ms": 132.0, "min_ms": 130.5, "max_ms": 133.7}, "served": {"median_ms": 10.6, "min_ms": 10.4, "max_ms": 10.9}, "gain": 12.5}
+{"command": "ansible --version", "same_output": true, "native": {"median_ms": 89.9, "min_ms": 88.9, "max_ms": 90.3}, "served": {"median_ms": 7.2, "min_ms": 6.9, "max_ms": 7.5}, "gain": 12.5}

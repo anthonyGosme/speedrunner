@@ -296,6 +296,10 @@ class Context(Matrix):
     def test_aws_region(self):
         self.assertSame(["aws", "configure", "list"], env={"AWS_DEFAULT_REGION": "eu-west-3"})
 
+    def test_open_file_limit(self):
+        # The macOS daemon raises its own, for kqueue: not the tool's.
+        self.assertSame(["hstest", "limits"])
+
     def test_argv_and_paths(self):
         self.assertSame(["hstest", "argv", "a b", "", "--x=1"])
 

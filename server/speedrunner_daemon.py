@@ -691,14 +691,108 @@ class FileWatch:
         return self.fd >= 0 and bool(select.select([self.fd], [], [], 0)[0])
 
 
+class KqueueWatch:
+    """macOS: kqueue on the module files, as inotify on Linux, but a fd per
+    file (O_EVTONLY), and in the parent only: a forked child does not
+    inherit the queue. The parent answers each child's accept (A) with its
+    verdict, F(resh) or S(tale), after reading the queue; the kernel queues
+    the event during the write itself. A child that gets no verdict in time
+    (the parent busy learning, or gone) stats the files instead.
+
+    The parent raises its open-file limit for these; each spare closes them
+    and puts the limit back before accepting: the tool sees ours as natively."""
+    # Not NOTE_ATTRIB: an extension module gets one each time another
+    # process loads it, unchanged. A write, a replaced file still show.
+    FLAGS = ("KQ_NOTE_DELETE", "KQ_NOTE_WRITE", "KQ_NOTE_EXTEND", "KQ_NOTE_RENAME",
+             "KQ_NOTE_REVOKE")  # names: Linux's select has none
+    VERDICT_WAIT_S = 0.02
+
+    def __init__(self):
+        import resource  # here: Linux's daemon keeps the modules it had
+        self.kq = select.kqueue()
+        self.fd = self.kq.fileno()
+        self.flags = 0
+        for name in self.FLAGS:
+            self.flags |= getattr(select, name)
+        self.fds, self.paths, self.keys = [], [], []
+        self.seen = False
+        self.limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+        soft, hard = self.limit
+        want = min(hard if hard != resource.RLIM_INFINITY else 10240, 10240)
+        if soft != resource.RLIM_INFINITY and soft < want:
+            try:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+            except (OSError, ValueError):
+                pass
+
+    def add(self, path):
+        """False when the file cannot be watched (e.g. out of fds)."""
+        try:
+            fd = os.open(path, getattr(os, "O_EVTONLY", 0x8000) | os.O_CLOEXEC)
+        except OSError:
+            return False
+        try:
+            self.kq.control([select.kevent(fd, select.KQ_FILTER_VNODE,
+                                           select.KQ_EV_ADD | select.KQ_EV_CLEAR, self.flags)], 0, 0)
+        except OSError:
+            os.close(fd)
+            return False
+        self.fds.append(fd)
+        self.paths.append(path)
+        self.keys += compute_fingerprint([path])  # after the watch: no change unseen
+        return True
+
+    def fired(self):
+        if os.getpid() == PARENT_PID:
+            if not self.seen:
+                self.seen = bool(self.kq.control(None, 64, 0))
+            return self.seen
+        verdict = CHILD.get("verdict")
+        if verdict is None:
+            verdict = CHILD["verdict"] = read_verdict(CHILD["ctl"], self.VERDICT_WAIT_S)
+        if verdict is None:
+            return compute_fingerprint(self.paths) != tuple(self.keys)
+        return verdict == b"S"
+
+    def drop(self):
+        """In a spare: the files' fds and the limit are the parent's business."""
+        import resource
+        for fd in self.fds:
+            os.close(fd)
+        try:
+            resource.setrlimit(resource.RLIMIT_NOFILE, self.limit)
+        except (OSError, ValueError):
+            pass
+
+
+def read_verdict(ctl, timeout):
+    """The parent's F or S, skipping a Q sent to us as a spare just before
+    we accepted; None if none comes in time."""
+    if ctl is None:
+        return None
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([ctl], [], [], left)[0]:
+                return None
+            byte = ctl.recv(1)
+            if byte in (b"F", b"S"):
+                return byte
+            if not byte:
+                return None
+    except OSError:
+        return None
+
+
 def extend_fingerprint(state, paths, watch=False):
     """Cover files not covered yet, as they are now (just imported): by
-    inotify when watch is set and that works, by stat otherwise."""
+    inotify (kqueue on macOS) when watch is set and that works, by stat otherwise."""
     new = [p for p in dict.fromkeys(paths) if p not in state.fingerprint_set]
     state.fingerprint_set.update(new)
-    if watch and not MACOS:  # no inotify: stat (kqueue would need a fd per file)
+    if watch:
         if state.watch is None:
-            state.watch = FileWatch()
+            state.watch = KqueueWatch() if MACOS else FileWatch()
         new = [p for p in new if not state.watch.add(p)]
     state.fingerprint_paths += new
     state.fingerprint += compute_fingerprint(new)
@@ -1534,6 +1628,8 @@ def run_spare(state, lsock, ctl, inherited):
         signal.signal(sig, signal.SIG_DFL)
     for fd in inherited:
         os.close(fd)  # other clients must see EOF when their own child exits
+    if isinstance(state.watch, KqueueWatch):
+        state.watch.drop()
     os.setpgid(0, 0)
     while True:
         readable, _, _ = select.select([lsock, ctl], [], [])
@@ -1766,6 +1862,11 @@ class Parent:
             self.learn(payload)
         if kind == b"A" and fds:
             child.conn = socket.socket(fileno=fds.pop(0))
+            if isinstance(self.state.watch, KqueueWatch):
+                try:
+                    child.ctl.sendall(b"S" if self.state.watch.fired() else b"F")
+                except OSError:
+                    pass
             self.last_activity = time.monotonic()
             if child is self.spare:
                 self.spare = None
