@@ -46,7 +46,7 @@ def main():
     sock_path, script, *args = sys.argv[1:]
     msg = run_request(script, args)
     null = os.open(os.devnull, os.O_RDWR)
-    cwd = os.open(".", os.O_PATH | os.O_DIRECTORY)
+    cwd = os.open(".", getattr(os, "O_PATH", 0x40000000) | os.O_DIRECTORY)  # macOS: O_SEARCH
     fds = struct.pack("4i", null, null, null, cwd)
     phases = []
     for _ in range(int(os.environ.get("N", "20"))):
