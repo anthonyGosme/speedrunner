@@ -27,7 +27,8 @@
 //   php -d opcache.enable_cli=1 ... speedrunner_daemon.php --tool NAME
 //       --script PATH --socket PATH [--lock-fd N] [--origin TEXT]
 //
-// Linux only (SO_PEERCRED, /proc). Needs the pcntl, posix and FFI extensions.
+// Linux and macOS: the C side differs, see libc(). Needs the pcntl, posix and
+// FFI extensions.
 
 namespace Speedrunner {
 
@@ -37,12 +38,20 @@ final class Daemon
     const HANDSHAKE_TIMEOUT_S = 5.0;
     const LOCK_WAIT_S = 10.0;
     const STARTUP_ENV_KEYS = ['PHPRC', 'PHP_INI_SCAN_DIR'];
-    // Linux x86-64.
-    const AF_UNIX = 1, SOCK_STREAM = 1, SOCK_NONBLOCK = 0o4000, SOCK_CLOEXEC = 0o2000000;
-    const SOL_SOCKET = 1, SO_PEERCRED = 17, SCM_RIGHTS = 1;
-    const MSG_NOSIGNAL = 0x4000, MSG_CMSG_CLOEXEC = 0x40000000;
+    // Linux (x86-64 and arm64 alike), or macOS: no SOCK_NONBLOCK nor
+    // SOCK_CLOEXEC there (fcntl instead), another cmsghdr, LOCAL_PEERCRED.
+    const MACOS = PHP_OS_FAMILY === 'Darwin';
+    const AF_UNIX = 1, SOCK_STREAM = 1;
+    const SOCK_NONBLOCK = self::MACOS ? 0 : 0o4000, SOCK_CLOEXEC = self::MACOS ? 0 : 0o2000000;
+    const SOL_SOCKET = self::MACOS ? 0xffff : 1, SO_PEERCRED = 17, SCM_RIGHTS = 1;
+    const SOL_LOCAL = 0, LOCAL_PEERCRED = 1;
+    const MSG_NOSIGNAL = self::MACOS ? 0x80000 : 0x4000, MSG_CMSG_CLOEXEC = self::MACOS ? 0 : 0x40000000;
     const POLLIN = 1, F_SETFD = 2, FD_CLOEXEC = 1, LOCK_EX = 2, LOCK_NB = 4;
-    const EINTR = 4, EAGAIN = 11;
+    const F_SETFL = 4, O_NONBLOCK = self::MACOS ? 4 : 0o4000, F_GETPATH = 50;
+    const EINTR = 4, EAGAIN = self::MACOS ? 35 : 11;
+    // struct cmsghdr: size_t len then two ints, 8-aligned (Linux); a 32-bit
+    // len, 4-aligned (macOS).
+    const CMSG_HDR = self::MACOS ? 12 : 16, CMSG_ALIGN = self::MACOS ? 4 : 8;
 
     /** The script the top level includes, once a child is ready. */
     public static ?string $run = null;
@@ -54,20 +63,36 @@ final class Daemon
 
     private static function libc(): \FFI
     {
-        return self::$c ??= \FFI::cdef('
-            typedef unsigned int socklen_t;
-            struct iovec { void *iov_base; unsigned long iov_len; };
+        $platform = self::MACOS ? '
+            struct msghdr { void *msg_name; socklen_t msg_namelen; struct iovec *msg_iov;
+                            int msg_iovlen; void *msg_control; socklen_t msg_controllen;
+                            int msg_flags; };
+            struct sockaddr_un { unsigned char sun_len; unsigned char sun_family; char sun_path[104]; };
+            struct xucred { unsigned int cr_version; unsigned int cr_uid; short cr_ngroups;
+                            unsigned int cr_groups[16]; };
+            int accept(int, void *, void *);
+            int *__error(void);
+            void *dlsym(void *, const char *);
+            int open(const char *, int);
+            void _exit(int);
+        ' : '
             struct msghdr { void *msg_name; socklen_t msg_namelen; struct iovec *msg_iov;
                             unsigned long msg_iovlen; void *msg_control;
                             unsigned long msg_controllen; int msg_flags; };
             struct sockaddr_un { unsigned short sun_family; char sun_path[108]; };
-            struct pollfd { int fd; short events; short revents; };
             struct ucred { int pid; unsigned int uid; unsigned int gid; };
+            int accept4(int, void *, void *, int);
+            int *__errno_location(void);
+        ';
+        return self::$c ??= \FFI::cdef('
+            typedef unsigned int socklen_t;
+            struct iovec { void *iov_base; unsigned long iov_len; };
+            struct pollfd { int fd; short events; short revents; };
+            ' . $platform . '
             int socket(int, int, int);
             int socketpair(int, int, int, int *);
             int bind(int, const struct sockaddr_un *, socklen_t);
             int listen(int, int);
-            int accept4(int, void *, void *, int);
             long recvmsg(int, struct msghdr *, int);
             long sendmsg(int, const struct msghdr *, int);
             long read(int, void *, unsigned long);
@@ -80,14 +105,113 @@ final class Daemon
             int fcntl(int, int, int);
             int poll(struct pollfd *, unsigned long, int);
             int getsockopt(int, int, int, void *, socklen_t *);
-            int *__errno_location(void);
             long signal(int, long);
-        ', 'libc.so.6');
+        ', self::MACOS ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6');
     }
 
     private static function errno(): int
     {
-        return self::libc()->__errno_location()[0];
+        return self::MACOS ? self::libc()->__error()[0] : self::libc()->__errno_location()[0];
+    }
+
+    /** macOS: close-on-exec, and the given O_NONBLOCK, as SOCK_* flags set them on Linux. */
+    private static function socketFlags(int $fd, bool $nonblock): int
+    {
+        if (self::MACOS && $fd >= 0) {
+            self::libc()->fcntl($fd, self::F_SETFD, self::FD_CLOEXEC);
+            self::libc()->fcntl($fd, self::F_SETFL, $nonblock ? self::O_NONBLOCK : 0);
+        }
+        return $fd;
+    }
+
+    /** accept4(SOCK_CLOEXEC): blocking, close-on-exec. On macOS the
+     *  accepted socket would inherit the listener's O_NONBLOCK. */
+    private static function accept(int $lsock): int
+    {
+        $c = self::libc();
+        return self::MACOS ? self::socketFlags($c->accept($lsock, null, null), false)
+                           : $c->accept4($lsock, null, null, self::SOCK_CLOEXEC);
+    }
+
+    /** [uid, gid, groups] of the peer; groups null on Linux, where the
+     *  request's are compared with ours. */
+    private static function peerCreds(int $conn): array
+    {
+        $c = self::libc();
+        $cred = $c->new(self::MACOS ? 'struct xucred' : 'struct ucred');
+        $len = $c->new('socklen_t');
+        $len->cdata = \FFI::sizeof($cred);
+        if (self::MACOS) {
+            $c->getsockopt($conn, self::SOL_LOCAL, self::LOCAL_PEERCRED, \FFI::addr($cred), \FFI::addr($len));
+            $groups = [];
+            for ($i = 0; $i < min(16, max(0, $cred->cr_ngroups)); $i++) {
+                $groups[] = $cred->cr_groups[$i];
+            }
+            return [$cred->cr_uid, $groups[0] ?? -1, $groups];
+        }
+        $c->getsockopt($conn, self::SOL_SOCKET, self::SO_PEERCRED, \FFI::addr($cred), \FFI::addr($len));
+        return [$cred->uid, $cred->gid, null];
+    }
+
+    /** Our groups as the kernel has them: on macOS, posix_getgroups() may
+     *  give the user's, resolved anew; ours are read as a peer's are. */
+    private static function ownGroups(): array
+    {
+        if (!self::MACOS) {
+            return posix_getgroups();
+        }
+        static $groups = null;
+        if ($groups === null) {
+            $sv = self::libc()->new('int[2]');
+            self::libc()->socketpair(self::AF_UNIX, self::SOCK_STREAM, 0, $sv);
+            $groups = self::peerCreds($sv[0])[2];
+            self::libc()->close($sv[0]);
+            self::libc()->close($sv[1]);
+        }
+        return $groups;
+    }
+
+    /** A path naming the directory open as fd. */
+    private static function dirPath(int $fd): string
+    {
+        if (!self::MACOS) {
+            return "/proc/self/fd/$fd";
+        }
+        static $ffi = null;
+        $ffi ??= \FFI::cdef('int fcntl(int, int, char *);', '/usr/lib/libSystem.B.dylib');
+        $buf = $ffi->new('char[1024]');
+        return $ffi->fcntl($fd, self::F_GETPATH, $buf) === 0 ? \FFI::string($buf) : '/nonexistent';
+    }
+
+    /**
+     * macOS: whether a forked child of ours would be killed for using
+     * CoreFoundation, because this process used it (an extension, at
+     * startup: nothing of the tool runs here). See cf_unsafe in
+     * speedrunner_daemon.py; the child leaves by _exit, not by a crash.
+     */
+    private static function cfUnsafe(): bool
+    {
+        if (!self::MACOS) {
+            return false;
+        }
+        $pid = pcntl_fork();
+        if ($pid === 0) {
+            $c = self::libc();
+            $exit = \FFI::cast('long', $c->dlsym(\FFI::cast('void *', -2), '_exit'))->cdata; // RTLD_DEFAULT
+            foreach ([SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGABRT] as $sig) {
+                $c->signal($sig, $exit);
+            }
+            $null = $c->open('/dev/null', 2); // O_RDWR
+            foreach ([0, 1, 2] as $fd) {
+                $c->dup2($null, $fd); // "The process has forked and you cannot use..."
+            }
+            \FFI::cdef('void *SCDynamicStoreCopyProxies(void *);',
+                       '/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration')
+                ->SCDynamicStoreCopyProxies(null);
+            $c->_exit(0); // no PHP shutdown in this copy of the daemon
+        }
+        pcntl_waitpid($pid, $status);
+        return !pcntl_wifexited($status) || pcntl_wexitstatus($status) !== 0;
     }
 
     public static function log(string $msg): void
@@ -178,7 +302,7 @@ final class Daemon
     {
         $c = self::libc();
         $buf = $c->new("char[$len]");
-        $space = 16 + (int) ceil(4 * $maxFds / 8) * 8; // CMSG_SPACE
+        $space = self::CMSG_HDR + (int) ceil(4 * $maxFds / self::CMSG_ALIGN) * self::CMSG_ALIGN; // CMSG_SPACE
         $ctl = $c->new("unsigned char[$space]");
         $iov = $c->new('struct iovec');
         $iov->iov_base = \FFI::cast('void *', \FFI::addr($buf));
@@ -195,12 +319,18 @@ final class Daemon
             throw new \RuntimeException('recvmsg failed');
         }
         $fds = [];
-        if ($msg->msg_controllen >= 16) {
+        if ($msg->msg_controllen >= self::CMSG_HDR) {
             $raw = \FFI::string($ctl, (int) $msg->msg_controllen);
-            [, $cmsgLen] = unpack('P', substr($raw, 0, 8));
-            [, $level, $type] = unpack('l2', substr($raw, 8, 8));
+            $lenBytes = self::CMSG_HDR - 8;
+            [, $cmsgLen] = unpack($lenBytes === 8 ? 'P' : 'V', substr($raw, 0, $lenBytes));
+            [, $level, $type] = unpack('l2', substr($raw, $lenBytes, 8));
             if ($level === self::SOL_SOCKET && $type === self::SCM_RIGHTS) {
-                $fds = array_values(unpack('l*', substr($raw, 16, $cmsgLen - 16)));
+                $fds = array_values(unpack('l*', substr($raw, self::CMSG_HDR, $cmsgLen - self::CMSG_HDR)));
+                if (self::MACOS) { // no MSG_CMSG_CLOEXEC
+                    foreach ($fds as $received) {
+                        $c->fcntl($received, self::F_SETFD, self::FD_CLOEXEC);
+                    }
+                }
             }
         }
         return [\FFI::string($buf, $r), $fds];
@@ -209,8 +339,10 @@ final class Daemon
     private static function sendWithFd(int $sock, string $data, int $passFd): void
     {
         $c = self::libc();
-        $ctl = $c->new('unsigned char[24]');
-        $raw = pack('P', 20) . pack('l', self::SOL_SOCKET) . pack('l', self::SCM_RIGHTS) . pack('l', $passFd);
+        $ctl = $c->new('unsigned char[' . (self::CMSG_HDR + 8) . ']');
+        $len = self::CMSG_HDR + 4; // CMSG_LEN(4)
+        $raw = (self::MACOS ? pack('V', $len) : pack('P', $len)) . pack('l', self::SOL_SOCKET)
+            . pack('l', self::SCM_RIGHTS) . pack('l', $passFd);
         \FFI::memcpy($ctl, $raw, strlen($raw));
         $buf = $c->new('char[' . strlen($data) . ']');
         \FFI::memcpy($buf, $data, strlen($data));
@@ -221,7 +353,7 @@ final class Daemon
         $msg->msg_iov = \FFI::addr($iov);
         $msg->msg_iovlen = 1;
         $msg->msg_control = \FFI::cast('void *', \FFI::addr($ctl));
-        $msg->msg_controllen = 24;
+        $msg->msg_controllen = self::CMSG_HDR + 8; // CMSG_SPACE(4)
         if ($c->sendmsg($sock, \FFI::addr($msg), self::MSG_NOSIGNAL) < 0) {
             throw new \RuntimeException('sendmsg failed');
         }
@@ -326,7 +458,7 @@ final class Daemon
 
     // --- child: one invocation ----------------------------------------------
 
-    private static function whyNotFast(array $req, int $peerGid, int $cwdFd): ?string
+    private static function whyNotFast(array $req, int $peerGid, int $cwdFd, ?array $peerGroups = null): ?string
     {
         $s = self::$state;
         if ($s['disabled']) {
@@ -334,15 +466,15 @@ final class Daemon
         }
         // The script as typed, relative to the client's cwd (`php artisan`).
         $typed = $req['argv'][0] ?? '';
-        $path = str_starts_with($typed, '/') ? $typed : "/proc/self/fd/$cwdFd/$typed";
+        $path = str_starts_with($typed, '/') ? $typed : self::dirPath($cwdFd) . "/$typed";
         if ($typed === '' || realpath($path) !== $s['script_real']) {
             return 'script path mismatch';
         }
         if (self::stale()) {
             return 'stale: installed files changed';
         }
-        $groups = array_unique($req['groups']);
-        $mine = array_unique(posix_getgroups());
+        $groups = array_unique($peerGroups ?? $req['groups']);
+        $mine = array_unique(self::ownGroups());
         sort($groups);
         sort($mine);
         if ($peerGid !== posix_getgid() || $groups !== $mine) {
@@ -452,11 +584,8 @@ final class Daemon
         $c = self::libc();
         $deadline = self::now() + self::HANDSHAKE_TIMEOUT_S;
         try {
-            $cred = $c->new('struct ucred');
-            $len = $c->new('socklen_t');
-            $len->cdata = \FFI::sizeof($cred);
-            $c->getsockopt($conn, self::SOL_SOCKET, self::SO_PEERCRED, \FFI::addr($cred), \FFI::addr($len));
-            if ($cred->uid !== posix_getuid()) {
+            [$peerUid, $peerGid, $peerGroups] = self::peerCreds($conn);
+            if ($peerUid !== posix_getuid()) {
                 exit(0);
             }
             try {
@@ -485,7 +614,7 @@ final class Daemon
                 self::sendMsg($conn, 'N', 'missing file descriptors');
                 exit(0);
             }
-            $reason = self::whyNotFast($req, $cred->gid, $fds[3]);
+            $reason = self::whyNotFast($req, $peerGid, $fds[3], $peerGroups);
             if ($reason !== null) {
                 if (str_starts_with($reason, 'stale')) {
                     self::markExiting();
@@ -577,7 +706,7 @@ final class Daemon
     private static function handleInline(int $lsock): ?string
     {
         $c = self::libc();
-        $conn = $c->accept4($lsock, null, null, self::SOCK_CLOEXEC);
+        $conn = self::accept($lsock);
         if ($conn < 0) {
             return null;
         }
@@ -627,7 +756,7 @@ final class Daemon
             if ($pfds[1]->revents !== 0) {
                 exit(0); // retired, or the daemon is gone
             }
-            $conn = $c->accept4($lsock, null, null, self::SOCK_CLOEXEC);
+            $conn = self::accept($lsock);
             if ($conn >= 0) {
                 break; // else another spare took it
             }
@@ -666,13 +795,39 @@ final class Daemon
      */
     public static function ownArgv(): array
     {
-        $words = explode("\0", rtrim((string) file_get_contents('/proc/self/cmdline'), "\0"));
+        $words = self::cmdline();
         foreach ($words as $i => $word) {
             if (@realpath($word) === __FILE__) {
                 return array_slice($words, $i);
             }
         }
         return [__FILE__];
+    }
+
+    /** Our command line: /proc, or on macOS sysctl KERN_PROCARGS2 (argc,
+     *  the executable path and padding, then argv). */
+    private static function cmdline(): array
+    {
+        if (!self::MACOS) {
+            return explode("\0", rtrim((string) file_get_contents('/proc/self/cmdline'), "\0"));
+        }
+        $ffi = \FFI::cdef('int sysctl(int *, unsigned int, void *, size_t *, void *, size_t);',
+                          '/usr/lib/libSystem.B.dylib');
+        $mib = $ffi->new('int[3]');
+        [$mib[0], $mib[1], $mib[2]] = [1, 49, getmypid()]; // CTL_KERN, KERN_PROCARGS2
+        $size = $ffi->new('size_t');
+        if ($ffi->sysctl($mib, 3, null, \FFI::addr($size), null, 0) !== 0) {
+            return [];
+        }
+        $buf = $ffi->new("char[{$size->cdata}]");
+        if ($ffi->sysctl($mib, 3, $buf, \FFI::addr($size), null, 0) !== 0) {
+            return [];
+        }
+        $data = \FFI::string($buf, $size->cdata);
+        $argc = unpack('l', $data)[1];
+        $rest = substr($data, 4);
+        $rest = ltrim(substr($rest, (int) strpos($rest, "\0")), "\0");
+        return array_slice(explode("\0", $rest), 0, $argc);
     }
 
     public static function main(array $argv): void
@@ -701,6 +856,8 @@ final class Daemon
                         'bound_ino' => null];
         if (ini_get('register_argc_argv')) {
             self::$state['disabled'] = 'getopt() would read the daemon\'s arguments: needs -d register_argc_argv=0';
+        } elseif (self::cfUnsafe()) {
+            self::$state['disabled'] = 'CoreFoundation used at startup: a forked child would be killed';
         }
         self::$state['fp_paths'] = self::fingerprintPaths($script);
         self::$state['fp'] = self::fingerprint(self::$state['fp_paths']);
@@ -718,7 +875,7 @@ final class Daemon
         }
         $name = basename($opts['socket']);
         @unlink($name);
-        $lsock = $c->socket(self::AF_UNIX, self::SOCK_STREAM | self::SOCK_NONBLOCK | self::SOCK_CLOEXEC, 0);
+        $lsock = self::socketFlags($c->socket(self::AF_UNIX, self::SOCK_STREAM | self::SOCK_NONBLOCK | self::SOCK_CLOEXEC, 0), true);
         $addr = $c->new('struct sockaddr_un');
         $addr->sun_family = self::AF_UNIX;
         \FFI::memcpy($addr->sun_path, $name, strlen($name));
@@ -780,6 +937,8 @@ final class Daemon
             if ($spare === null && !self::$state['disabled']) {
                 $sv = $c->new('int[2]');
                 $c->socketpair(self::AF_UNIX, self::SOCK_STREAM | self::SOCK_CLOEXEC, 0, $sv);
+                self::socketFlags($sv[0], false);
+                self::socketFlags($sv[1], false);
                 $pid = pcntl_fork();
                 if ($pid === 0) {
                     $c->close($sv[0]);
