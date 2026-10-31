@@ -9,6 +9,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read  # the jobs only read the repository
+
 jobs:
   unit:
     runs-on: ubuntu-24.04

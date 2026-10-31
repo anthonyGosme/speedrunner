@@ -10,6 +10,9 @@ on:
   workflow_dispatch:
   workflow_call:
 
+permissions:
+  contents: read  # the jobs only read the repository
+
 jobs:
   target:
     strategy:
