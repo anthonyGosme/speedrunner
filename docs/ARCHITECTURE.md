@@ -1,6 +1,6 @@
 # speedrunner — architecture et reprise du projet
 
-Ce document décrit ce qui est construit, comment les pièces s'emboîtent, où en est le projet et ce qu'il faut savoir pour continuer sans retomber dans les pièges déjà rencontrés. État au 2026-10-31, version 0.3.1 : Python, Ruby, PHP et Node (expérimental), Linux x86_64 et aarch64.
+Ce document décrit ce qui est construit, comment les pièces s'emboîtent, où en est le projet et ce qu'il faut savoir pour continuer sans retomber dans les pièges déjà rencontrés. État au 2026-10-31, version 0.3.1 : Python, Ruby, PHP et Node (expérimental), Linux x86_64 et aarch64 ; Python aussi sur macOS, Intel et Apple Silicon (M1, §2 quinquies).
 
 ## 1. En une phrase
 
@@ -21,6 +21,7 @@ server/speedrunner_node.c   l'addon du démon Node : fork, passage de fd, signau
 client/src/main.rs        le client, Rust, seule dépendance : libc (=0.2.175)
 client/build.rs           embarque l'addon Node, compilé pour glibc et pour musl
 client/src/launcher.rs    suivi des lanceurs (az, gcloud) sous ptrace
+client/src/platform.rs    ce qui diffère entre Linux et macOS côté client
 shell/speedrunner.zsh       wrappers et anticipation pour zsh ≥ 5.3
 shell/speedrunner.bash      la même chose pour bash ≥ 4.2
 tests/
@@ -45,6 +46,7 @@ bench/
   launchers.sh            CLI à lanceur (az, gcloud) et `./manage.py`
   node/                   go/no-go Node : image, prototype de fork, plafonds
   node_panel.py           panel des CLI Node, dans l'image de node/
+  macos/                  macOS : plafonds et cas CoreFoundation (M0), canari et bench chaud (M1)
   results/<date>-<étape>-vps/   chaque mesure, avec un ANALYSE.md
 ```
 
@@ -98,6 +100,35 @@ Un lanceur prépare un environnement, puis exécute l'interpréteur sur le vrai 
 - **`-m module` dans le démon** (`--module`). Le fichier exécuté est trouvé comme le fait runpy : en important les paquets parents, et le paquet lui-même s'il a un `__main__`. Cet import vient en tête du niveau 1, sous les mêmes garde-fous. Natif, `sys.path[0]` est le cwd : le démon le retire, et chaque enfant met le cwd du client. Un fichier du cwd qui masquerait un module préchargé (`json.py`, ou un paquet avec `__init__`) fait partir l'appel en natif. L'enfant exécute par `runpy._run_module_as_main` dans un `__main__` neuf : une trace montre les mêmes frames qu'en natif.
 - **Entrées de `sys.path` ajoutées par l'outil** (gcloud ajoute `lib/third_party`). L'enfant les envoie avec ses imports appris, et le cache les garde (`"paths"`). La sonde et le parent importent avec ces entrées en tête de `sys.path`, puis le restaurent. Un module trouvé dans un autre fichier que chez l'enfant est refusé.
 
+## 2 quinquies. macOS (M1 : le démon Python et le client)
+
+Même produit, même protocole ; seuls les mécanismes du système changent. Côté client, ils sont regroupés dans [client/src/platform.rs](../client/src/platform.rs) (`cfg(target_os)`) ; côté démon Python, dans la section « platform » de `speedrunner_daemon.py` (`MACOS`). Linux garde exactement son comportement.
+
+| Pièce | Linux | macOS |
+|---|---|---|
+| Uid (et gid) du pair | `SO_PEERCRED` | client : `getpeereid` ; démon : `LOCAL_PEERCRED` (`struct xucred`) |
+| Threads natifs du démon | `/proc/self/task` | `proc_pidinfo(PROC_PIDTASKINFO)`, `pti_threadnum` ; un échec compte comme des threads |
+| Fichiers de modules surveillés | inotify, un `select()` | `stat` de chacun dans l'enfant (pas de kqueue : un fd par fichier) |
+| Env reçu au lancement | `/proc/self/environ` | `sysctl KERN_PROCARGS2`, et les empreintes de l'env du client (plus bas) |
+| cwd passé à l'enfant | `O_PATH` | `O_SEARCH` (pas besoin du droit de lecture non plus) ; chemin par `F_GETPATH` |
+| Sortie des imports capturée | `memfd_create` | fichier créé puis aussitôt supprimé dans le dossier runtime |
+| Fds reçus | `MSG_CMSG_CLOEXEC` | `fcntl(F_SETFD)` après réception |
+| Terminal passé à l'enfant | `/dev/tty` | le périphérique lui-même (`/dev/ttys003`), trouvé par `proc_pidinfo(PROC_PIDTBSDINFO)` et `devname` |
+| SIGTERM relayé | par pidfd | par pid |
+| Script appelant (`activate`) | `/proc/<ppid>/cmdline`, `cwd`, `fd/255` | `KERN_PROCARGS2`, `PROC_PIDVNODEPATHINFO`, `proc_pidfdinfo` sur le fd 255 |
+| Lanceurs (az, gcloud) | suivis sous ptrace | exécutés en natif |
+| Ruby, PHP, Node | servis | exécutés en natif (M2, M3) |
+
+**La règle CoreFoundation.** Une fois que CoreFoundation a servi dans un processus, un enfant forké qui s'en sert à son tour est tué (« The process has forked and you cannot use this CoreFoundation functionality safely »). Mesures dans `bench/results/…-macos-m1-mac/ANALYSE.md` :
+
+- charger `_scproxy` (ce que fait `import urllib.request`) est sans danger ; c'est l'appeler (la détection de proxy d'urllib) qui est fatal, sur Apple Silicon. Le démon ne refuse donc pas un `_scproxy` chargé, ce qui aurait désactivé pip, aws, httpie… ;
+- la détection de proxy laisse 3 threads natifs : la règle des threads la bloque déjà. Mais une boucle d'exécution CoreFoundation (`CFRunLoopGetCurrent`, par une extension C ou par ctypes) n'en laisse aucun, et tue chaque enfant, sur Intel aussi ;
+- **le canari** (`cf_unsafe`) : un enfant jetable appelle `_scproxy._get_proxy_settings()`, le seul appel trouvé qui déclenche la vérification de CoreFoundation ; s'il meurt, ce processus ne doit plus forker. Coût : un fork et un aller-retour à configd, ~2 ms sur un M6, 10 à 17 ms sur un i7. Il ne tourne que quand l'état préchargé change : après chaque import de niveau 1 (qui est alors sauté, « uses CoreFoundation at import », comme un import qui lance un thread), après le module de `-m`, après chaque lot d'imports appris appliqué dans le parent (en cas d'échec, le lot est mis en liste noire et le démon redémarre), et dans la sonde ;
+- dans la sonde, un canari par module coûterait trop : un seul, quand le lot est importé. S'il meurt, ou si un module refusé a laissé des threads (le canari n'est alors plus fiable : il passe sur l'Intel après `getproxies`), tout le lot est rejugé avec un canari après chaque module, jusqu'à la fin de cet apprentissage ;
+- un outil qui utilise CoreFoundation pendant son exécution (le cas courant : une requête HTTP) le fait dans l'enfant, depuis un parent qui ne l'a jamais utilisé : sans danger.
+
+**L'env que voit l'outil.** Sous macOS, `python3.x` est souvent un lanceur qui fait lui-même un `exec` : celui de python.org ajoute `__CF_USER_TEXT_ENCODING` (absent d'une session ssh), `/usr/bin/python3` ajoute `SDKROOT`, `CPATH`, `LIBRARY_PATH` et `MANPATH`. `KERN_PROCARGS2` donne l'env de l'interpréteur après ce lanceur, sans dire ce qui venait du client. Le client passe donc au démon, dans `SPEEDRUNNER_LAUNCH_ENV`, une empreinte FNV-1a 64 de chaque entrée de son env, suivie de son nom. Le démon en déduit ce que le lanceur et CPython ont ajouté ou changé, et l'ajoute à l'env de chaque requête, comme en natif. Une clé de démarrage (`PYTHON*`, `LC_*`, `LANG`) changée par le lanceur fait partir l'appel en natif.
+
 ## 3. Vue d'ensemble des processus
 
 ```
@@ -147,7 +178,7 @@ Socket de contrôle parent ↔ enfant : `A` (+ fd client : « j'ai accepté »),
 
    Double fork. Le petit-fils lâche les fd du client (sinon un pipeline attendrait sa fin), prend le verrou (au plus 3 s d'attente), y écrit `running <pid>`, puis `exec` l'interpréteur du shebang avec `speedrunner_daemon.py --tool --script --socket --lock-fd 3 --origin`. Résultat : un seul démon, quel que soit le nombre de clients concurrents.
 2. **Ouverture du socket avant le préchargement.** Un appel qui arrive pendant le démarrage attend le premier spare, au plus 3 s, au lieu de partir en natif. Le dossier runtime est vérifié par `fstat` sur un fd (propriétaire = nous, mode exactement 0700), et le démon travaille ensuite relativement à ce fd. Socket en 0600, umask d'origine rétabli juste après.
-3. **Préchargement** (§6), vérification des threads Python et natifs (`/proc/self/task`), calcul de l'empreinte et des watches inotify (§7).
+3. **Préchargement** (§6), vérification des threads Python et natifs (`/proc/self/task`, `proc_pidinfo` sur macOS, plus le canari CoreFoundation, §2 quinquies), calcul de l'empreinte et des watches inotify (§7).
 4. **Service.** Boucle du parent : spare, `on_ctl` (A/L), `reap` (W), application de l'apprentissage quand aucun enfant n'est actif.
 5. **Arrêt** : `S` (stop), empreinte périmée (SIGUSR1 envoyé par un enfant), fichier surveillé modifié, 4 h d'inactivité (`SPEEDRUNNER_IDLE_TIMEOUT`), ou import appris qui se comporte mal (le démon suivant le met en liste noire). Il se retire d'abord : il écrit `exiting <pid>` dans le verrou, supprime son socket (seulement si c'est encore le sien, d'après l'inode), ferme son socket d'écoute et renvoie son spare. Il relâche aussi son verrou, qui ne dit que qui sert le socket : le démon suivant peut démarrer aussitôt, même si un appel long est en cours. Puis il attend ses enfants en cours et leur envoie leur W : en PHP, et pour un enfant mort d'un signal, c'est la seule façon pour le client d'apprendre leur fin. (Garder le verrou pendant cette attente faisait abandonner le démarreur du suivant au bout de 3 s : l'outil restait sans démon jusqu'à l'appel d'après. Trouvé par `platforms`, Python 3.14 ; test `test_stopped_mid_run_lets_a_new_daemon_start`.)
 6. **Crash** (`kill -9`) : les enfants actifs finissent et envoient leur X, le spare sort. Le prochain client trouve un socket sans écoute, le relance en arrière-plan et part en natif.
@@ -171,9 +202,9 @@ Avant chaque fork, `gc.freeze()` : le GC de l'enfant ne parcourt pas le tas hér
 
 Avant de répondre `R` (`why_not_fast`), sinon `N` et exécution native :
 
-- l'UID du pair (`SO_PEERCRED`), le gid et les groupes du client identiques à ceux du démon ;
+- l'UID du pair (`SO_PEERCRED`, `LOCAL_PEERCRED` sur macOS), le gid et les groupes du client identiques à ceux du démon ;
 - le chemin du script, tel que le client l'a lancé : absolu, ou relatif à son cwd (`./manage.py`) s'il désigne le même fichier ; pour un module, `-m` suivi de son nom, et aucun fichier du cwd qui masque un module préchargé ;
-- l'empreinte : `stat` du script, de l'interpréteur, des dossiers de `sys.path` et des `RECORD`, plus un `select()` sur la file inotify des fichiers de modules ;
+- l'empreinte : `stat` du script, de l'interpréteur, des dossiers de `sys.path` et des `RECORD`, plus un `select()` sur la file inotify des fichiers de modules (sur macOS, un `stat` de chacun : 3 à 6 ms sur un i7 pour black) ;
 - l'env de démarrage : `PYTHON*`, `LC_ALL`, `LC_CTYPE`, `LANG` identiques à ceux du démon ;
 - l'env figé à l'import : les clés modifiées *ou lues* par le code de haut niveau doivent avoir la même valeur qu'au démarrage du démon. Exemples réels : botocore fige `AWS_NEW_RETRIES_2026` et un chemin dérivé de `HOME`, et gettext fige la langue.
 
@@ -253,6 +284,15 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
 - **Sécurité** : seuls les autres utilisateurs de la machine sont des attaquants. Côté client (classe `Security` de `test_matrix.py`, valable pour tous les runtimes) : dossier runtime trop ouvert ou d'un autre uid, socket servi par un autre uid, lien symbolique à la place du repli `/tmp/speedrunner-<uid>`. Côté démon (classe `Security` de chaque suite, Python, Ruby, PHP et Node) : un pair d'un autre uid n'obtient pas de réponse (le test se connecte avec l'uid effectif 65534, que rapporte `SO_PEERCRED`, mais l'uid de système de fichiers 0, pour traverser le dossier en 0700) ; lancé à la main avec la ligne de commande et l'env d'un vrai démon, mais un socket dans un mauvais dossier, le démon refuse de démarrer. Les tests qui changent d'uid demandent root ; la cible `non-root` les saute.
 - **Courses** : `tests/test_stress.py`. Pendant `STRESS_SECONDS` (90 s par défaut), `STRESS_WORKERS` threads (8) appellent en parallèle les outils de test de chaque runtime installé, au terminal ou non, avec des commandes qui apprennent, échouent ou affichent. Pendant ce temps, un perturbateur arrête les démons, les tue (`kill -9`) ou touche leurs scripts pour les rendre périmés. Chaque appel doit finir, sortir comme en natif (un repli natif est permis), ne jamais sortir en 125 (sauf `kill -9` d'un démon PHP, où seul son W rapporte la fin) et ne s'exécuter qu'une fois (un marqueur par appel). `docker/test-all.sh stress stress-node`, avec un terminal attaché ; job `stress` de la CI, 120 s par cible. `STRESS_SEED` rejoue un tirage.
 - Après chaque passage, vérifier qu'aucun démon ne reste : `ps -eo args | grep -c '[h]eadstart_daemon'` doit renvoyer 0.
+- **macOS** (Python seulement) : la matrice, `test_shell.py` et `test_scripts.py` tournent tels quels, avec un client compilé sur le Mac (`cargo build --release`, et `--target aarch64-apple-darwin` pour l'autre architecture) et deux venvs, comme sur le VPS. Le workflow `.github/workflows/macos.yml` les lance sur `macos-15-intel` et `macos-26` (Apple Silicon) : `macos-13` n'existe plus, `macos-14` est retiré le 2 novembre 2026. Les tests sautés, faute de sens sur macOS : suivi des lanceurs (ptrace), pair d'un autre uid (pas de `setfsuid`) ; la classe `Bash` de `test_shell.py` demande bash ≥ 4.2 (Homebrew), le bash 3.2 du système n'a que le test `OldBash`.
+
+```bash
+cd client && cargo build --release && cd ..
+python3 -m venv ~/speedrunner-dev/venv-test && python3 -m venv ~/speedrunner-dev/venv-aws
+cp -r tests/fixture/hstest /tmp/hstest-build && ~/speedrunner-dev/venv-test/bin/pip install --no-deps /tmp/hstest-build
+~/speedrunner-dev/venv-aws/bin/pip install awscli
+HS_BIN=$PWD/client/target/release/speedrunner HS_PATH=$HOME/speedrunner-dev/venv-test/bin:$HOME/speedrunner-dev/venv-aws/bin python3 tests/test_matrix.py
+```
 - Règles de travail : tests d'abord, bench avant/après commité pour toute optimisation, petits commits, validation par l'humain à la fin de chaque étape.
 
 ## 10 bis. Distribution
@@ -339,6 +379,10 @@ Une release est un seul fichier : le client embarque les quatre démons, l'addon
 - **Un pty livre en différé.** Ce qui est écrit sur l'esclave arrive au maître un peu plus tard (le tampon « flip » du noyau). Les démons Python et Ruby lisaient le maître aussitôt l'import fini : sur une machine lente, la sortie d'un import arrivait pendant le suivant, accusé à tort d'afficher quelque chose, et le démon redémarrait. Ils lisent maintenant jusqu'à 10 ms de silence. Seulement avec un démon lancé depuis un terminal : la CI lance ses conteneurs avec `-t`.
 - **`subprocess` avec `timeout`** attend par paliers croissants, plafonnés à 50 ms : une mesure de temps doit attendre sans timeout.
 - **Faux serveurs dans les tests.** Un processus forké depuis le lanceur de tests doit finir par `os._exit` quoi qu'il arrive, sinon il exécute le reste de la suite en parallèle. Un faux serveur qui écrit à un client parti meurt de `BrokenPipe`. Dans les deux cas, on obtient un démon fantôme.
+- **macOS, `/dev/tty`.** Sous BSD, un fd ouvert sur `/dev/tty` désigne le terminal de contrôle de *quiconque s'en sert* : dans l'enfant, qui n'en a pas, getpass échouait en EIO. Le client passe le périphérique lui-même (`/dev/ttys003`). Trouvé par la classe `Interactive`.
+- **macOS, `os.set_inheritable`** passe par `ioctl(FIOCLEX)`, qui échoue en EBADF sur un fd ouvert `O_SEARCH` (le cwd reçu du client) : chaque enfant échouait avant de répondre. Le démon utilise `fcntl(F_SETFD)`.
+- **macOS, chemins de socket** : 104 octets au plus (108 sous Linux), et le dossier temporaire de macOS (`/var/folders/…/T/`) est profond. Le dossier runtime par défaut, `/tmp/speedrunner-<uid>`, est court ; les tests créent leurs dossiers sous `/tmp`. Un chemin trop long fait partir l'appel en natif.
+- **macOS, le canari et les threads.** Après la détection de proxy (3 threads), le canari CoreFoundation passe sur l'Intel : dans un processus qui a des threads, il ne prouve rien. La sonde vérifie donc les threads d'abord.
 - **`PATH` lu à l'import, et `speedrunner exec`.** pre-commit lit `PATH` en se chargeant. Son démon, démarré par `srr`, avait un `PATH` sans le dossier de liens de `exec` ; sous `exec`, chaque appel partait en natif (« import-time env differs: PATH »). Les démons Python, Ruby et Node comparent désormais ce `PATH` sans leurs propres dossiers `bin-*` du dossier runtime, qui mènent aux mêmes outils : au pire, un sous-outil lancé par l'outil n'est pas servi. Trouvé par le bench pre-commit ; test `test_tool_reading_path_at_import_served_under_exec`.
 - **pre-commit mesure l'environnement en se chargeant.** `pre_commit/xargs.py` calcule à l'import la longueur maximale d'une ligne de commande (`ARG_MAX`, moins la taille de tout l'env, plafonnée à 128 Kio) et la fige comme valeur par défaut d'un argument. Il lit ainsi toutes les clés de l'env. Or git passe au hook `GIT_AUTHOR_DATE`, qui change à chaque commit : chaque appel du hook partait en natif (« import-time env differs: GIT_AUTHOR_DATE »). Adaptateur, comme pour rspec : les lectures faites depuis `_environ_size` de `pre_commit.xargs` ne sont pas notées, et l'enfant recalcule cette valeur avec l'env du client, avant de réappliquer les changements d'env de l'import, puisque `pre_commit.main` retire ses clés après avoir importé xargs. Trouvé par le test du vrai pre-commit sous git.
 
@@ -362,6 +406,7 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 - Node, un import qui parcourt les clés de l'environnement fait partir en natif un client dont l'ensemble des clés diffère (hors `PWD`, `OLDPWD`, `SHLVL`, `_` et `SPEEDRUNNER_*`) ; une pile capturée pendant l'évaluation du point d'entrée, et que l'outil affiche lui-même, montre les frames du démon.
 - pour un lanceur, `prewarm` exécute le préambule sans argument : sans effet pour az et gcloud, mais un lanceur qui ferait autre chose que préparer son exec le ferait aussi à chaque préchauffage.
 - hook git de pre-commit : servi seulement sous `speedrunner exec` ou `activate` (git lancé hors d'eux ne voit pas le lien `bash`), et si pre-commit est sur le `PATH` ou nommé. Sous eux, tout `bash` appelé par son nom passe par le client (un démarrage de plus, +4 ms mesurés dans Docker Desktop), et `$BASH` y nomme le lien, qui mène au même bash. Le démon du hook (`python -mpre_commit`) est distinct de celui du script `pre-commit` : `speedrunner status pre-commit` et `stop pre-commit` visent le second, le premier s'arrête après 4 h sans appel.
+- macOS : Python seulement (Ruby, PHP et Node partent en natif) ; lanceurs en natif ; l'empreinte des fichiers de modules se vérifie par `stat` à chaque appel (3 à 6 ms sur un i7, ~1 ms sur un M6) ; un outil qui utilise CoreFoundation en se chargeant (détection de proxy, boucle d'exécution) voit ce module rechargé à chaque appel ; le hook bash demande bash ≥ 4.2, celui du système est 3.2 (zsh, le shell par défaut, n'a pas cette limite).
 
 ## 13. État et suite
 
@@ -391,6 +436,8 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 | 4 bis Instantané du driver (niveau 4) | reporté | propre à aws |
 | 5 Bench comparatif et vidéo | fait | vidéo du script de démo : 24,0 s → 5,3 s, x4,5, démons chauds (médiane de trois enregistrements : 22,8 s → 5,6 s chaud, 7,3 s à froid) |
 | Release 0.3.1 | fait | binaires statiques x86_64 et aarch64, attestations de provenance signées |
+| M0 macOS, go/no-go | fait | GO pour Python : plafonds x5 à x50 ; CoreFoundation tue les enfants d'un parent qui l'a utilisé |
+| M1 macOS : démon Python et client | fait | Intel x4,4 (aws) à x16 (pip), M6 x3,9 à x12,5 ; 16/16 sorties identiques ; matrice verte sur les deux ; règle CoreFoundation (canari) |
 
 Décision ouverte : quand le client meurt (`kill -9`), l'enfant va aujourd'hui jusqu'au bout ; lui envoyer SIGHUP serait plus proche du natif, mais moins sûr pour une commande comme `aws s3 rm`.
 
@@ -399,7 +446,7 @@ Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licenc
 Suite :
 
 - publier le paquet AUR et le tap Homebrew (prêts dans `packaging/`) ;
-- macOS : go/no-go M0 **GO** pour Python (plafonds x5 à x50, 2 000 forks sans échec après usage de CoreFoundation ; la détection de proxy lance des threads, que le démon doit compter par `proc_pidinfo`). Reste à porter le démon Python et le client (M1), puis Ruby et PHP, puis Node : voir `bench/results/…-macos-m0-mac/ANALYSE.md` ;
+- macOS : le démon Python et le client sont portés (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Restent Ruby et PHP (M2), puis Node (M3) ; l'empreinte par kqueue dans le parent plutôt que par `stat` dans l'enfant ; et la distribution (binaire universel, formule Homebrew pour macOS), à décider ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
 - traduire ce document en anglais.
 

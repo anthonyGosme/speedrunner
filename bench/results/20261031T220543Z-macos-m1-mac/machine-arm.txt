@@ -1,0 +1,4 @@
+Mac mini : macOS 27.0.1 (26A434), arm64, Apple M6, 12 CPU, 16 Go.
+Python 3.9.6 du système (Command Line Tools) ; venv : black 25.11.0, httpie
+3.2.4, poetry 2.2.1, ansible-core 2.15.13, awscli 1.44.87, pip 26.0.1.
+Client : aarch64-apple-darwin, compilé sur le portable (rustc 1.99.1).
