@@ -5,6 +5,8 @@
 # signed build provenance attestation (each .deb too): `gh attestation verify <archive>
 # --repo anthonyGosme/speedrunner` checks it was built here, by this
 # workflow, from the tagged commit.
+# Then the package managers follow: the Homebrew tap and a pull request
+# for packaging/ (packages.yml), the APT repository (apt.yml).
 name: release
 
 on:
@@ -101,3 +103,22 @@ jobs:
         run: |
           cp install.sh dist/
           gh release create "$GITHUB_REF_NAME" dist/* --title "speedrunner $GITHUB_REF_NAME" --generate-notes
+
+  packages:
+    needs: publish
+    permissions:
+      contents: write  # to push the pull request's branch
+      pull-requests: write
+    uses: ./.github/workflows/packages.yml
+    with:
+      version: ${{ github.ref_name }}
+    secrets: inherit  # HOMEBREW_TAP_TOKEN
+
+  apt:
+    needs: publish
+    permissions:
+      contents: read
+      pages: write
+      id-token: write  # to deploy to Pages
+    uses: ./.github/workflows/apt.yml
+    secrets: inherit  # APT_SIGNING_KEY

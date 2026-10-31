@@ -1,0 +1,115 @@
+# Points the package managers at a published release: pushes the Homebrew
+# formula to the tap anthonyGosme/homebrew-speedrunner and checks that
+# `brew install` takes it, then opens a pull request that brings
+# packaging/ (the formula, the AUR files) to that version on main.
+# Called by release.yml after each release; by hand, it redoes it for a
+# published version (unchanged files are not committed again).
+#
+# Needs the secret HOMEBREW_TAP_TOKEN: a fine-grained token with Contents
+# read and write on the tap only (packaging/README.md).
+name: packages
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Published version, as 0.3.2 or v0.3.2"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Published version, as 0.3.2 or v0.3.2"
+        required: true
+        type: string
+
+permissions: {}  # each job says what it needs
+
+jobs:
+  tap:
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: The formula at this version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: packaging/update.sh "${VERSION#v}"
+      - name: The tap's token is there
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::error::No HOMEBREW_TAP_TOKEN secret: see packaging/README.md"
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+        with:
+          repository: anthonyGosme/homebrew-speedrunner
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Push it to the tap
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          cp packaging/homebrew/speedrunner.rb tap/Formula/speedrunner.rb
+          cd tap
+          if git diff --quiet; then echo "The tap is already at ${VERSION#v}"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qam "speedrunner ${VERSION#v}"
+          git push origin HEAD
+
+  brew:
+    needs: tap
+    permissions: {}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: brew install from the tap, in Linuxbrew
+        env:
+          VERSION: ${{ inputs.version }}
+        run: >-
+          docker run --rm -e "VERSION=${VERSION#v}" -e HOMEBREW_NO_ANALYTICS=1 -e HOMEBREW_NO_AUTO_UPDATE=1 -e HOMEBREW_NO_ENV_HINTS=1
+          homebrew/brew:latest bash -ec '
+          brew install anthonyGosme/speedrunner/speedrunner;
+          speedrunner --version | grep -F "$VERSION";
+          test -x "$(brew --prefix)/bin/srr";
+          brew test speedrunner;
+          brew uninstall speedrunner'
+
+  pull-request:
+    needs: tap
+    permissions:
+      contents: write  # to push the branch
+      pull-requests: write
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: packaging/ at this version, proposed to main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          v=${VERSION#v}
+          packaging/update.sh "$v"
+          if git diff --quiet; then echo "packaging/ is already at $v on main"; exit 0; fi
+          branch=packaging/v$v
+          if git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null; then
+            echo "::warning::$branch already exists: no new pull request"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -qc "$branch"
+          git commit -qam "Packaging: the AUR package and the Homebrew formula at $v"
+          git push -q origin "$branch"
+          body="The release's version and SHA-256 sums, from \`packaging/update.sh $v\`. The tap has them already."
+          if ! gh pr create --base main --head "$branch" --title "Packaging: v$v" --body "$body"; then
+            # Allowed only if the repository lets GitHub Actions create pull requests.
+            echo "::warning::Branch $branch pushed, but no pull request: open it from $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$branch"
+          fi
