@@ -15,7 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14]  # Intel, Apple Silicon
+        # Intel, Apple Silicon. macos-13 is gone and macos-14 retires on
+        # 2026-11-02 (actions/runner-images#13518).
+        os: [macos-15-intel, macos-26]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
