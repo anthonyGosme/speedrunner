@@ -50,8 +50,11 @@ Or with a package manager:
 
 ```bash
 brew install anthonyGosme/speedrunner/speedrunner      # Homebrew on Linux
-sudo apt install ./speedrunner_0.3.2_amd64.deb          # Debian, Ubuntu: the .deb of a release
+sudo apt install ./speedrunner_<version>_amd64.deb      # Debian, Ubuntu: the .deb of a release (arm64 too)
 ```
+
+On Arch Linux, `makepkg -si` in [packaging/aur](packaging/aur) builds and installs the
+package; it will be on the AUR as `speedrunner-bin` once registration reopens.
 
 After v0.3.0, each archive and .deb also comes with a signed build provenance:
 `gh attestation verify <archive> --repo anthonyGosme/speedrunner` checks that this
@@ -252,7 +255,8 @@ with `speedrunner exec git commit`: black, isort, flake8 and mypy on a changed f
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
 learn what a tool loads.
 
-**macOS, Windows?** Not yet: Linux, x86_64 or aarch64, any distribution.
+**macOS, Windows?** Not yet: Linux, x86_64 or aarch64, any distribution. macOS is next: its go/no-go is
+done, on Intel and Apple Silicon ([analysis](bench/results/20261031T194600Z-macos-m0-mac/ANALYSE.md), in French).
 
 How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
 
