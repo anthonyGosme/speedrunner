@@ -18,9 +18,6 @@ jobs:
         os: [macos-13, macos-14]  # Intel, Apple Silicon
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
-    env:
-      HS_BIN: ${{ github.workspace }}/client/target/release/speedrunner
-      HS_PATH: ${{ runner.temp }}/venv-test/bin:${{ runner.temp }}/venv-aws/bin
     steps:
       - uses: actions/checkout@v7
       - run: sw_vers && uname -m && python3 --version && bash --version | head -1
@@ -33,6 +30,8 @@ jobs:
           cp -r tests/fixture/hstest "$RUNNER_TEMP/hstest-build"
           "$RUNNER_TEMP/venv-test/bin/pip" install -q --no-deps "$RUNNER_TEMP/hstest-build"
           "$RUNNER_TEMP/venv-aws/bin/pip" install -q awscli
+          echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
+          echo "HS_PATH=$RUNNER_TEMP/venv-test/bin:$RUNNER_TEMP/venv-aws/bin" >> "$GITHUB_ENV"
       - run: python3 tests/test_matrix.py -v
       - run: python3 tests/test_shell.py -v
       - run: python3 tests/test_scripts.py -v
