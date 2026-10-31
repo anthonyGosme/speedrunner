@@ -16,6 +16,9 @@ each call starts with them already done.
   5.3 s with `speedrunner exec`, its daemons warm: x4.5, same output (2-vCPU VPS).
 - **An editor's save.** eslint on one file: 328 → 43 ms; mypy: 213 → 50 ms. Faster than the tools'
   own daemons, eslint_d and dmypy ([below](#against-the-tools-own-daemons)).
+- **A commit.** pre-commit with black, isort, flake8 and mypy on a changed file: 1.11 → 0.31 s with
+  `speedrunner exec git commit`, same output (hooks declared `language: system`;
+  [details](bench/results/20261031T214045Z-precommit-hook-docker/ANALYSE.md)).
 - **Never run twice.** Until a call has started, any problem sends it to the real tool, natively.
   Once it has started, speedrunner never runs it again, whatever dies.
 - **Same output.** Identical to the native run on all 96 commands measured below; what speedrunner
