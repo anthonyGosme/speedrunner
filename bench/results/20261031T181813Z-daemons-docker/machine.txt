@@ -1,0 +1,15 @@
+Docker Desktop on a laptop (Intel i7-9750H), image bench/daemons/Dockerfile (node:24-bookworm)
+Linux 7.0.14-linuxkit x86_64
+CPUs: 12
+MemTotal:       12243244 kB
+speedrunner 0.3.1
+v24.22.2
+Python 3.11.2
+ruby 3.1.2p20 (2022-04-12 revision 4491bb740a) [x86_64-linux-gnu]
+v9.39.5
+eslint_d: v14.3.0, bundled eslint: v9.39.5
+3.9.10
+prettierd 0.29.0
+1.92.2
+mypy 2.4.1 (compiled: yes)
+black, 26.10.1 (compiled: yes)

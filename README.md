@@ -186,6 +186,29 @@ No gain: `vite --version` is slower served: its bundler starts threads as it loa
 
 <!-- panel:end -->
 
+### Against the tools' own daemons
+
+Some tools ship a daemon of their own because they start too slowly. The case
+they were made for, an editor saving a file (one small file, changed before
+every call so that no result cache answers), 20 interleaved runs in a Debian 12
+container on a laptop:
+
+| Tool | Native | speedrunner | Its own daemon |
+|---|---:|---:|---:|
+| eslint | 328 ms | **43 ms** (x7.6) | 107 ms, `eslint_d` (x3.1) |
+| prettier | 211 ms | **62 ms** (x3.4) | 105 ms, `prettierd` (x2.0) |
+| rubocop | 297 ms | **108 ms** (x2.8) | 303 ms, `rubocop --server` (x1.0) |
+| mypy | 213 ms | **50 ms** (x4.2) | 147 ms, `dmypy` (x1.4) |
+| black | 241 ms | 26 ms (x9.4) | **19 ms**, `blackd` + `curl` (x12.7) |
+
+A dedicated daemon's client is itself a Node, Python or Ruby process that
+starts on every call; speedrunner's is a Rust binary that starts in about a
+millisecond, and the tool runs in an already loaded fork. blackd wins with
+`curl` as its client. On a large project, a dedicated daemon keeps state that
+speedrunner rebuilds on every call (dmypy's incremental state, typescript-eslint's
+program) and may come out ahead; this panel does not measure that.
+[Protocol and analysis](bench/results/20261031T181813Z-daemons-docker/ANALYSE.md).
+
 How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
