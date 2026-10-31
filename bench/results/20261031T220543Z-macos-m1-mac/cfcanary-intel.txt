@@ -1,0 +1,9 @@
+nothing                                  threads=1  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+import urllib.request (loads _scproxy)   threads=1  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+urllib getproxies()                      threads=3  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+_scproxy._get_proxy_settings()           threads=3  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+platform.mac_ver()                       threads=1  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+socket.getaddrinfo(localhost)            threads=1  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+ssl.create_default_context()             threads=1  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+ctypes CFStringCreateWithCString         threads=1  children killed: _get_proxy_settings 0/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5
+ctypes CFRunLoopGetCurrent               threads=1  children killed: _get_proxy_settings 5/5, CFRunLoopGetCurrent 0/5, CFStringCreate 0/5, CFBundleGetMainBundle 0/5

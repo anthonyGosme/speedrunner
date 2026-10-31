@@ -1,0 +1,4 @@
+Portable : macOS 26.7.2 (25G332), x86_64, Intel i7-9750H, 12 CPU, 16 Go.
+Python 3.12 (python.org) ; venvs : black 26.10.1, httpie 3.2.4, poetry 2.5.1,
+ansible-core 2.21.5 ; awscli 1.46.2 ; pip 23.2.1 (pip3.12 de l'utilisateur).
+Client : client/target/release/speedrunner (x86_64-apple-darwin, rustc 1.99.1).
