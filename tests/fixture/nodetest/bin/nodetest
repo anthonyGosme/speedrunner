@@ -80,6 +80,13 @@ const commands = {
     require("../lib/lazy-prints");
     out(`thread: ${require("../lib/lazy-thread").started}`);
   },
+  "wrapped-exit"([kind]) {
+    // An exit wrapper loaded first (preloaded, once learned), then the end.
+    require("../lib/exit-wrapper");
+    out("ending");
+    if (kind.startsWith("code:")) process.exit(Number(kind.slice(5)));
+    process.exitCode = 3;
+  },
   version() {
     out(require("../package.json").version);
   },

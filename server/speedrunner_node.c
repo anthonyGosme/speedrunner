@@ -56,6 +56,7 @@ napi_status napi_create_array_with_length(napi_env, size_t, napi_value *);
 napi_status napi_set_element(napi_env, napi_value, uint32_t, napi_value);
 napi_status napi_define_properties(napi_env, napi_value, size_t, const napi_property_descriptor *);
 napi_status napi_get_uv_event_loop(napi_env, struct uv_loop_s **);
+napi_status napi_add_env_cleanup_hook(napi_env, void (*)(void *), void *);
 int uv_loop_fork(struct uv_loop_s *);
 
 // --- helpers ------------------------------------------------------------------
@@ -143,6 +144,28 @@ static napi_value Fork(napi_env env, napi_callback_info info) {
 static napi_value Exit(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
   _exit(int_arg(&a, 0));
+}
+
+// exitOnCleanup(fd, code): when Node, ending normally, frees its
+// environment (after every "exit" listener, whoever wrapped process.emit),
+// send X(code) on fd and leave: past that, Node's teardown would wait for
+// worker threads only the parent has. Called again, it updates the code.
+static int cleanup_fd = -1, cleanup_code;
+static void write_all(int fd, const char *p, size_t n);
+
+static void on_cleanup(void *unused) {
+  unsigned char x[9] = {'X', 4, 0, 0, 0};
+  memcpy(x + 5, &cleanup_code, 4); // little-endian, as the protocol
+  write_all(cleanup_fd, (const char *)x, sizeof x);
+  _exit(cleanup_code);
+}
+
+static napi_value ExitOnCleanup(napi_env env, napi_callback_info info) {
+  args_t a = args(env, info);
+  int first = cleanup_fd < 0;
+  cleanup_fd = int_arg(&a, 0);
+  cleanup_code = int_arg(&a, 1);
+  return num(env, first ? napi_add_env_cleanup_hook(env, on_cleanup, NULL) : 0);
 }
 
 // setpgid(): a group of our own, which the client signals.
@@ -534,7 +557,7 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
   napi_property_descriptor props[] = {
       FN("fork", Fork),         FN("exit", Exit),         FN("reap", Reap),
       FN("getpid", Getpid),     FN("getppid", Getppid),   FN("reportThenExit", ReportThenExit),
-      FN("setpgid", Setpgid),
+      FN("setpgid", Setpgid),   FN("exitOnCleanup", ExitOnCleanup),
       FN("close", Close),       FN("dup", Dup),           FN("dup2", Dup2),
       FN("fchdir", Fchdir),     FN("cloexec", Cloexec),   FN("blocking", Blocking),
       FN("flock", Flock),       FN("read", Read),         FN("write", Write),

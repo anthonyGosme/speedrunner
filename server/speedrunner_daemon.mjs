@@ -45,10 +45,26 @@ const Module = require("node:module");
 const libc = fs.readFileSync("/proc/self/maps", "utf8").includes("ld-musl") ? "musl" : "gnu";
 const sys = require(path.join(path.dirname(fileURLToPath(import.meta.url)), `speedrunner_node-${libc}.node`));
 
+// How a served child ends, hooked before anything is preloaded, so that
+// these wrappers are the innermost ones: signal-exit and the like wrap them
+// in turn, and run their own "exit" listeners before reaching them.
+let serving = null; // in a served child: { dying }
+const nodeEmit = process.emit;
+process.emit = function (event, ...args) {
+  const r = nodeEmit.call(this, event, ...args);
+  if (serving && event === "exit") exiting(Number(process.exitCode ?? args[0] ?? 0) | 0);
+  return r;
+};
+const nodeReallyExit = process.reallyExit;
+process.reallyExit = function (code) {
+  if (serving && !serving.dying) finish(Number(code ?? process.exitCode ?? 0) | 0);
+  return nodeReallyExit.call(this, code);
+};
+
 const MAGIC = Buffer.from("HS1");
 const HANDSHAKE_TIMEOUT_MS = 5000;
 const LOCK_WAIT_MS = 10000;
-const PROBE_TIMEOUT_MS = 30000;
+const PROBE_STEP_MS = 3000; // a probe silent this long hangs on its current module
 const SIG = { HUP: 1, INT: 2, USR1: 10, TERM: 15, CHLD: 17 };
 const CAUGHT = [SIG.CHLD, SIG.TERM, SIG.USR1, SIG.INT, SIG.HUP];
 const EINTR = -4, EAGAIN = -11;
@@ -447,40 +463,34 @@ function reseedMathRandom() {
 let conn = -1;
 let ctl = -1;
 
-// Once every "exit" listener ran (the tool's too): the exit code to the
-// client, what was learned to the parent, and no teardown. After an
-// uncaught exception, Node prints it only once "exit" was emitted: the
-// addon passes that report on, as a native run would print it, and exits;
-// the client takes the wait status.
-function exitHook() {
-  let dying = false;
-  process.on("uncaughtExceptionMonitor", () => {
-    dying = process.listenerCount("uncaughtException") === 0 && !process.hasUncaughtExceptionCaptureCallback();
-  });
-  const emit = process.emit;
-  process.emit = function (event, ...args) {
-    const r = emit.call(this, event, ...args);
-    if (event === "exit") {
-      const code = Number(process.exitCode ?? args[0] ?? 0) | 0;
-      if (dying) sys.reportThenExit(code, `Node.js ${process.version}`, state.mainFrame ?? "");
-      else finish(code);
+// The end of a served run. "exit" was emitted: what was learned goes to the
+// parent; then the exit code to the client, from process.reallyExit (after
+// process.exit) or from Node's environment cleanup (at a natural end), and
+// no teardown. After an uncaught exception, Node prints it only once "exit"
+// was emitted: the addon passes that report on, as a native run would
+// print it, and exits; the client takes the wait status.
+function exiting(code) {
+  if (serving.dying) {
+    sys.reportThenExit(code, `Node.js ${process.version}`, state.mainFrame ?? "");
+    return;
+  }
+  if (learning) {
+    learning = false;
+    const known = new Set(state.preloaded.map(([u]) => u));
+    const fresh = loaded.filter(([u]) => !known.has(u) && u !== state.scriptUrl && !state.blacklist.has(u));
+    if (fresh.length && ctl >= 0) {
+      try {
+        sendMsg(ctl, "L", JSON.stringify(fresh));
+      } catch {}
     }
-    return r;
-  };
+  }
+  sys.exitOnCleanup(conn, code);
 }
 
 function finish(code) {
   try {
     sendMsg(conn, "X", i32(code));
   } catch {}
-  learning = false;
-  const known = new Set(state.preloaded.map(([u]) => u));
-  const fresh = loaded.filter(([u]) => !known.has(u) && u !== state.scriptUrl && !state.blacklist.has(u));
-  if (fresh.length && ctl >= 0) {
-    try {
-      sendMsg(ctl, "L", JSON.stringify(fresh));
-    } catch {}
-  }
   sys.exit(code);
 }
 
@@ -534,7 +544,10 @@ function serveChild(c) {
   }
   applyRequest(req, fds, script);
   sys.close(logFd);
-  exitHook();
+  serving = { dying: false };
+  process.on("uncaughtExceptionMonitor", () => {
+    serving.dying = process.listenerCount("uncaughtException") === 0 && !process.hasUncaughtExceptionCaptureCallback();
+  });
   learning = hooks !== null;
   // As `node script` runs it: CommonJS or ES module, symlinks resolved.
   setImmediate(() => Module.runMain(script));
@@ -647,8 +660,7 @@ function probe(candidates) {
   const accepted = [];
   let refused = null;
   let text = "";
-  const deadline = performance.now() + PROBE_TIMEOUT_MS;
-  while (waitReadable(rd, deadline)) {
+  while (waitReadable(rd, performance.now() + PROBE_STEP_MS)) {
     const b = sys.read(rd, 65536);
     if (typeof b === "number" || b.length === 0) break;
     text += b.toString();
@@ -749,6 +761,10 @@ async function serve(opts) {
   state.blacklist = new Set(cache.blacklist);
   // Kept for the daemon's life: what it learns later loads with it too.
   state.standIn = ttyStandIn(opts.tty ?? "0");
+  // Node loads its bundled root certificates once, in a thread of its own,
+  // under a lock that thread may hold when we fork: a child would then wait
+  // on it forever (firebase). Making a TLS context waits for that load.
+  require("node:tls").createSecureContext();
   if (cache.learned.length) {
     const r = await applyLearned(cache.learned);
     if (r === "child") return null;

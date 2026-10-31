@@ -192,6 +192,20 @@ class Learning(m.Matrix):
         self.assertEqual(outcome(run("native", argv)), outcome(run("hs", argv, require_fast=False)))
 
 
+class ExitWrappers(m.Matrix):
+    def test_exit_through_wrappers(self):
+        # signal-exit (jest) wraps process.emit and process.reallyExit: its
+        # listeners must run, and the child must still end (a forked Node
+        # cannot tear down), whether it calls process.exit() or just ends.
+        for kind in ("code:4", "natural"):
+            with self.subTest(kind=kind):
+                argv, env = ["nodetest", "wrapped-exit", kind], {"NODETEST_WRAPPER": "1"}
+                learn(argv, env)
+                rc, out, _ = self.assertSame(argv, env=env)
+                self.assertEqual(rc, 4 if kind == "code:4" else 3)
+                self.assertIn(b"wrapper saw exit", out)
+
+
 class Randomness(m.Matrix):
     def test_runs_differ(self):
         a = run("hs", ["nodetest", "random"])
