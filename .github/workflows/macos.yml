@@ -1,0 +1,38 @@
+# macOS, Intel and Apple Silicon: the client's unit tests and build, then
+# the Python matrix, the shell and the script suites, with the runner's own
+# Python. The Ruby, PHP and Node daemons are served on Linux only so far.
+name: macos
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read  # the jobs only read the repository
+
+jobs:
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]  # Intel, Apple Silicon
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      HS_BIN: ${{ github.workspace }}/client/target/release/speedrunner
+      HS_PATH: ${{ runner.temp }}/venv-test/bin:${{ runner.temp }}/venv-aws/bin
+    steps:
+      - uses: actions/checkout@v7
+      - run: sw_vers && uname -m && python3 --version && bash --version | head -1
+      - run: cargo test --locked --manifest-path client/Cargo.toml
+      - run: cargo build --locked --release --manifest-path client/Cargo.toml
+      - name: venvs (hstest, awscli v1)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv-test"
+          python3 -m venv "$RUNNER_TEMP/venv-aws"
+          cp -r tests/fixture/hstest "$RUNNER_TEMP/hstest-build"
+          "$RUNNER_TEMP/venv-test/bin/pip" install -q --no-deps "$RUNNER_TEMP/hstest-build"
+          "$RUNNER_TEMP/venv-aws/bin/pip" install -q awscli
+      - run: python3 tests/test_matrix.py -v
+      - run: python3 tests/test_shell.py -v
+      - run: python3 tests/test_scripts.py -v
