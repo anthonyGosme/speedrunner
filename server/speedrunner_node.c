@@ -182,8 +182,11 @@ static napi_value Getppid(napi_env env, napi_callback_info info) { return num(en
 // real one, line by line, until the footer; there it exits with code. On
 // the way, the frames of the daemon's own code (speedrunner_daemon.mjs,
 // and the timers frame that called it) give way to frame, the one a
-// native run ends with. The main thread, if it aborts first, waits for it.
+// native run ends with. If the main thread dies first (an abort, or a
+// crash in the teardown), it closes the pipe and waits for that thread to
+// pass on what is left.
 static int report_fd = -1, real_err = -1, report_code;
+static pthread_t report_thread;
 static char report_footer[64], report_frame[256];
 
 static void write_all(int fd, const char *p, size_t n) {
@@ -230,6 +233,8 @@ static void *copy_report(void *unused) {
 }
 
 static void wait_for_report(int sig) {
+  if (pthread_equal(pthread_self(), report_thread)) _exit(report_code);
+  close(2);
   for (;;) pause();
 }
 
@@ -244,13 +249,13 @@ static napi_value ReportThenExit(napi_env env, napi_callback_info info) {
   dup2(p[1], 2);
   close(p[1]);
   report_fd = p[0];
-  signal(SIGABRT, wait_for_report);
-  pthread_t t;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-  int r = pthread_create(&t, &attr, copy_report, NULL);
+  int r = pthread_create(&report_thread, &attr, copy_report, NULL);
   pthread_attr_destroy(&attr);
+  int fatal[] = {SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP};
+  for (size_t i = 0; i < sizeof fatal / sizeof *fatal; i++) signal(fatal[i], wait_for_report);
   return num(env, -r);
 }
 
