@@ -243,7 +243,9 @@ class CoreFoundation(m.Matrix):
             self.assertEqual(out, b"cf main true\n")
         [skip] = glob.glob(os.path.join(env["XDG_CACHE_HOME"], "speedrunner", "rbcf.skip-*.json"))
         with open(skip) as f:
-            self.assertEqual(list(json.load(f).values()), ["uses CoreFoundation at load"])
+            # A run loop may also start a thread: refused either way.
+            [why] = json.load(f).values()
+            self.assertIn(why, ("uses CoreFoundation at load", "starts a thread at load"))
 
     def test_learned_file_using_it_is_blacklisted(self):
         env = Preload.daemon(self, "1,2")
@@ -252,7 +254,7 @@ class CoreFoundation(m.Matrix):
             self.assertTrue(m.status("rbtest", env).startswith("ready"))
             cache = Preload.cache(self, env)
             [cf] = [f for f in cache["blacklist"] if f.endswith("/rbtest/cf.rb")]
-            self.assertEqual(cache["blacklist"][cf], "uses CoreFoundation at load")
+            self.assertIn(cache["blacklist"][cf], ("uses CoreFoundation at load", "starts a thread at load"))
             self.assertTrue(any(f.endswith("/rbtest/lazy_plain.rb") for f in cache["modules"]))
             for _ in range(3):
                 _, out, _ = self.assertSame(["rbtest", "lazy-cf"], env=env)
