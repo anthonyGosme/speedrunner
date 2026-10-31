@@ -45,12 +45,24 @@ link where your shell finds them: `/usr/local/bin` as root, otherwise
 `~/.local/bin` (added to your PATH in `~/.profile`, `~/.bashrc` and `~/.zshrc`
 if it is not there yet; `SPEEDRUNNER_NO_MODIFY_PATH=1` to leave them alone). Rather not pipe to `sh`? Take the archive and its
 `.sha256` from the [releases](https://github.com/anthonyGosme/speedrunner/releases).
-Or with a package manager:
+Or with a package manager. Homebrew on Linux:
 
 ```bash
-brew install anthonyGosme/speedrunner/speedrunner      # Homebrew on Linux
-sudo apt install ./speedrunner_<version>_amd64.deb      # Debian, Ubuntu: the .deb of a release (arm64 too)
+brew install anthonyGosme/speedrunner/speedrunner
 ```
+
+Debian and Ubuntu (amd64, arm64), from the signed APT repository, so that
+`apt upgrade` brings each release:
+
+```bash
+sudo install -d -m 0755 /etc/apt/keyrings
+sudo curl -fsSLo /etc/apt/keyrings/speedrunner.asc https://anthonygosme.github.io/speedrunner/apt/speedrunner.asc
+sudo curl -fsSLo /etc/apt/sources.list.d/speedrunner.sources https://anthonygosme.github.io/speedrunner/apt/speedrunner.sources
+sudo apt update && sudo apt install speedrunner
+```
+
+The `.sources` entry trusts that key for this repository only. Or, without
+updates, the `.deb` of a release: `sudo apt install ./speedrunner_<version>_amd64.deb`.
 
 On Arch Linux, `makepkg -si` in [packaging/aur](packaging/aur) builds and installs the
 package; it will be on the AUR as `speedrunner-bin` once registration reopens.
