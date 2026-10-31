@@ -146,7 +146,7 @@ class Context(m.Matrix):
         m.wait_ready("rbrun")
         self.addCleanup(m.stop, "rbrun")
         run("hs", ["rbrun", "warm"], require_fast=False)  # may restart the daemon once
-        m.wait_ready("rbrun")
+        m.served_soon(["rbrun", "warm"])
         _, out, _ = self.assertSame(["rbrun", "a", "b"])
         self.assertEqual(out, b'autorun: ["a", "b"]\n')
 
@@ -157,7 +157,7 @@ class Context(m.Matrix):
         m.wait_ready("rbthread")
         self.addCleanup(m.stop, "rbthread")
         run("hs", ["rbthread"], require_fast=False)  # may restart the daemon once
-        m.wait_ready("rbthread")
+        m.served_soon(["rbthread"])
         _, out, _ = self.assertSame(["rbthread"])
         self.assertEqual(out, b"threaded\n")
 

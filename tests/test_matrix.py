@@ -120,6 +120,16 @@ def wait_ready(tool, env=None, timeout=30.0):
         time.sleep(0.1)
 
 
+def served_soon(argv, env=None, timeout=30.0):
+    """Runs argv until the fast path takes it: a daemon that restarts (it
+    skipped a module) may still answer `status` just before it goes."""
+    deadline = time.monotonic() + timeout
+    while run("hs", argv, env=env).returncode == EXIT_NOT_FAST:
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"{argv[0]} never served")
+        time.sleep(0.1)
+
+
 def stop(tool, env=None, timeout=10.0):
     subprocess.run([HS_BIN, "stop", tool], env={**BASE_ENV, **(env or {})}, capture_output=True)
     deadline = time.monotonic() + timeout
@@ -289,7 +299,7 @@ class Context(Matrix):
         wait_ready("hsrun")
         self.addCleanup(stop, "hsrun")
         run("hs", ["hsrun", "warm"], require_fast=False)  # may restart the daemon once
-        wait_ready("hsrun")
+        served_soon(["hsrun", "warm"])
         _, out, _ = self.assertSame(["hsrun", "a", "b"])
         self.assertEqual(out, b"autorun: ['a', 'b']\n")
 
@@ -300,7 +310,7 @@ class Context(Matrix):
         wait_ready("hsthread")
         self.addCleanup(stop, "hsthread")
         run("hs", ["hsthread"], require_fast=False)  # may restart the daemon once
-        wait_ready("hsthread")
+        served_soon(["hsthread"])
         _, out, _ = self.assertSame(["hsthread"])
         self.assertEqual(out, b"threaded\n")
 

@@ -66,8 +66,8 @@ const commands = {
     setTimeout(() => out("done"), Number(seconds) * 1000);
   },
   hold([seconds, marker]) {
+    fs.appendFileSync(marker, "start\n"); // before "ready": the test may kill us then
     out(`ready ${process.pid}`);
-    fs.appendFileSync(marker, "start\n");
     setTimeout(() => fs.appendFileSync(marker, "done\n"), Number(seconds) * 1000);
   },
   lazy() {
