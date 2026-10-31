@@ -12,10 +12,13 @@ Five ways, interleaved per round (RUNS rounds):
   git            a real commit (`git commit -qam`), its hook installed for the
                  language: system config: git runs the hook, which starts
                  pre-commit by Python's absolute path
-  git-exec       the same commit under `speedrunner exec`: pre-commit native,
-                 its hooks through the links
+  git-exec       the same commit under `speedrunner exec`: the hook's
+                 `#!/usr/bin/env bash` reaches the `bash` link next to
+                 pre-commit's, the hook is followed as a launcher and
+                 pre-commit served, its hooks through the links
 Each: wall time (median, min–max), speedup over native with its 95% bootstrap
-interval, and the hooks' verdicts compared with the native run's.
+interval, the hooks' verdicts compared with the native run's, and the whole
+output and exit code with those of the same command run natively (REF).
 
 Build and run (from the repository):
   docker build -t sr-precommit -f bench/precommit/Dockerfile bench
@@ -24,10 +27,13 @@ A client built from the tree instead of the release: add
   -v "$PWD/client/target/docker-linux-amd64/speedrunner:/usr/local/bin/speedrunner:ro"
 Env: RUNS (default 20).
 """
+import glob
 import json
 import os
 import re
+import socket
 import statistics
+import struct
 import subprocess
 import sys
 import time
@@ -50,14 +56,40 @@ WAYS = [
     ("git-exec", ["speedrunner", "exec", "git", "commit", "-qam", "edit"]),
 ]
 VERDICT = re.compile(rb"^(\S+)\.+(Passed|Failed|Skipped)", re.M)
+RUNTIME = "/tmp/run"
+REF = {"srr": "native", "exec": "native", "exec-system": "native-system", "git-exec": "git"}
+
+
+def daemons():
+    """Every daemon's status, by socket: the hook's pre-commit daemon too,
+    which `speedrunner status pre-commit` does not reach (that is the
+    pre-commit script's)."""
+    out = {}
+    for sock in sorted(glob.glob(os.path.join(RUNTIME, "speedrunner", "*.sock"))):
+        data = b""
+        try:
+            with socket.socket(socket.AF_UNIX) as s:
+                s.settimeout(5)
+                s.connect(sock)
+                s.sendall(b"HS1P" + struct.pack("<I", 0))
+                # The reply: its kind, its length (u32), then its text.
+                while len(data) < 5 or len(data) < 5 + struct.unpack("<I", data[1:5])[0]:
+                    chunk = s.recv(4096)
+                    if not chunk:
+                        break
+                    data += chunk
+        except OSError as e:
+            data = b"\0" * 5 + f"error: {e}".encode()
+        out[os.path.basename(sock)] = data[5:].decode(errors="replace")
+    return out
 
 
 def main():
     out = sys.argv[1]
     runs = int(os.environ.get("RUNS", "20"))
     os.makedirs(out, exist_ok=True)
-    os.environ["XDG_RUNTIME_DIR"] = "/tmp/run"
-    os.makedirs("/tmp/run", mode=0o700, exist_ok=True)
+    os.environ["XDG_RUNTIME_DIR"] = RUNTIME
+    os.makedirs(RUNTIME, mode=0o700, exist_ok=True)
     with open(os.path.join(PROJECT, EDITED)) as f:
         original = f.read()
     edits = [0]
@@ -89,11 +121,11 @@ def main():
             run(argv)
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
-        texts = [run(["speedrunner", "status", t]).stdout.decode().strip() for t in TOOLS]
+        texts = list(daemons().values())
         if all(t.startswith("ready") and " learning=" not in t for t in texts):
             break
         time.sleep(1)
-    status = {t: run(["speedrunner", "status", t]).stdout.decode().strip() for t in TOOLS}
+    status = daemons()
 
     verdicts, outputs = {}, {}
     for name, argv in WAYS:
@@ -115,7 +147,8 @@ def main():
                         "speedup": round(statistics.median(native) / statistics.median(t), 2),
                         "ci95": speedup_ci(native, t), "rc": outputs[name]["rc"],
                         "verdicts": verdicts[name],
-                        "same_verdicts": verdicts[name] == verdicts["native"]})
+                        "same_verdicts": verdicts[name] == verdicts["native"],
+                        "same_output": outputs[name] == outputs[REF.get(name, name)]})
     versions = {t: run([t, "--version-number" if t == "isort" else "--version"]).stdout.decode().strip().splitlines()[0]
                 for t in TOOLS}
     with open(os.path.join(out, "compare.json"), "w") as f:
@@ -124,11 +157,12 @@ def main():
     lines = [f"`pre-commit run --files {EDITED}`, or a commit of it, the file changed before every call; wall time in ms, "
              f"median (min–max) over {runs} interleaved rounds; speedup over native = ratio of the "
              "medians (95% bootstrap interval).", "",
-             "| Way | Command | Time | Speedup | Same verdicts |", "|---|---|---:|---:|---|"]
+             "| Way | Command | Time | Speedup | Same verdicts | Same output |", "|---|---|---:|---:|---|---|"]
     for r in results:
         s, ci = r["times"], r["ci95"]
         lines.append(f"| {r['way']} | `{' '.join(r['argv'])}` | {s['median']} ({s['min']}–{s['max']}) "
-                     f"| x{r['speedup']} (x{ci[0]}–x{ci[1]}) | {'yes' if r['same_verdicts'] else 'NO'} |")
+                     f"| x{r['speedup']} (x{ci[0]}–x{ci[1]}) | {'yes' if r['same_verdicts'] else 'NO'} "
+                     f"| {'yes' if r['same_output'] else 'NO'} |")
     lines += ["", "Verdicts (native): " + ", ".join(f"{h} {v}" for h, v in verdicts["native"]),
               "Versions: " + "; ".join(f"{k}: {v}" for k, v in versions.items())]
     with open(os.path.join(out, "summary.md"), "w") as f:

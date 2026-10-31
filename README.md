@@ -16,6 +16,9 @@ each call starts with them already done.
   5.3 s with `speedrunner exec`, its daemons warm: x4.5, same output (2-vCPU VPS).
 - **An editor's save.** eslint on one file: 328 → 43 ms; mypy: 213 → 50 ms. Faster than the tools'
   own daemons, eslint_d and dmypy ([below](#against-the-tools-own-daemons)).
+- **A commit.** pre-commit with black, isort, flake8 and mypy on a changed file: 1.11 → 0.31 s with
+  `speedrunner exec git commit`, same output (hooks declared `language: system`;
+  [details](bench/results/20261031T214045Z-precommit-hook-docker/ANALYSE.md)).
 - **Never run twice.** Until a call has started, any problem sends it to the real tool, natively.
   Once it has started, speedrunner never runs it again, whatever dies.
 - **Same output.** Identical to the native run on all 96 commands measured below; what speedrunner
@@ -256,11 +259,13 @@ starts the daemon as you type the tool's name, so that even the first call is fa
 `aws s3 ls` on a slow link), for tools that start threads as they load (vite), and for native binaries:
 there is nothing to preload.
 
-**pre-commit, git hooks?** speedrunner serves what goes through it: `srr`, the wrappers, or the links
-`speedrunner exec` puts at the head of PATH. pre-commit's default hooks run from environments of its own,
-by absolute path, so only pre-commit itself gains (x1.2). Declare the hooks `language: system` and commit
-with `speedrunner exec git commit`: black, isort, flake8 and mypy on a changed file, 1.12 s → 0.49 s
-([details](bench/results/20261031T185251Z-precommit-docker/ANALYSE.md)).
+**pre-commit, git hooks?** Commit with `speedrunner exec git commit`. git runs pre-commit's hook by its
+path, but the hook's `#!/usr/bin/env bash` looks bash up on PATH: next to pre-commit's link, `exec` puts a
+`bash` link that recognises pre-commit's hook and serves pre-commit itself; any other bash call goes
+straight to the real bash. pre-commit's default hooks run from environments of its own, by absolute path,
+so they stay native. Declare them `language: system` and they are served too: black, isort, flake8 and
+mypy on a changed file, 1.11 s → 0.31 s per commit, same output
+([details](bench/results/20261031T214045Z-precommit-hook-docker/ANALYSE.md), in French).
 
 **Node?** Supported since 0.3, as experimental. To fork V8, the daemon runs Node single-threaded
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
