@@ -118,17 +118,36 @@ def received_fds(fds):
 
 
 def peer_creds(conn):
-    """(uid, gid) of the process at the other end of a Unix socket."""
+    """(uid, gid, groups) of the process at the other end of a Unix socket;
+    groups None on Linux, where the request's are compared with ours."""
     if MACOS:
         # struct xucred: u_int version; uid_t uid; short ngroups; gid_t groups[16],
         # groups[0] the effective gid. Level SOL_LOCAL is 0.
         data = conn.getsockopt(0, socket.LOCAL_PEERCRED, 76)
         (uid,) = struct.unpack_from("<I", data, 4)
-        (gid,) = struct.unpack_from("<I", data, 12)
-        return uid, gid
+        (ngroups,) = struct.unpack_from("<h", data, 8)
+        groups = struct.unpack_from(f"<{max(0, min(ngroups, 16))}I", data, 12)
+        return uid, groups[0] if groups else -1, groups
     creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
     _pid, uid, gid = struct.unpack("3i", creds)
-    return uid, gid
+    return uid, gid, None
+
+
+_OWN_GROUPS = []
+
+
+def own_groups():
+    """Our supplementary groups as the kernel has them. On macOS,
+    os.getgroups() gives the user's (resolved anew, more than 16), which a
+    peer's credentials do not: ours are read the way a peer's are, over a
+    socketpair."""
+    if not MACOS:
+        return os.getgroups()
+    if not _OWN_GROUPS:
+        a, b = socket.socketpair()
+        with a, b:
+            _OWN_GROUPS.append(peer_creds(a)[2])
+    return _OWN_GROUPS[0]
 
 
 def native_thread_count():
@@ -1197,14 +1216,15 @@ def names_entry(state, argv, cwd_fd):
     return bool(argv) and names_script(state, os.fsdecode(argv[0]), cwd_fd)
 
 
-def why_not_fast(state, req, peer_gid, fds):
+def why_not_fast(state, req, peer_gid, fds, peer_groups=None):
     if state.disabled:
         return state.disabled
     if not names_entry(state, req.argv, fds[3]):
         return "script path mismatch"
     if is_stale(state):
         return "stale: installed files changed"
-    if peer_gid != os.getgid() or sorted(set(req.groups)) != sorted(set(os.getgroups())):
+    groups = req.groups if peer_groups is None else peer_groups
+    if peer_gid != os.getgid() or sorted(set(groups)) != sorted(set(own_groups())):
         return "credentials differ from the daemon's"
     client, daemon = startup_env(req.env), startup_env(state.start_env)
     for key in sorted(set(client) | set(daemon)):
@@ -1537,7 +1557,7 @@ def serve_child(state, conn):
     """Serve one accepted connection. Returns the tool's exit code, or never returns."""
     try:
         conn.settimeout(HANDSHAKE_TIMEOUT_S)
-        uid, gid = peer_creds(conn)
+        uid, gid, groups = peer_creds(conn)
         if uid != os.getuid():
             os._exit(0)
         try:
@@ -1561,7 +1581,7 @@ def serve_child(state, conn):
         if len(fds) not in (N_FDS - 1, N_FDS):
             send_msg(conn, b"N", b"missing file descriptors")
             os._exit(0)
-        reason = why_not_fast(state, req, gid, fds)
+        reason = why_not_fast(state, req, gid, fds, groups)
         if reason:
             if reason.startswith("stale"):
                 mark_exiting(state)  # before the client starts a fresh daemon

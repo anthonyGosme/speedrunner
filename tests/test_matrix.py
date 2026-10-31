@@ -1333,6 +1333,8 @@ class Distribution(Matrix):
         env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache")}
         os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
         self.addCleanup(stop, "aws", env)
+        if MACOS:  # not a CI runner's /usr/local/bin, and its dozens of tools
+            env["PATH"] = f"{os.environ['HS_PATH']}:/usr/bin:/bin"
         p = subprocess.run([HS_BIN, "demo", "--runs", "1"], capture_output=True, timeout=300,
                            env={**BASE_ENV, **env})
         self.assertEqual(p.returncode, 0, p.stderr)
