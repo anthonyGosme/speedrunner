@@ -24,12 +24,12 @@ mkdir -p "$logs"
 
 # target | dockerfile | build args | run options | suites
 TARGETS=(
-  "debian|docker/Dockerfile|||suites matrix shell scripts ruby php"
+  "debian|docker/Dockerfile|||suites matrix shell scripts ruby php install docs"
   "ubuntu-24.04|docker/Dockerfile.ubuntu|UBUNTU=24.04||suites matrix shell scripts ruby php"
   "ubuntu-22.04|docker/Dockerfile.ubuntu|UBUNTU=22.04||suites matrix shell scripts ruby php"
   "alpine|docker/Dockerfile.alpine|||suites matrix shell scripts ruby php"
   "fedora|docker/Dockerfile.fedora|||suites matrix shell scripts ruby php"
-  "non-root|docker/Dockerfile.ubuntu|UBUNTU=24.04|--user 1000:1000 -e HOME=/tmp|suites matrix scripts ruby php"
+  "non-root|docker/Dockerfile.ubuntu|UBUNTU=24.04|--user 1000:1000 -e HOME=/tmp|suites matrix scripts ruby php install"
   "no-ptrace|docker/Dockerfile.ubuntu|UBUNTU=24.04|--security-opt seccomp=docker/no-ptrace.json|suites matrix"
 )
 for v in 3.9 3.10 3.11 3.12 3.13 3.14; do TARGETS+=("py$v|docker/lang/python.Dockerfile|VERSION=$v||suites matrix scripts"); done
@@ -98,7 +98,7 @@ wait
 
 # One row per target: each suite's result, from its "== suite" block.
 failed=0
-printf "%-14s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" target matrix shell scripts ruby php node stress
+printf "%-14s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s %-8s\n" target matrix shell scripts ruby php node stress install docs
 for t in "${selected[@]}"; do
   IFS='|' read -r name _ <<< "$t"
   log=$logs/$name.log
@@ -106,7 +106,7 @@ for t in "${selected[@]}"; do
 import re, sys
 text = open(sys.argv[1], errors="replace").read()
 cells = []
-for suite in ("matrix", "shell", "scripts", "ruby", "php", "node", "stress"):
+for suite in ("matrix", "shell", "scripts", "ruby", "php", "node", "stress", "install", "docs"):
     m = re.search(rf"^== {suite}\n(.*?)(?=^== |\Z)", text, re.S | re.M)
     if not m:
         cells.append("-")

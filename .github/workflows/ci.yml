@@ -18,6 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: cargo test --locked --manifest-path client/Cargo.toml
+      - run: python3 tests/test_docs.py -v  # the guide against the code, and every link
 
   shellcheck:  # install.sh, which users pipe to sh, and the scripts CI runs
     runs-on: ubuntu-24.04

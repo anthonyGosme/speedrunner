@@ -8,7 +8,8 @@
 #   docker run --rm -t -v "$PWD:/src" IMAGE suites matrix ruby      # some of them
 #   docker run --rm -t -v "$PWD:/src" speedrunner-dev <command>    # anything
 #
-# Suites: matrix, shell, scripts (Python), ruby, php, node, stress (races). SR_ROOT: where the
+# Suites: matrix, shell, scripts (Python), ruby, php, node, stress (races), install
+# (install.sh), docs (the guide against the code). SR_ROOT: where the
 # venvs and gems are (default /root/speedrunner).
 set -euo pipefail
 root=${SR_ROOT:-/root/speedrunner} repo=${SR_ROOT:-/root/speedrunner}/repo
@@ -44,6 +45,8 @@ run_suite() {
     case $1 in
         matrix|shell|scripts)
             HS_BIN=$B HS_PATH=$P python3 "tests/test_$1.py" ;;
+        install|docs)
+            HS_BIN=$B python3 "tests/test_$1.py" ;;
         ruby)
             RB_GEM_HOME=$root/gems-rbtest HS_BIN=$B HS_PATH=$root/gems-rbtest/bin:$P \
                 python3 tests/test_ruby.py ;;
@@ -79,7 +82,7 @@ suite() {
 
 status=0
 case "${1:-}" in
-    tests) set -- suites matrix shell scripts ruby php ;;
+    tests) set -- suites matrix shell scripts ruby php install docs ;;
 esac
 if [ "${1:-}" = suites ]; then
     shift

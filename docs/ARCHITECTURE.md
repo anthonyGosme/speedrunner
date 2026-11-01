@@ -33,6 +33,8 @@ tests/
   test_node.py            Node matrix (nodetest, nodetty)
   test_stress.py          races: parallel calls while daemons stop, die, go stale
   test_scripts.py         activate, exec, automatic mode, pre-commit hook
+  test_install.py         install.sh from a release built here, and the guide's uninstall
+  test_docs.py            the user guide against the code; every link and anchor
   fixture/hstest/         Python test tool: one subcommand per behaviour
   fixture/rbtest/         Ruby test tool: a gem with a real binstub
   fixture/phptest/        PHP test tool, a plain script, no installation
@@ -304,12 +306,14 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
   - `Concurrency`: 10 calls in parallel, warm and cold;
   - `ScriptPrefix`: `srr`;
   - `RelativeScript`: `./manage.py`;
-  - `Launchers`: shell and Python launchers, `-m module`, `sys.path` entries added by the tool, without ptrace;
+  - `Launchers`: shell and Python launchers, `-m module`, `sys.path` entries added by the tool, without ptrace, named to `exec` and `activate`;
   - `CoreFoundation`: the macOS canary (macOS only);
   - `Distribution`: the lone binary and its embedded daemons, `demo`, `init`;
   - `tests/test_scripts.py`: `activate`, `exec`, automatic mode, pre-commit's git hook;
   - `Failures`: daemon, child or client killed, module modified in place;
-  - `Security`: runtime directory too open or owned by another UID, socket served by another UID;
+  - `Security`: runtime directory too open or owned by another UID, socket served by another UID, runtime directory too deep for a socket path;
+  - `tests/test_install.py`: `install.sh` from a release built here (`SPEEDRUNNER_BASE_URL=file://…`): user install, `~/bin` already on `PATH`, `SPEEDRUNNER_BIN_DIR`, a second run, a bad checksum, the guide's uninstall;
+  - `tests/test_docs.py`: every `SPEEDRUNNER_*` variable and subcommand in the code is in `docs/GUIDE.md` and the reverse, every relative link and anchor resolves (no client needed: the CI's `unit` job);
   - `Interactive`: `input`, getpass with redirected stdin, `aws configure`.
 - **Security**: only the machine's other users are attackers. Client side (`Security` class of `test_matrix.py`, valid for every runtime): runtime directory too open or owned by another uid, socket served by another uid, a symlink in place of the `/tmp/speedrunner-<uid>` fallback. Daemon side (`Security` class of each suite, Python, Ruby, PHP and Node): a peer of another uid gets no answer (the test connects with effective uid 65534, which `SO_PEERCRED` reports, but filesystem uid 0, to get through the 0700 directory); started by hand with a real daemon's command line and env, but a socket in a wrong directory, the daemon refuses to start. Tests that change uid need root; the `non-root` target skips them.
 - **Races**: `tests/test_stress.py`. For `STRESS_SECONDS` (90 s by default), `STRESS_WORKERS` threads (8) call in parallel the test tools of each installed runtime, on a terminal or not, with commands that learn, fail or print. Meanwhile, a disrupter stops the daemons, kills them (`kill -9`) or touches their scripts to make them stale. Every call must finish, exit as natively (a native fallback is allowed), never exit with 125 (except on `kill -9` of a PHP daemon, where only its W reports the end) and run only once (one marker per call). `docker/test-all.sh stress stress-node`, with a terminal attached; the CI's `stress` job, 120 s per target. `STRESS_SEED` replays a draw.
@@ -411,7 +415,7 @@ A release is a single file: the client embeds the four daemons, the Node addon a
 - **Fake servers in tests.** A process forked from the test runner must end with `os._exit` whatever happens, otherwise it runs the rest of the suite in parallel. A fake server that writes to a client that is gone dies of `BrokenPipe`. Either way, you get a ghost daemon.
 - **macOS, `/dev/tty`.** On BSD, an fd opened on `/dev/tty` refers to the controlling terminal of *whoever uses it*: in the child, which has none, getpass failed with EIO. The client passes the device itself (`/dev/ttys003`). Found by the `Interactive` class.
 - **macOS, `os.set_inheritable`** goes through `ioctl(FIOCLEX)`, which fails with EBADF on an fd opened with `O_SEARCH` (the cwd received from the client): every child failed before answering. The daemon uses `fcntl(F_SETFD)`.
-- **macOS, socket paths**: 104 bytes at most (108 on Linux), and macOS's temporary directory (`/var/folders/…/T/`) is deep. The default runtime directory, `/tmp/speedrunner-<uid>`, is short; the tests create their directories under `/tmp`. A path that is too long sends the call native.
+- **macOS, socket paths**: 104 bytes at most (108 on Linux), and macOS's temporary directory (`/var/folders/…/T/`) is deep. The default runtime directory, `/tmp/speedrunner-<uid>`, is short; the tests create their directories under `/tmp`. Under a deeper `$XDG_RUNTIME_DIR`, the Python daemon still bound its socket (relative to its directory), but no client could connect: every call ran natively, and the daemon stayed up until its idle timeout. The client now puts a socket whose path would not fit in `/tmp/speedrunner-<uid>` instead (`Security.test_runtime_dir_too_deep_for_a_socket`).
 - **macOS, the canary and threads.** After proxy detection (3 threads), the CoreFoundation canary passes on the Intel: in a process that has threads, it proves nothing. So the probe checks threads first.
 - **macOS, `fcntl` through FFI.** PHP declared it `int fcntl(int, int, int)`; it is variadic, and on Apple's arm64 its variadic arguments are passed on the stack: every spare died ("spare children keep dying"), on both runners. Declared `int fcntl(int, int, ...)` on macOS.
 - **Signal numbers differ** between Linux and macOS (SIGCHLD is 17 or 20; 17 is SIGSTOP on macOS). The Node daemon hard-coded them: on macOS its self-pipe was not installed and it saw no child end, which went unnoticed as long as the child sends its X; a child that does `execve` (TypeScript 7's tsc) left its client waiting. Signals by name; a self-pipe that cannot be set up disables the daemon. Test `test_execve`.

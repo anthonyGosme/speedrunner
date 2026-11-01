@@ -64,6 +64,7 @@ jobs:
       - run: python3 tests/test_matrix.py -v
       - run: python3 tests/test_shell.py -v
       - run: python3 tests/test_scripts.py -v
+      - run: python3 tests/test_install.py -v
       - run: ruby --version && python3 tests/test_ruby.py -v
         env:
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}

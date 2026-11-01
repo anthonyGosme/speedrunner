@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-venv python3-dev ruby ruby-dev build-essential \
         php8.2-cli php8.2-xml php8.2-mbstring php8.2-curl php8.2-zip php8.2-sqlite3 \
         composer phpunit php-codesniffer \
-        cargo rustc zsh hyperfine procps rsync git ca-certificates unzip \
+        cargo rustc zsh hyperfine procps rsync git ca-certificates unzip curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root/speedrunner
