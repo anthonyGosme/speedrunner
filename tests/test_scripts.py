@@ -313,6 +313,9 @@ class PreCommitHook(ScriptCase):
         with open(os.path.join(bindir, "pre-commit"), "w") as f:
             f.write(f"#!{python}\nimport sys\nsys.exit('not this one')\n")
         os.chmod(os.path.join(bindir, "pre-commit"), 0o755)
+        # `exec -t pre-commit` starts its daemon and goes on: one still
+        # starting has no socket yet, and `stop` waits for it.
+        self.addCleanup(m.stop, "pre-commit", self.env)
         self.repo = os.path.join(self.root, "repo")
         os.makedirs(self.repo)
         self.env.update({"PATH": bindir + ":" + m.BASE_ENV["PATH"],
