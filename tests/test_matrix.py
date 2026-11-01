@@ -915,6 +915,22 @@ class Preload(Matrix):
         finally:
             stop("hstest", env)
 
+    def test_tool_called_by_its_path(self):
+        # The daemon's files go to the cache, named after the tool, not next
+        # to the script: its directory is in the fingerprint, and a file
+        # written there made every daemon stale as soon as it had learned.
+        path = shutil.which("hstest", path=BASE_ENV["PATH"])
+        before = sorted(os.listdir(os.path.dirname(path)))
+        env = self.daemon(path, "1,2")
+        try:
+            self.learn(path, env, [[path, "lazy"]])
+            self.assertIn("hstest.lazy_plain", self.cache(env, "hstest")["modules"])
+            self.assertEqual(sorted(os.listdir(os.path.dirname(path))), before)
+            self.assertSame([path, "lazy"], env=env)
+            self.assertSame([path, "lazy"], env=env)
+        finally:
+            stop(path, env)
+
     def test_learned_set_survives_restart(self):
         env = self.daemon("hstest", "1,2")
         try:

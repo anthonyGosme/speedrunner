@@ -221,7 +221,7 @@ Control socket parent ↔ child: `A` (+ client fd: "I accepted"), `L(json)` ("he
 | 3 | botocore files parsed ahead | Wraps `botocore.loaders.JSONFileLoader._load_file`. A child takes each entry at most once, and only if the `stat` matches. Same debug message as natively. LRU budget of 16 MB of source JSON (`SPEEDRUNNER_MEMO_MB`). Active only if botocore is already imported. |
 | 4 | driver snapshot (stage 4 bis) | not started |
 
-Persistence: `$XDG_CACHE_HOME/speedrunner/<tool>-<sha256 of the fingerprint>.json` = `{"modules", "paths", "blacklist", "files"}`, reloaded at startup. A modified installation changes the fingerprint, hence the cache file.
+Persistence: `$XDG_CACHE_HOME/speedrunner/<tool>-<sha256 of the fingerprint>.json` = `{"modules", "paths", "blacklist", "files"}`, reloaded at startup. A modified installation changes the fingerprint, hence the cache file. `<tool>` is the script's file name, also for a tool called by its path (`srr ./bin/aws`): before 0.4.2, the client passed the path itself, and the file landed next to the script, in a directory the fingerprint covers, which made every daemon stale as soon as it had learned.
 
 Before each fork, `gc.freeze()`: the child's GC does not walk the inherited heap, and so does not copy its pages.
 
@@ -302,7 +302,7 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
 - Matrix classes:
   - `OutputsAndExitCodes`, `Terminal`, `Signals`, `Context`, `Randomness`, `Teardown`, `NoLocale`: fidelity;
   - `FailOpen`: native fallback;
-  - `Preload`: each level, learning, blacklist, modified botocore file;
+  - `Preload`: each level, learning, blacklist, modified botocore file, a tool called by its path;
   - `Concurrency`: 10 calls in parallel, warm and cold;
   - `ScriptPrefix`: `srr`;
   - `RelativeScript`: `./manage.py`;

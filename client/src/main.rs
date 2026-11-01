@@ -1351,8 +1351,10 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
         }
     }
     argv.push(cstring(&daemon));
-    // For `php script`, the daemon is the script's: name it after it.
-    let tool_name = if tool.form.is_some() { basename(&tool.path) } else { tool.name.as_bytes() };
+    // For `php script`, the daemon is the script's: name it after it. A tool
+    // called by its path (`srr ./bin/aws`) is named after the file: the
+    // daemons build their cache files from this name.
+    let tool_name = basename(if tool.form.is_some() { &tool.path } else { tool.name.as_bytes() });
     let entry = if tool.target.as_ref().map_or(false, |t| t.module.is_some()) { "--module" } else { "--script" };
     for (k, v) in [("--tool", tool_name), (entry, &tool.path[..]),
                    ("--socket", tool.sock.as_os_str().as_bytes()), ("--lock-fd", b"3"),
