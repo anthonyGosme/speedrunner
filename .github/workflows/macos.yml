@@ -1,7 +1,6 @@
 # macOS, Intel and Apple Silicon: the client's unit tests and build, then
 # the Python matrix, the shell, script, Ruby and stress suites, with the
-# runner's own Python and Ruby, and PHP in a job of its own. The Node daemon
-# is served on Linux only.
+# runner's own Python, Ruby and Node, and PHP in a job of its own.
 name: macos
 
 on:
@@ -47,10 +46,13 @@ jobs:
       - run: ruby --version && python3 tests/test_ruby.py -v
         env:
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
+      - run: node --version && python3 tests/test_node.py -v
+        env:
+          HS_PATH: ${{ github.workspace }}/tests/fixture/nodetest/bin:${{ env.HS_PATH }}
       - run: python3 tests/test_stress.py -v
         env:
           STRESS_SECONDS: 60
-          HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
+          HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ github.workspace }}/tests/fixture/nodetest/bin:${{ env.HS_PATH }}
 
   php:  # 8.4: PHP 8.5 registers argv whatever register_argc_argv says (daemon off)
     strategy:
