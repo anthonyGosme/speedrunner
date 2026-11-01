@@ -50,7 +50,7 @@ link where your shell finds them: `/usr/local/bin` as root, otherwise
 `~/.local/bin` (added to your PATH in `~/.profile`, `~/.bashrc` and `~/.zshrc`
 if it is not there yet; `SPEEDRUNNER_NO_MODIFY_PATH=1` to leave them alone). Rather not pipe to `sh`? Take the archive and its
 `.sha256` from the [releases](https://github.com/anthonyGosme/speedrunner/releases).
-Or with a package manager. Homebrew on Linux:
+Or with a package manager. Homebrew, on Linux and, from the release after 0.3.2, macOS:
 
 ```bash
 brew install anthonyGosme/speedrunner/speedrunner
