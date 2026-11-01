@@ -48,6 +48,10 @@ jobs:
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
       - run: |  # wherever the image keeps node, which the tests' PATH must have
           echo "NODE_PATH_DIRS=$PWD/tests/fixture/nodetest/bin:$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
+      - name: which node, built how (frame names differ without a code cache)
+        run: |
+          command -v node && node -p "process.execPath + ' ' + JSON.stringify(process.config.variables.node_use_node_code_cache) + ' ' + JSON.stringify(process.config.variables.node_use_node_snapshot)"
+          for flag in "" --no-lazy; do node $flag tests/fixture/nodetest/bin/nodetest exit throw 2>&1 | grep -E "extensions|Object\.\.js" || true; done
       - run: node --version && python3 tests/test_node.py -v
         env:
           HS_PATH: ${{ env.NODE_PATH_DIRS }}:${{ env.HS_PATH }}
