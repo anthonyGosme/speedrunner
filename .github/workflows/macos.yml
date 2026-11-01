@@ -46,13 +46,15 @@ jobs:
       - run: ruby --version && python3 tests/test_ruby.py -v
         env:
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
+      - run: |  # wherever the image keeps node, which the tests' PATH must have
+          echo "NODE_PATH_DIRS=$PWD/tests/fixture/nodetest/bin:$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
       - run: node --version && python3 tests/test_node.py -v
         env:
-          HS_PATH: ${{ github.workspace }}/tests/fixture/nodetest/bin:${{ env.HS_PATH }}
+          HS_PATH: ${{ env.NODE_PATH_DIRS }}:${{ env.HS_PATH }}
       - run: python3 tests/test_stress.py -v
         env:
           STRESS_SECONDS: 60
-          HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ github.workspace }}/tests/fixture/nodetest/bin:${{ env.HS_PATH }}
+          HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.NODE_PATH_DIRS }}:${{ env.HS_PATH }}
 
   php:  # 8.4: PHP 8.5 registers argv whatever register_argc_argv says (daemon off)
     strategy:
