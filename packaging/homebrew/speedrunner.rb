@@ -1,5 +1,6 @@
 # The formula of the anthonyGosme/homebrew-speedrunner tap: the release's
-# static Linux binary, as packaging/update.sh sets version and sums.
+# static Linux binary, or its universal macOS one, as packaging/update.sh
+# writes it.
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"

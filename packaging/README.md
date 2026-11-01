@@ -13,9 +13,11 @@ All of them ship the release's static binary, unchanged.
   static), amd64 and arm64; older versions stay installable
   (`apt install speedrunner=0.3.2`). Installing it: the README.
 - **AUR** (`speedrunner-bin`): `aur/PKGBUILD` and `aur/.SRCINFO`.
-- **Homebrew on Linux**: `homebrew/speedrunner.rb`, the formula of the tap
+- **Homebrew, on macOS and Linux**: `homebrew/speedrunner.rb`, the formula of the tap
   [anthonyGosme/homebrew-speedrunner](https://github.com/anthonyGosme/homebrew-speedrunner)
   (published): `brew install anthonyGosme/speedrunner/speedrunner`.
+  `update.sh` writes it whole: with the universal macOS archive when the
+  release has one (after 0.3.2), else for Linux only.
 
 ## At each release
 
@@ -25,7 +27,8 @@ hand from the Actions tab or with `gh workflow run`.
 - **`packages.yml`** (`-f version=0.3.2`): `update.sh <version>`, then
   pushes the formula to the tap if it changed, checks
   `brew install anthonyGosme/speedrunner/speedrunner` in Linuxbrew
-  (`homebrew/brew`), with `brew test`, and opens a pull request that brings
+  (`homebrew/brew`) and on macOS (Intel and Apple Silicon runners), with
+  `brew test`, and opens a pull request that brings
   `packaging/` (the formula, the AUR files) to that version on main, rather
   than committing to main itself.
 - **`apt.yml`**: rebuilds the APT repository from the .deb files of every
@@ -129,4 +132,8 @@ gh workflow run packages.yml -R anthonyGosme/speedrunner -f version=0.3.2   # th
   `brew style`, uninstalled, with Linuxbrew. `packages.yml`'s steps against
   a local copy of the tap: 0.3.2 left unchanged, 0.3.1 pushed,
   `brew install`, then 0.3.2 pushed and `brew upgrade`; its `brew` check
-  as written, against the published tap.
+  as written, against the published tap. On macOS (Intel, macOS 26): the
+  formula `update.sh` writes from a local universal archive, installed from
+  a local tap, `brew test`, `brew audit --strict`, `brew style`,
+  uninstalled; for 0.3.2 (no macOS archive) it writes the Linux formula
+  unchanged.
