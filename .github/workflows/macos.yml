@@ -1,17 +1,32 @@
-# macOS, Intel and Apple Silicon: the client's unit tests and build, then
-# the Python matrix, the shell, script, Ruby and stress suites, with the
-# runner's own Python, Ruby and Node, and PHP in a job of its own.
+# macOS, Intel and Apple Silicon: the universal client, as release.yml
+# publishes it, built once; then on each runner the client's unit tests, the
+# Python matrix, the shell, script, Ruby and stress suites, with the runner's
+# own Python and Ruby and the Node of nodejs.org, and PHP in a job of its own.
+# Also before every release (release.yml).
 name: macos
 
 on:
   push:
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read  # the jobs only read the repository
 
 jobs:
+  universal:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - run: client/macos-universal.sh universal/speedrunner
+      - uses: actions/upload-artifact@v7
+        with:
+          name: speedrunner-macos-universal
+          path: universal/speedrunner
+
   python:
+    needs: universal
     strategy:
       fail-fast: false
       matrix:
@@ -24,7 +39,14 @@ jobs:
       - uses: actions/checkout@v7
       - run: sw_vers && uname -m && python3 --version && bash --version | head -1
       - run: cargo test --locked --manifest-path client/Cargo.toml
-      - run: cargo build --locked --release --manifest-path client/Cargo.toml
+      - uses: actions/download-artifact@v8
+        with:
+          name: speedrunner-macos-universal
+          path: ${{ runner.temp }}/bin
+      - run: |  # artifacts lose the mode bits
+          chmod +x "$RUNNER_TEMP/bin/speedrunner"
+          "$RUNNER_TEMP/bin/speedrunner" --version
+          echo "HS_BIN=$RUNNER_TEMP/bin/speedrunner" >> "$GITHUB_ENV"
       - name: venvs (hstest, awscli v1)
         run: |
           python3 -m venv "$RUNNER_TEMP/venv-test"
@@ -32,7 +54,6 @@ jobs:
           cp -r tests/fixture/hstest "$RUNNER_TEMP/hstest-build"
           "$RUNNER_TEMP/venv-test/bin/pip" install -q --no-deps "$RUNNER_TEMP/hstest-build"
           "$RUNNER_TEMP/venv-aws/bin/pip" install -q awscli
-          echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
           echo "HS_PATH=$RUNNER_TEMP/venv-test/bin:$RUNNER_TEMP/venv-aws/bin" >> "$GITHUB_ENV"
       - name: rbtest gem
         run: |
@@ -69,6 +90,7 @@ jobs:
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.NODE_PATH_DIRS }}:${{ env.HS_PATH }}
 
   php:  # 8.4: PHP 8.5 registers argv whatever register_argc_argv says (daemon off)
+    needs: universal
     strategy:
       fail-fast: false
       matrix:
@@ -79,9 +101,15 @@ jobs:
       - uses: actions/checkout@v7
       - run: brew install php@8.4 && echo "$(brew --prefix php@8.4)/bin" >> "$GITHUB_PATH"
       - run: php -v && php -m | grep -iE '^(ffi|pcntl|posix|zend opcache)$'
-      - run: cargo build --locked --release --manifest-path client/Cargo.toml
+      - uses: actions/download-artifact@v8
+        with:
+          name: speedrunner-macos-universal
+          path: ${{ runner.temp }}/bin
+      - run: |  # artifacts lose the mode bits
+          chmod +x "$RUNNER_TEMP/bin/speedrunner"
+          "$RUNNER_TEMP/bin/speedrunner" --version
+          echo "HS_BIN=$RUNNER_TEMP/bin/speedrunner" >> "$GITHUB_ENV"
       - run: |
-          echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
           echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(brew --prefix php@8.4)/bin" >> "$GITHUB_ENV"
       - run: python3 tests/test_php.py -v
       - name: warm bench, indicative on a shared runner

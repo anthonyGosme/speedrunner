@@ -16,6 +16,8 @@ fn main() {
     println!("cargo:rerun-if-changed={}", src);
     println!("cargo:rerun-if-env-changed=SPEEDRUNNER_NODE_ADDONS");
     println!("cargo:rerun-if-env-changed=NODE_ADDON_CC");
+    // cc reads it, as rustc does: the addon runs wherever the client does.
+    println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
     let given = env::var_os("SPEEDRUNNER_NODE_ADDONS");
     let os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let linux = os == "linux";
