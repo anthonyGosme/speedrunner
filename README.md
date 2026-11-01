@@ -274,7 +274,7 @@ mypy on a changed file, 1.11 s → 0.31 s per commit, same output
 learn what a tool loads.
 
 **macOS, Windows?** macOS 11 or later, Intel and Apple Silicon, from the release after 0.3.2: one universal
-binary, which `install.sh` picks. Python, Ruby, PHP up to 8.4 and Node are served; on macOS, launchers (az, gcloud) run natively, and the bash
+binary, which `install.sh` picks. Python, Ruby, PHP and Node are served, launchers (az, gcloud) followed; the bash
 hook needs bash 4.2 or later (zsh, the default shell, has no such limit). Linux: x86_64 or aarch64, any
 distribution. Windows: not planned.
 
