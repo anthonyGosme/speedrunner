@@ -46,6 +46,6 @@ Linux (Docker) : node22, node24, node24-alpine et stress-node, verts.
 - **Objective-C** : Node a des threads, comme Ruby ; le client lance son démon avec `OBJC_DISABLE_INITIALIZE_FORK_SAFETY`.
 - **`pipe2`** existe dans le SDK de macOS 27, pas dans celui de macOS 26 : l'addon a sa version, sous un autre nom.
 
-## Ouvert
+## Un Node sans cache de code
 
-Sur le runner `macos-15-intel`, avec son Node 22.23.2, une frame du chargeur CommonJS s'appelle `Module._extensions..js` en natif et `Object..js` servie, dans la pile d'une erreur non rattrapée. Le Node 22.23.4 officiel nomme les deux `Object..js`, et passe. Hypothèse en cours de vérification : un Node construit sans le cache de code de ses modules internes, où `--no-lazy` (option du démon) change le nom que V8 infère.
+Sur le runner `macos-15-intel`, le Node de l'image est le `node@22` de Homebrew, construit sans le cache de code ni le snapshot de ses modules internes (`node_use_node_code_cache: false`). Il les compile alors depuis les sources, et `--no-lazy` (option du démon) change le nom qu'infère V8 : `node` seul affiche `at Module._extensions..js`, `node --no-lazy` affiche `at Object..js`, dans la pile d'une erreur non rattrapée. Trois cas de `test_exit_variants` différaient. Relancé sans `--no-lazy` (par `process.execve`), le démon nommait juste, mais les appels au terminal restaient bloqués sur ce runner, ce qui ne se reproduit pas ici (le Node de Homebrew du portable a son cache). Un tel Node n'est donc pas servi (exécution native, même sortie) ; le Node 24 officiel, le Node 22.23.4 officiel et le Node 23.7 de Homebrew le sont. La CI teste le Node 24 de nodejs.org sur les deux runners.
