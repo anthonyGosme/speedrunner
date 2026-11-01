@@ -89,8 +89,10 @@ def run(mode, argv, input=b"", cwd=None, env=None, tty=False, umask=None,
                        env=full_env, preexec_fn=setup, timeout=60)
     if tty and MACOS:
         # BSD script(1) now and then turns a line's \r\n into \r\r\n on a
-        # long output, natively as served (CI, aws's skeleton): not the tool's.
-        p.stdout = p.stdout.replace(b"\r\r\n", b"\r\n")
+        # long output, natively as served (CI, aws's skeleton), and echoes
+        # the ^D it sends the pty once its own stdin is at end of file,
+        # sooner or later: not the tool's.
+        p.stdout = p.stdout.replace(b"\r\r\n", b"\r\n").replace(b"^D\x08\x08", b"")
     return p
 
 
