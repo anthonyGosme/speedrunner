@@ -81,7 +81,12 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 say "downloading $asset ($version)"
-fetch "$base/$asset" "$tmp/$asset" || die "cannot download $base/$asset"
+if ! fetch "$base/$asset" "$tmp/$asset"; then
+    case $name in
+        *-apple-darwin) die "no macOS build in $version: macOS builds start with the release after 0.3.2" ;;
+    esac
+    die "cannot download $base/$asset"
+fi
 fetch "$base/$asset.sha256" "$tmp/$asset.sha256" || die "cannot download its checksum"
 expected=$(cut -d ' ' -f 1 < "$tmp/$asset.sha256")
 actual=$(sha256 "$tmp/$asset")
