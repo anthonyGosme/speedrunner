@@ -48,6 +48,14 @@ jobs:
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
       - run: |  # wherever the image keeps node, which the tests' PATH must have
           echo "NODE_PATH_DIRS=$PWD/tests/fixture/nodetest/bin:$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
+      - name: Node 24 from nodejs.org (the Intel image's is Homebrew's node@22, without a code cache, not served)
+        run: |
+          V=v24.22.2 A=$(uname -m | sed 's/x86_64/x64/')
+          curl -fsSLO "https://nodejs.org/dist/$V/node-$V-darwin-$A.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/$V/SHASUMS256.txt" | grep "node-$V-darwin-$A.tar.gz" | shasum -a 256 -c -
+          tar xzf "node-$V-darwin-$A.tar.gz" -C "$RUNNER_TEMP"
+          echo "NODE_PATH_DIRS=$PWD/tests/fixture/nodetest/bin:$RUNNER_TEMP/node-$V-darwin-$A/bin" >> "$GITHUB_ENV"
+          echo "$RUNNER_TEMP/node-$V-darwin-$A/bin" >> "$GITHUB_PATH"
       - name: which node, built how (frame names differ without a code cache)
         run: |
           command -v node && node -p "process.execPath + ' ' + JSON.stringify(process.config.variables.node_use_node_code_cache) + ' ' + JSON.stringify(process.config.variables.node_use_node_snapshot)"
