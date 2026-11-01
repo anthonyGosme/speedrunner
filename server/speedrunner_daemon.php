@@ -791,6 +791,65 @@ final class Daemon
     }
 
     /**
+     * PHP 8.5's CLI puts its arguments in the interpreter's internal copy of
+     * $_SERVER whatever register_argc_argv says (RFC deprecations_php_8_5),
+     * and getopt() reads that copy before $argv: every child would see the
+     * daemon's arguments. Removes argv and argc from it, through FFI on
+     * core_globals (PG), so that getopt() falls back to the $argv each child
+     * sets, as with register_argc_argv=0 before 8.5. The struct is 8.5's, up
+     * to the fields after http_globals; it is used only if the fields around
+     * them hold what ini_get() says. The internal copy and $_SERVER share
+     * one array here, so $_SERVER tells whether it worked.
+     */
+    private static function dropInternalArgv(): bool
+    {
+        try {
+            $ffi = \FFI::cdef('
+                typedef struct {
+                    int64_t output_buffering;
+                    uint8_t implicit_flush, enable_dl, display_errors, display_startup_errors,
+                            log_errors, ignore_repeated_errors, ignore_repeated_source, report_memleaks;
+                    char *output_handler, *unserialize_callback_func;
+                    int64_t serialize_precision, memory_limit, max_memory_limit, max_input_time;
+                    char *error_log, *doc_root, *user_dir, *include_path, *open_basedir;
+                    uint8_t open_basedir_modified;
+                    char *extension_dir, *php_binary, *sys_temp_dir, *upload_tmp_dir;
+                    int64_t upload_max_filesize;
+                    char *error_append_string, *error_prepend_string, *auto_prepend_file, *auto_append_file,
+                         *input_encoding, *internal_encoding, *output_encoding,
+                         *arg_separator_output, *arg_separator_input, *variables_order;
+                    uint64_t rfc1867_protected_variables[7];  /* HashTable */
+                    short connection_status;
+                    uint8_t ignore_user_abort, header_is_being_sent;
+                    uint64_t tick_functions[7];  /* zend_llist */
+                    struct { void *arr; uint32_t type_info, u2; } http_globals[6];
+                    uint8_t expose_php, register_argc_argv, auto_globals_jit;
+                } php_core_globals_85;
+                extern php_core_globals_85 core_globals;
+                int zend_hash_str_del(void *ht, const char *key, size_t len);');
+            $pg = $ffi->core_globals;
+            $server = $pg->http_globals[3];  // TRACK_VARS_SERVER
+            $ok = $pg->variables_order !== null
+                && \FFI::string($pg->variables_order) === (string) ini_get('variables_order')
+                && $pg->memory_limit === ini_parse_quantity((string) ini_get('memory_limit'))
+                && $pg->max_input_time === (int) ini_get('max_input_time')
+                && $pg->expose_php === (int) (bool) ini_get('expose_php')
+                && $pg->register_argc_argv === (int) (bool) ini_get('register_argc_argv')
+                && $pg->auto_globals_jit === (int) (bool) ini_get('auto_globals_jit')
+                && ($server->type_info & 0xff) === 7  // IS_ARRAY
+                && $server->arr !== null;
+            if (!$ok) {
+                return false;
+            }
+            $ffi->zend_hash_str_del($server->arr, 'argv', 4);
+            $ffi->zend_hash_str_del($server->arr, 'argc', 4);
+        } catch (\Throwable $e) {
+            return false;
+        }
+        return !array_key_exists('argv', $_SERVER);
+    }
+
+    /**
      * The daemon's own arguments. Run with register_argc_argv=0, so that
      * getopt(), which reads the interpreter's internal copy of $_SERVER
      * before $argv, sees the client's arguments: read them from /proc.
@@ -858,11 +917,9 @@ final class Daemon
                         'bound_ino' => null];
         if (ini_get('register_argc_argv')) {
             self::$state['disabled'] = 'getopt() would read the daemon\'s arguments: needs -d register_argc_argv=0';
-        } elseif (array_key_exists('argv', $_SERVER)) {
-            // PHP 8.5's CLI registers them whatever register_argc_argv says
-            // (RFC deprecations_php_8_5): getopt() would see ours.
+        } elseif (array_key_exists('argv', $_SERVER) && !self::dropInternalArgv()) {
             self::$state['disabled'] = 'getopt() would read the daemon\'s arguments: PHP ' . PHP_VERSION
-                . ' registers argv whatever register_argc_argv says';
+                . ' registers argv whatever register_argc_argv says, and its internal copy was not found';
         } elseif (self::cfUnsafe()) {
             self::$state['disabled'] = 'CoreFoundation used at startup: a forked child would be killed';
         }

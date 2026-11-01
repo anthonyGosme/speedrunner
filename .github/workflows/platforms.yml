@@ -21,7 +21,7 @@ jobs:
         target: [debian, ubuntu-24.04, ubuntu-22.04, alpine, fedora, non-root, no-ptrace,
                  py3.9, py3.10, py3.11, py3.12, py3.13, py3.14,
                  rb3.1, rb3.2, rb3.3, rb3.4,
-                 php8.1, php8.2, php8.3, php8.4,
+                 php8.1, php8.2, php8.3, php8.4, php8.5,
                  node22, node24, node24-alpine, stress, stress-node]
         runner: [ubuntu-24.04]
         include:

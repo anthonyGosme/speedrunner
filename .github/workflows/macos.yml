@@ -89,17 +89,20 @@ jobs:
           STRESS_SECONDS: 60
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.NODE_PATH_DIRS }}:${{ env.HS_PATH }}
 
-  php:  # 8.4: PHP 8.5 registers argv whatever register_argc_argv says (daemon off)
+  php:
     needs: universal
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-26]
+        php: [php@8.4, php]  # php: Homebrew's current, 8.5
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
+    env:
+      PHP_FORMULA: ${{ matrix.php }}
     steps:
       - uses: actions/checkout@v7
-      - run: brew install php@8.4 && echo "$(brew --prefix php@8.4)/bin" >> "$GITHUB_PATH"
+      - run: brew install "$PHP_FORMULA" && echo "$(brew --prefix "$PHP_FORMULA")/bin" >> "$GITHUB_PATH"
       - run: php -v && php -m | grep -iE '^(ffi|pcntl|posix|zend opcache)$'
       - uses: actions/download-artifact@v8
         with:
@@ -110,7 +113,7 @@ jobs:
           "$RUNNER_TEMP/bin/speedrunner" --version
           echo "HS_BIN=$RUNNER_TEMP/bin/speedrunner" >> "$GITHUB_ENV"
       - run: |
-          echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(brew --prefix php@8.4)/bin" >> "$GITHUB_ENV"
+          echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(brew --prefix "$PHP_FORMULA")/bin" >> "$GITHUB_ENV"
       - run: python3 tests/test_php.py -v
       - name: warm bench, indicative on a shared runner
         run: python3 bench/macos/warm.py "$HS_BIN" 10 "$HS_PATH" -- phptest argv x -- composer --version
