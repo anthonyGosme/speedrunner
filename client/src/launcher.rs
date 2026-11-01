@@ -9,15 +9,24 @@
 //! have run is served by a daemon, or execed as is. The tool itself has not
 //! started, so following a launcher never runs anything twice.
 //!
-//! Linux only: elsewhere `trace` fails, and the launcher runs natively.
-#![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
+//! Linux: PTRACE_O_TRACEEXEC, and /proc for what the stopped process
+//! execs. macOS: PT_TRACE_ME stops the process with SIGTRAP at each exec,
+//! and sysctl and libproc tell what it execs (platform.rs). There the
+//! kernel hides the env of Apple's own binaries, and no process can read
+//! another's umask: a stop whose env is hidden is followed to the next exec,
+//! and a launcher that may set a umask runs natively. Elsewhere `trace`
+//! fails, and the launcher runs natively.
+#![cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code, unused_imports))]
 
 use std::ffi::{CString, OsStr};
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
+#[cfg(target_os = "linux")]
 use std::mem;
 use std::os::unix::ffi::OsStrExt;
+#[cfg(target_os = "linux")]
 use std::os::unix::fs::MetadataExt;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 use std::ptr;
 
@@ -212,10 +221,48 @@ fn kill(pid: i32) {
     let _ = wait(pid);
 }
 
+#[cfg(target_os = "macos")]
+fn wait(pid: i32) -> io::Result<i32> {
+    let mut status = 0;
+    loop {
+        if unsafe { libc::waitpid(pid, &mut status, 0) } == pid {
+            return Ok(status);
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() != io::ErrorKind::Interrupted {
+            return Err(err);
+        }
+    }
+}
+
+/// The signal a traced process stopped on. macOS's WIFSTOPPED leaves out
+/// SIGCONT, whose stop status is WIFCONTINUED's.
+#[cfg(target_os = "macos")]
+fn stop_signal(status: i32) -> Option<i32> {
+    if status & 0x7f == 0x7f { Some((status >> 8) & 0xff) } else { None }
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn ptrace(request: libc::c_int, pid: i32, data: i32) -> libc::c_int {
+    // addr 1: go on from where it stopped.
+    libc::ptrace(request, pid, 1 as *mut libc::c_char, data)
+}
+
+/// A stopped traced process ignores SIGKILL until resumed: PT_KILL.
+#[cfg(target_os = "macos")]
+fn kill(pid: i32) {
+    unsafe {
+        if ptrace(libc::PT_KILL, pid, 0) != 0 {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+    let _ = wait(pid);
+}
+
 /// Run the launcher at `path` with `argv`, until it execs an interpreter.
 /// `quiet`: a run of our own (to learn what it execs, for prewarm), with
 /// /dev/null for fds 0-2, killed rather than left to run natively.
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn trace(_path: &[u8], _argv: &[Vec<u8>], _quiet: bool) -> io::Result<Traced> {
     Err(io::Error::new(io::ErrorKind::Unsupported, "no ptrace on this platform"))
 }
@@ -297,6 +344,107 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
                 None => return Ok(detach(pid)),
             }
         }
+        // A framework build's python3 execs its Python.app: still the same
+        // program on its way.
+        if !is_shell(name) && name != b"Python" {
+            if quiet {
+                kill(pid);
+                return Err(io::Error::new(io::ErrorKind::Other, "execs no Python interpreter"));
+            }
+            return Ok(detach(pid));
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
+    let path_c = CString::new(path)?;
+    let argv_c: Vec<CString> = argv.iter().map(|a| CString::new(&a[..])).collect::<Result<_, _>>()?;
+    let mut ptrs: Vec<*const libc::c_char> = argv_c.iter().map(|c| c.as_ptr()).collect();
+    ptrs.push(ptr::null());
+    let sets_umask = fs::read(OsStr::from_bytes(path))?.windows(5).any(|w| w == b"umask");
+    let pid = unsafe { libc::fork() };
+    if pid < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if pid == 0 {
+        unsafe {
+            if quiet {
+                let null = libc::open(b"/dev/null\0".as_ptr() as *const libc::c_char, libc::O_RDWR);
+                for fd in 0..3 {
+                    libc::dup2(null, fd);
+                }
+            }
+            if libc::ptrace(libc::PT_TRACE_ME, 0, ptr::null_mut(), 0) != 0 {
+                libc::_exit(127); // seen before the stop below: not traceable
+            }
+            libc::raise(libc::SIGSTOP);
+            libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+            libc::execv(path_c.as_ptr(), ptrs.as_ptr());
+            libc::_exit(127);
+        }
+    }
+    if stop_signal(wait(pid)?).is_none() {
+        return Err(io::Error::new(io::ErrorKind::Unsupported, "ptrace unavailable"));
+    }
+    // A tracer's exit kills what it traces: no PTRACE_O_EXITKILL to ask for.
+    let mut deliver = 0;
+    let mut execs = 0;
+    let mut last: Option<(Vec<u8>, Vec<Vec<u8>>)> = None;
+    loop {
+        unsafe {
+            ptrace(libc::PT_CONTINUE, pid, deliver);
+        }
+        deliver = 0;
+        let status = wait(pid)?;
+        let sig = match stop_signal(status) {
+            Some(sig) => sig,
+            None => return Ok(Traced::Done(status)),
+        };
+        if sig != libc::SIGTRAP {
+            if execs == 0 && sig == libc::SIGSTOP {
+                continue; // our own stop, before the exec
+            }
+            deliver = sig; // a signal for the launcher: let it have it
+            continue;
+        }
+        // A SIGTRAP stop is an exec, unless the process still runs what it
+        // ran at the last one: then a SIGTRAP of its own, delivered.
+        let (exe, args, env) = match crate::platform::process_exec(pid) {
+            Some(exec) => exec,
+            None if quiet => {
+                kill(pid);
+                return Err(io::Error::new(io::ErrorKind::Other, "unreadable exec"));
+            }
+            None => return Ok(detach(pid)),
+        };
+        if last.as_ref().map_or(false, |(e, a)| *e == exe && *a == args) {
+            deliver = sig;
+            continue;
+        }
+        last = Some((exe.clone(), args.clone()));
+        execs += 1;
+        if execs == 1 {
+            continue; // the launcher itself starting
+        }
+        let name = basename(&exe);
+        if name.starts_with(b"python") {
+            if env.is_empty() {
+                continue; // Apple's /usr/bin/python3, which execs the real one
+            }
+            let launch = if sets_umask { None } else { read_launch(pid, &exe, args, env, !quiet) };
+            match launch {
+                Some(launch) => {
+                    kill(pid);
+                    return Ok(Traced::Python(launch));
+                }
+                None if quiet => {
+                    kill(pid);
+                    return Err(io::Error::new(io::ErrorKind::Other, "unreadable launch"));
+                }
+                None => return Ok(detach(pid)),
+            }
+        }
         if !is_shell(name) {
             if quiet {
                 kill(pid);
@@ -305,6 +453,80 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
             return Ok(detach(pid));
         }
     }
+}
+
+/// Lets it run natively, untraced. PT_DETACH at an exec's stop would hand it
+/// that SIGTRAP, which kills it: it goes on, and is detached at the stop of
+/// a SIGCONT sent for that, which the detach drops.
+#[cfg(target_os = "macos")]
+fn detach(pid: i32) -> Traced {
+    unsafe {
+        ptrace(libc::PT_CONTINUE, pid, 0);
+        libc::kill(pid, libc::SIGCONT);
+    }
+    loop {
+        let status = match wait(pid) {
+            Ok(status) => status,
+            Err(_) => return Traced::Native(pid),
+        };
+        let sig = match stop_signal(status) {
+            Some(sig) => sig,
+            None => return Traced::Done(status),
+        };
+        if sig == libc::SIGCONT {
+            unsafe {
+                ptrace(libc::PT_DETACH, pid, 0);
+            }
+            return Traced::Native(pid);
+        }
+        // Another exec on the way, or a signal for it.
+        unsafe {
+            ptrace(libc::PT_CONTINUE, pid, if sig == libc::SIGTRAP { 0 } else { sig });
+        }
+    }
+}
+
+/// The stopped process's command line and env (read already), with our
+/// umask (theirs cannot be read: the caller refuses a launcher that may set
+/// one) and its ignored signals. With `ours`, None unless it has our cwd
+/// and fds 0-2, which a request passes from us.
+#[cfg(target_os = "macos")]
+fn read_launch(pid: i32, exe: &[u8], argv: Vec<Vec<u8>>, env: Vec<Vec<u8>>, ours: bool) -> Option<Launch> {
+    use crate::platform::{fd_identity, ignored_signals, process_cwd};
+    let exe_real = fs::canonicalize(OsStr::from_bytes(exe)).ok()?;
+    let named = argv.first()?.clone();
+    let program = if named.contains(&b'/') {
+        named
+    } else {
+        let path = env.iter().find(|e| e.starts_with(b"PATH=")).map(|e| e[5..].to_vec())?;
+        path.split(|b| *b == b':').filter(|d| !d.is_empty()).find_map(|d| {
+            let mut cand = d.to_vec();
+            cand.push(b'/');
+            cand.extend_from_slice(&named);
+            fs::canonicalize(OsStr::from_bytes(&cand)).ok().filter(|r| *r == exe_real).map(|_| cand)
+        })?
+    };
+    if fs::canonicalize(OsStr::from_bytes(&program)).ok()? != exe_real {
+        return None;
+    }
+    let umask = unsafe {
+        let m = libc::umask(0o022);
+        libc::umask(m);
+        m as u32
+    };
+    let ignored = ignored_signals(pid)?;
+    if ours {
+        if process_cwd(pid)? != std::env::current_dir().ok()? {
+            return None;
+        }
+        let me = unsafe { libc::getpid() };
+        for fd in 0..3 {
+            if fd_identity(pid, fd)? != fd_identity(me, fd)? {
+                return None;
+            }
+        }
+    }
+    Some(Launch { exe: program, argv, env, umask, ignored })
 }
 
 #[cfg(target_os = "linux")]
