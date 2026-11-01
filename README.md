@@ -37,6 +37,9 @@ eval "$(speedrunner init zsh)"     # in ~/.zshrc (or init bash, in ~/.bashrc): d
 speedrunner enroll aws             # then plain `aws s3 ls` in zsh or bash
 ```
 
+Every command and option, why a call runs natively, where files live, and how to
+uninstall: the [user guide](docs/GUIDE.md).
+
 ## Install
 
 Linux, x86_64 or aarch64, any distribution: one static binary, no root.
@@ -277,6 +280,8 @@ learn what a tool loads.
 binary, which `install.sh` picks. Python, Ruby, PHP and Node are served, launchers (az, gcloud) followed; the bash
 hook needs bash 4.2 or later (zsh, the default shell, has no such limit). Linux: x86_64 or aarch64, any
 distribution. Windows: not planned.
+
+Using it day to day: the [user guide](docs/GUIDE.md).
 
 How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
 
