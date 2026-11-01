@@ -43,6 +43,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const Module = require("node:module");
+// A Node built without the code cache of its internals (Homebrew's node@22)
+// compiles them from source, and --no-lazy, which the client gives us, then
+// names some of their functions otherwise: a stack's "Module._extensions..js"
+// becomes "Object..js". Run without it then (children compile more), before
+// anything else, our env as the client gave it; or, without execve, serve nothing.
+const LAZY_NAMES = process.config.variables.node_use_node_code_cache === false
+  && process.execArgv.includes("--no-lazy");
+if (LAZY_NAMES && typeof process.execve === "function") {
+  process.execve(process.execPath, [process.execPath, ...process.execArgv.filter((a) => a !== "--no-lazy"),
+                                    ...process.argv.slice(1)]);
+}
+
 // The addon built for our libc, glibc or musl, or for macOS: the client puts them here.
 const MACOS = process.platform === "darwin";
 const libc = MACOS ? "darwin" : fs.readFileSync("/proc/self/maps", "utf8").includes("ld-musl") ? "musl" : "gnu";
@@ -804,6 +816,7 @@ async function serve(opts) {
   // Without it no child's end is seen, unless it sends X itself (macOS once
   // had the signals' Linux numbers here, and an execve'd child hung its client).
   if (sigfd < 0) state.disabled = `cannot catch signals (${sigfd})`;
+  if (LAZY_NAMES) state.disabled = "this Node has no code cache, and no execve to run without --no-lazy";
   state.inotify = sys.inotifyInit();
 
   // What earlier daemons learned, loaded with a pty on the fds that were
