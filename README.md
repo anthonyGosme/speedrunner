@@ -278,7 +278,7 @@ binary, which `install.sh` picks. Python, Ruby, PHP and Node are served, launche
 hook needs bash 4.2 or later (zsh, the default shell, has no such limit). Linux: x86_64 or aarch64, any
 distribution. Windows: not planned.
 
-How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
+How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
 
