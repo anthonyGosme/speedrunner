@@ -43,11 +43,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const Module = require("node:module");
-// A Node built without the code cache of its internals (Homebrew's node@22)
-// compiles them from source, and --no-lazy, which the client gives us, then
-// names some of their functions otherwise: a stack's "Module._extensions..js"
-// becomes "Object..js". Such a Node is not served (running again without
-// --no-lazy left terminal runs hanging on a CI runner: not understood yet).
+// A Node built without the code cache of its internals (Homebrew's node@22,
+// Fedora's) compiles them from source, and --no-lazy, which the client gives
+// us, then names some of their functions otherwise: a stack's
+// "Module._extensions..js" becomes "Object..js". Such a daemon notes its Node
+// for the client, which starts the next one without --no-lazy, and leaves.
 const LAZY_NAMES = process.config.variables.node_use_node_code_cache === false
   && process.execArgv.includes("--no-lazy");
 
@@ -385,6 +385,20 @@ function cachePath() {
     h = ((h ^ BigInt(c)) * 0x100000001b3n) & 0xffffffffffffffffn;
   }
   return path.join(base, "speedrunner", `${state.tool.replace(/[^\w.-]/g, "_")}-node-${h.toString(16)}.json`);
+}
+
+// One line per Node without code cache, read by the client
+// (node_without_code_cache in client/src/main.rs): real path, size, mtime.
+function noteNoCodeCache() {
+  const base = realEnv.XDG_CACHE_HOME || path.join(realEnv.HOME || "/tmp", ".cache");
+  const file = path.join(base, "speedrunner", "node-no-code-cache");
+  const st = fs.statSync(process.execPath);
+  const line = `${fs.realpathSync(process.execPath)}\t${st.size}\t${Math.floor(st.mtimeMs / 1000)}`;
+  try {
+    if (fs.readFileSync(file, "utf8").split("\n").includes(line)) return;
+  } catch {}
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.appendFileSync(file, line + "\n");
 }
 
 function loadCache() {
@@ -812,7 +826,6 @@ async function serve(opts) {
   // Without it no child's end is seen, unless it sends X itself (macOS once
   // had the signals' Linux numbers here, and an execve'd child hung its client).
   if (sigfd < 0) state.disabled = `cannot catch signals (${sigfd})`;
-  if (LAZY_NAMES) state.disabled = "this Node has no code cache: --no-lazy would rename frames in stacks";
   state.inotify = sys.inotifyInit();
 
   // What earlier daemons learned, loaded with a pty on the fds that were
@@ -1046,6 +1059,12 @@ async function main() {
     }
   }
   logFd = sys.dup(2);
+  if (LAZY_NAMES) {
+    // Before the socket: this call, and any racing it, run natively.
+    noteNoCodeCache();
+    log("this Node has no code cache: noted, the next daemon starts without --no-lazy");
+    return 0;
+  }
   Object.assign(state, {
     tool: opts.tool, script: opts.script, scriptReal: fs.realpathSync(opts.script), sockPath: opts.socket,
     disabled: null, startEnv: { ...realEnv }, preloaded: [], blacklist: new Set(), gen: 0, learning: 0,

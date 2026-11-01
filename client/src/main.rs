@@ -1329,8 +1329,11 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     for f in &flags {
         argv.push(cstring(f));
     }
+    let lazy = matches!(runtime, Runtime::Node) && node_without_code_cache(&interp);
     for a in runtime.daemon_args() {
-        argv.push(cstring(a.as_bytes()));
+        if !(lazy && *a == "--no-lazy") {
+            argv.push(cstring(a.as_bytes()));
+        }
     }
     argv.push(cstring(&daemon));
     // For `php script`, the daemon is the script's: name it after it.
@@ -1804,6 +1807,24 @@ fn cmd_exec(rest: &[OsString]) -> i32 {
 }
 
 // --- enroll ----------------------------------------------------------------
+
+/// Whether the Node daemon found this interpreter built without the code
+/// cache of its internals (speedrunner_daemon.mjs notes it, one line per
+/// binary: real path, size, mtime): its daemon then starts without
+/// --no-lazy, which would rename frames in its stacks.
+fn node_without_code_cache(interp: &[u8]) -> bool {
+    let base = match env::var_os("XDG_CACHE_HOME") {
+        Some(d) if !d.is_empty() => PathBuf::from(d),
+        _ => Path::new(&env::var_os("HOME").unwrap_or_default()).join(".cache"),
+    };
+    let Ok(noted) = std::fs::read(base.join("speedrunner").join("node-no-code-cache")) else {
+        return false;
+    };
+    let Ok(real) = std::fs::canonicalize(OsStr::from_bytes(interp)) else { return false };
+    let Ok(meta) = std::fs::metadata(&real) else { return false };
+    let line = [real.as_os_str().as_bytes(), format!("\t{}\t{}", meta.len(), meta.mtime()).as_bytes()].concat();
+    noted.split(|b| *b == b'\n').any(|l| l == &line[..])
+}
 
 fn tools_file() -> PathBuf {
     let base = match env::var_os("XDG_CONFIG_HOME") {

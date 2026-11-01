@@ -40,6 +40,7 @@ for v in 8.1 8.2 8.3 8.4 8.5; do TARGETS+=("php$v|docker/lang/php.Dockerfile|VER
 # Node: module.registerHooks, which learning needs, is in 22.15 and later.
 for v in 22 24; do TARGETS+=("node$v|docker/lang/node.Dockerfile|VERSION=$v-bookworm-slim||suites node"); done
 TARGETS+=("node24-alpine|docker/lang/node.Dockerfile|VERSION=24-alpine||suites node")  # the musl addon
+TARGETS+=("node-fedora|docker/lang/node-fedora.Dockerfile|||suites node")  # no code cache
 # Races: parallel calls while daemons restart, with a terminal as CI has.
 TARGETS+=("stress|docker/Dockerfile||-t|suites stress")
 TARGETS+=("stress-node|docker/lang/node.Dockerfile|VERSION=24-bookworm-slim|-t|suites stress")
