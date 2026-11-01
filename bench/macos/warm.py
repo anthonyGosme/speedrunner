@@ -45,6 +45,10 @@ def main():
         for _ in range(3):
             timed(served, env)
             time.sleep(0.5)  # learning is applied between calls
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and "learning=" in subprocess.run(
+                [hs, "status", argv[0]], env=env, capture_output=True, text=True).stdout:
+            time.sleep(0.2)  # long for Node on an i7: served meanwhile, but slowly
         _, native_out = timed(argv, env)
         _, fast_out = timed(served, fast_env)
         times = {"native": [], "served": []}
