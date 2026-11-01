@@ -684,6 +684,43 @@ class Launchers(Matrix):
         self.assertEqual(run("hs", ["py-tool", "x"], cwd=shadow, env=self.env).returncode,
                          EXIT_NOT_FAST)
 
+    def scripted(self, script, wrap, **extra):
+        """script run by sh, natively or under `exec -t sh-tool` / `activate sh-tool`."""
+        hs = shlex.quote(HS_BIN)
+        cmd = {"native": ["sh", "-c", script],
+               "exec": [HS_BIN, "exec", "-t", "sh-tool", "sh", "-c", script],
+               "activate": ["sh", "-c", f'eval "$({hs} activate sh-tool)"; {script}']}[wrap]
+        return subprocess.run(cmd, capture_output=True, cwd=self.work, timeout=60,
+                              env={**BASE_ENV, **self.env, **extra})
+
+    @needs_ptrace
+    def test_exec_and_activate_link_a_launcher(self):
+        # Named in a script, a launcher gets its link like a script does:
+        # every call goes through speedrunner, which follows it.
+        self.warm("sh-tool")
+        script = 'sh-tool "a b"; sh-tool fail; echo "rc=$?"'
+        native = outcome(self.scripted(script, "native"))
+        for wrap in ("exec", "activate"):
+            with self.subTest(wrap=wrap):
+                p = self.scripted(script, wrap, SPEEDRUNNER_REQUIRE_FAST="1")
+                self.assertEqual(native, outcome(p))
+                where = self.scripted("command -v sh-tool", wrap).stdout.decode()
+                self.assertIn("/speedrunner/bin-", where)
+
+    @needs_ptrace
+    def test_exec_starts_a_known_launcher_daemon(self):
+        # Once a run has shown what the launcher execs, naming it starts
+        # that daemon, as for a script.
+        self.warm("sh-tool")
+        stop("sh-tool", self.env)
+        self.assertEqual(status("sh-tool", self.env), "down")
+        p = self.scripted("true", "exec")
+        self.assertEqual((p.returncode, p.stderr), (0, b""))
+        deadline = time.monotonic() + 30
+        while not status("sh-tool", self.env).startswith("ready"):
+            self.assertLess(time.monotonic(), deadline, status("sh-tool", self.env))
+            time.sleep(0.1)
+
     def test_launcher_that_execs_no_python_runs_natively(self):
         self.assertSame(["cat-tool"], input=b"some input\n", cwd=self.work, env=self.env,
                         require_fast=False)
@@ -1267,6 +1304,32 @@ class Security(Matrix):
             self.assertEqual(daemon_roots(path), [])
         finally:
             os.unlink(path)
+
+    def test_runtime_dir_too_deep_for_a_socket(self):
+        # A socket path holds 104 bytes on macOS, 108 on Linux: under a
+        # deeper XDG_RUNTIME_DIR no client could reach the daemon. Both
+        # sides take /tmp/speedrunner-<uid> instead.
+        path = f"/tmp/speedrunner-{os.getuid()}"
+        if not os.path.lexists(path):
+            self.addCleanup(shutil.rmtree, path, True)
+        # A tool name of its own: its daemon is this test's, even in a
+        # /tmp/speedrunner-<uid> that is in use.
+        root = tempfile.mkdtemp(dir=ROOT)
+        bin_dir = os.path.join(root, "bin")
+        os.makedirs(bin_dir)
+        tool = "hstest-deep-" + os.path.basename(root)
+        os.symlink(shutil.which("hstest", path=os.environ["HS_PATH"]), os.path.join(bin_dir, tool))
+        deep = os.path.join(root, "d" * max(1, 112 - len(root)))
+        os.makedirs(deep, mode=0o700)
+        env = {"XDG_RUNTIME_DIR": deep, "XDG_CACHE_HOME": os.path.join(root, "cache"),
+               "PATH": bin_dir + ":" + BASE_ENV["PATH"]}
+        self.addCleanup(stop, tool, env)
+        wait_ready(tool, env)
+        argv = [tool, "argv", "x"]
+        self.assertEqual(outcome(run("hs", argv, env=env)), outcome(run("native", argv, env=env)))
+        mine = [n for n in os.listdir(path) if n.startswith(tool + "-") and n.endswith(".sock")]
+        self.assertEqual(len(mine), 1, os.listdir(path))
+        self.assertFalse(os.path.exists(os.path.join(deep, "speedrunner")))
 
     @unittest.skipUnless(os.getuid() == 0, "needs root to listen as another uid")
     def test_socket_served_by_other_uid(self):
