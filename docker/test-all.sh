@@ -36,7 +36,7 @@ for v in 3.9 3.10 3.11 3.12 3.13 3.14; do TARGETS+=("py$v|docker/lang/python.Doc
 # Ruby 3.0: its official image is on Debian 11, whose archive no longer
 # serves it; Ubuntu 22.04 above runs the Ruby suite on 3.0.
 for v in 3.1 3.2 3.3 3.4; do TARGETS+=("rb$v|docker/lang/ruby.Dockerfile|VERSION=$v||suites ruby"); done
-for v in 8.1 8.2 8.3 8.4; do TARGETS+=("php$v|docker/lang/php.Dockerfile|VERSION=$v||suites php"); done
+for v in 8.1 8.2 8.3 8.4 8.5; do TARGETS+=("php$v|docker/lang/php.Dockerfile|VERSION=$v||suites php"); done
 # Node: module.registerHooks, which learning needs, is in 22.15 and later.
 for v in 22 24; do TARGETS+=("node$v|docker/lang/node.Dockerfile|VERSION=$v-bookworm-slim||suites node"); done
 TARGETS+=("node24-alpine|docker/lang/node.Dockerfile|VERSION=24-alpine||suites node")  # the musl addon
