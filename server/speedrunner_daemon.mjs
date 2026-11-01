@@ -30,7 +30,9 @@
 //       --tool NAME --script PATH --socket PATH [--lock-fd N] [--origin TEXT]
 //       [--tty MASK[:ROWSxCOLS]]
 //
-// Linux only (SO_PEERCRED, signalfd, inotify, /proc).
+// Linux and macOS: the addon hides most of the difference; on macOS files
+// are compared by stat (no inotify), and CoreFoundation is watched for, as
+// in speedrunner_daemon.py.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -41,8 +43,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const Module = require("node:module");
-// The addon built for our libc, glibc or musl: the client puts both here.
-const libc = fs.readFileSync("/proc/self/maps", "utf8").includes("ld-musl") ? "musl" : "gnu";
+// The addon built for our libc, glibc or musl, or for macOS: the client puts them here.
+const MACOS = process.platform === "darwin";
+const libc = MACOS ? "darwin" : fs.readFileSync("/proc/self/maps", "utf8").includes("ld-musl") ? "musl" : "gnu";
+// Set by the client on macOS so that children may use Objective-C (Node has
+// threads; see objc_fork_env in client/src/platform.rs): ours, not the tool's.
+if (process.env.SPEEDRUNNER_OBJC_ADDED) {
+  delete process.env.SPEEDRUNNER_OBJC_ADDED;
+  delete process.env.OBJC_DISABLE_INITIALIZE_FORK_SAFETY;
+}
 const sys = require(path.join(path.dirname(fileURLToPath(import.meta.url)), `speedrunner_node-${libc}.node`));
 
 // How a served child ends, hooked before anything is preloaded, so that
@@ -275,6 +284,7 @@ async function load([url, format]) {
 }
 
 function threadNames() {
+  if (MACOS) return sys.threads();
   const names = [];
   for (const t of fs.readdirSync("/proc/self/task")) {
     try {
@@ -297,7 +307,8 @@ function pendingWork() {
 }
 
 // Loads one module and judges it: null if it may stay, else the reason.
-async function loadJudged(entry, outs, threads) {
+// cf: also whether it used CoreFoundation (macOS; a fork each time).
+async function loadJudged(entry, outs, threads, cf = false) {
   const env = JSON.stringify(realEnv);
   const work = pendingWork();
   const s = (step = {});
@@ -314,6 +325,7 @@ async function loadJudged(entry, outs, threads) {
   if (s.argv) return "reads the command line";
   if (foreignThreads() > threads) return "starts a thread";
   if (pendingWork() > work) return "leaves work pending";
+  if (cf && sys.cfUnsafe()) return "uses CoreFoundation";
   return null;
 }
 
@@ -390,17 +402,31 @@ function saveCache() {
 
 // --- child: one invocation ------------------------------------------------------------
 
-function whyNotFast(req, peerGid, fds) {
+// The kernel's groups for us: on macOS process.getgroups() may give the
+// user's, resolved anew; ours are read as a peer's are, over a socketpair.
+let ownGroups = null;
+function groupsOfOurs() {
+  if (!MACOS) return process.getgroups();
+  if (ownGroups === null) {
+    const sv = sys.socketpair();
+    ownGroups = sys.peercred(sv[0]).slice(3);
+    sys.close(sv[0]);
+    sys.close(sv[1]);
+  }
+  return ownGroups;
+}
+
+function whyNotFast(req, peerGid, fds, peerGroups = null) {
   if (state.disabled) return state.disabled;
   const typed = req.argv[0] ?? "";
   let real = null;
   try {
-    real = fs.realpathSync(typed.startsWith("/") ? typed : `/proc/self/fd/${fds[3]}/${typed}`);
+    real = fs.realpathSync(typed.startsWith("/") ? typed : `${sys.fdpath(fds[3])}/${typed}`);
   } catch {}
   if (!typed || real !== state.scriptReal) return "script path mismatch";
   if (stale()) return "stale: installed files changed";
-  const mine = [...new Set(process.getgroups())].sort();
-  const theirs = [...new Set(req.groups)].sort();
+  const mine = [...new Set(groupsOfOurs())].sort();
+  const theirs = [...new Set(peerGroups ?? req.groups)].sort();
   if (peerGid !== process.getgid() || JSON.stringify(mine) !== JSON.stringify(theirs)) {
     return "credentials differ from the daemon's";
   }
@@ -526,7 +552,7 @@ function serveChild(c) {
       sendMsg(conn, "N", "missing file descriptors");
       sys.exit(0);
     }
-    const reason = whyNotFast(req, cred[2], fds);
+    const reason = whyNotFast(req, cred[2], fds, MACOS ? cred.slice(3) : null);
     if (reason !== null) {
       if (reason.startsWith("stale")) {
         markExiting();
@@ -537,7 +563,7 @@ function serveChild(c) {
       sys.exit(0);
     }
     // process.argv[1] as Node makes it: the script as typed, made absolute.
-    script = path.resolve(fs.readlinkSync(`/proc/self/fd/${fds[3]}`), req.argv[0]);
+    script = path.resolve(MACOS ? sys.fdpath(fds[3]) : fs.readlinkSync(`/proc/self/fd/${fds[3]}`), req.argv[0]);
     sendMsg(conn, "R", i32(process.pid));
     if (readExact(conn, 1, deadline).toString() !== "G") sys.exit(0);
   } catch (e) {
@@ -660,7 +686,7 @@ function probe(candidates) {
     (async () => {
       startTracking();
       for (const entry of candidates) {
-        const why = await loadJudged(entry, [out1, out2], 1);
+        const why = await loadJudged(entry, [out1, out2], 1, MACOS);
         writeAll(wr, Buffer.from(JSON.stringify(why === null ? { ok: entry[0] } : { refused: entry[0], why }) + "\n"));
         if (why !== null) break;
       }
@@ -718,6 +744,14 @@ async function applyLearned(candidates) {
       added++;
     }
     stopTracking();
+    const batch = todo.slice(0, v.accepted.length);
+    if (batch.length && sys.cfUnsafe()) {
+      // Vetted one by one, yet together they did: none of them again.
+      for (const [u] of batch) state.blacklist.add(u);
+      saveCache();
+      log(`${batch.length} learned modules used CoreFoundation in the daemon; exiting`);
+      return "stop";
+    }
     todo = todo.slice(v.accepted.length);
     if (v.refused) {
       state.blacklist.add(v.refused.refused);
@@ -777,6 +811,7 @@ async function serve(opts) {
   // under a lock that thread may hold when we fork: a child would then wait
   // on it forever (firebase). Making a TLS context waits for that load.
   require("node:tls").createSecureContext();
+  if (sys.cfUnsafe()) state.disabled = "CoreFoundation used at startup: a forked child would be killed";
   if (cache.learned.length) {
     const r = await applyLearned(cache.learned);
     if (r === "child") return null;

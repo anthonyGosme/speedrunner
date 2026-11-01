@@ -7,6 +7,9 @@
 // Node versions: one build serves every Node of its libc and architecture.
 //
 // Errors come back as negative errno values, never as exceptions.
+//
+// Linux and macOS: what macOS lacks (pipe2, accept4, SOCK_CLOEXEC,
+// MSG_CMSG_CLOEXEC, SO_PEERCRED, inotify, /proc) is done otherwise below.
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
@@ -18,8 +21,18 @@
 #include <poll.h>
 #include <pthread.h>
 #include <sys/file.h>
+#ifdef __linux__
 #include <sys/inotify.h>
+#else
+#include <libproc.h>
+#include <mach/mach.h>
+#include <sys/proc_info.h>
+#include <sys/ucred.h>
+#endif
 #include <sys/mman.h>
+#ifndef __linux__
+#include <dlfcn.h>
+#endif
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -51,6 +64,7 @@ napi_status napi_get_buffer_info(napi_env, napi_value, void **, size_t *);
 napi_status napi_get_array_length(napi_env, napi_value, uint32_t *);
 napi_status napi_get_element(napi_env, napi_value, uint32_t, napi_value *);
 napi_status napi_create_int32(napi_env, int32_t, napi_value *);
+napi_status napi_create_string_utf8(napi_env, const char *, size_t, napi_value *);
 napi_status napi_create_buffer_copy(napi_env, size_t, const void *, void **, napi_value *);
 napi_status napi_create_array_with_length(napi_env, size_t, napi_value *);
 napi_status napi_set_element(napi_env, napi_value, uint32_t, napi_value);
@@ -94,6 +108,37 @@ static napi_value num(napi_env env, int32_t n) {
 
 static napi_value result(napi_env env, long r) { return num(env, r < 0 ? -errno : (int32_t)r); }
 
+#ifdef __linux__
+#define sr_pipe2 pipe2
+#else
+// Close-on-exec, and O_NONBLOCK if asked, as SOCK_*, O_* or MSG_CMSG_CLOEXEC
+// flags set them on Linux; fd, or -1 with errno.
+static int set_flags(int fd, int nonblock) {
+  if (fd < 0) return fd;
+  int fl = fcntl(fd, F_GETFL);
+  if (fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || fl < 0 ||
+      fcntl(fd, F_SETFL, nonblock ? fl | O_NONBLOCK : fl & ~O_NONBLOCK) < 0) {
+    int e = errno;
+    close(fd);
+    errno = e;
+    return -1;
+  }
+  return fd;
+}
+
+// macOS 27 has pipe2, earlier ones do not: ours, under another name.
+static int sr_pipe2(int p[2], int flags) {
+  if (pipe(p) < 0) return -1;
+  for (int i = 0; i < 2; i++) {
+    if (set_flags(p[i], flags & O_NONBLOCK) < 0) {
+      close(p[1 - i]);
+      return -1;
+    }
+  }
+  return 0;
+}
+#endif
+
 static napi_value array(napi_env env, const int32_t *items, size_t n) {
   napi_value arr;
   napi_create_array_with_length(env, n, &arr);
@@ -113,6 +158,7 @@ static napi_value buffer(napi_env env, const void *data, size_t n) {
 // V8 marks its heap MADV_DONTFORK ("dc" in smaps): a child would not have
 // it, and would crash on its first touch of a JavaScript object. Undo it.
 static void allow_fork(void) {
+#ifdef __linux__
   FILE *f = fopen("/proc/self/smaps", "re");
   if (!f) return;
   char line[512];
@@ -126,9 +172,10 @@ static void allow_fork(void) {
     }
   }
   fclose(f);
+#endif
 }
 
-// fork() -> pid. In the child, libuv's loop gets its own epoll and pipes.
+// fork() -> pid. In the child, libuv's loop gets its own epoll (kqueue) and pipes.
 static napi_value Fork(napi_env env, napi_callback_info info) {
   allow_fork();
   pid_t pid = fork();
@@ -203,10 +250,24 @@ static void write_all(int fd, const char *p, size_t n) {
   }
 }
 
+// A stack's last line ends with " {" when the error has properties of its
+// own (util.inspect lists them after it): it stays on the line that takes
+// the place of ours.
+static int opens_brace(const char *line, size_t n) {
+  return n >= 3 && memcmp(line + n - 3, " {\n", 3) == 0;
+}
+
+static void write_frame(int brace) {
+  size_t n = strlen(report_frame);
+  if (n && report_frame[n - 1] == '\n') n--;
+  write_all(real_err, report_frame, n);
+  write_all(real_err, brace ? " {\n" : "\n", brace ? 3 : 1);
+}
+
 static void *copy_report(void *unused) {
   char buf[65536];
   size_t len = 0;
-  int ours = 0;
+  int ours = 0, pending = 0, brace = 0; // pending: our frame, not written yet
   for (;;) {
     ssize_t r = read(report_fd, buf + len, sizeof buf - len - 1);
     if (r < 0 && errno == EINTR) continue;
@@ -217,10 +278,14 @@ static void *copy_report(void *unused) {
       size_t n = nl - line + 1;
       int done = n - 1 == strlen(report_footer) && memcmp(line, report_footer, n - 1) == 0;
       if (memmem(line, n, "/speedrunner_daemon.mjs:", 24)) {
+        if (!ours) pending = report_frame[0] != 0;
         ours = 1;
-        if (report_frame[0]) write_all(real_err, report_frame, strlen(report_frame));
-      } else if (!(ours && memmem(line, n, "(node:internal/timers:", 22))) {
-        ours = 0;
+        brace = opens_brace(line, n);
+      } else if (ours && memmem(line, n, "(node:internal/timers:", 22)) {
+        brace = opens_brace(line, n);
+      } else {
+        if (pending) write_frame(brace);
+        ours = pending = brace = 0;
         write_all(real_err, line, n);
       }
       line = nl + 1;
@@ -233,6 +298,7 @@ static void *copy_report(void *unused) {
       len = 0;
     }
   }
+  if (pending) write_frame(brace);
   write_all(real_err, buf, len);
   send_exit(report_conn, report_code);
 }
@@ -250,7 +316,7 @@ static napi_value ReportThenExit(napi_env env, napi_callback_info info) {
   str_arg(&a, 2, report_footer, sizeof report_footer);
   str_arg(&a, 3, report_frame, sizeof report_frame);
   int p[2];
-  if (pipe2(p, O_CLOEXEC) < 0) return result(env, -1);
+  if (sr_pipe2(p, O_CLOEXEC) < 0) return result(env, -1);
   real_err = fcntl(2, F_DUPFD_CLOEXEC, 3);
   dup2(p[1], 2);
   close(p[1]);
@@ -376,7 +442,11 @@ static napi_value Listen(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
   struct sockaddr_un addr = {.sun_family = AF_UNIX};
   str_arg(&a, 0, addr.sun_path, sizeof addr.sun_path);
+#ifdef __linux__
   int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+#else
+  int fd = set_flags(socket(AF_UNIX, SOCK_STREAM, 0), 1);
+#endif
   if (fd < 0) return result(env, -1);
   mode_t old = umask(077);
   int r = bind(fd, (struct sockaddr *)&addr, sizeof addr);
@@ -391,24 +461,73 @@ static napi_value Listen(napi_env env, napi_callback_info info) {
 
 static napi_value Accept(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
+#ifdef __linux__
   return result(env, accept4(int_arg(&a, 0), NULL, NULL, SOCK_CLOEXEC));
+#else
+  // Blocking, as accept4 makes it: on macOS it inherits the listener's O_NONBLOCK.
+  return result(env, set_flags(accept(int_arg(&a, 0), NULL, NULL), 0));
+#endif
 }
 
 // socketpair() -> [a, b], both close-on-exec.
 static napi_value Socketpair(napi_env env, napi_callback_info info) {
   int sv[2];
+#ifdef __linux__
   if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) < 0) return result(env, -1);
+#else
+  if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) return result(env, -1);
+  set_flags(sv[0], 0), set_flags(sv[1], 0);
+#endif
   return array(env, sv, 2);
 }
 
-// peercred(fd) -> [pid, uid, gid]
+// peercred(fd) -> [pid, uid, gid], then on macOS the peer's groups as the
+// kernel has them (process.getgroups() may give the user's, resolved anew).
 static napi_value Peercred(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
+#ifdef __linux__
   struct ucred c;
   socklen_t len = sizeof c;
   if (getsockopt(int_arg(&a, 0), SOL_SOCKET, SO_PEERCRED, &c, &len) < 0) return result(env, -1);
   int32_t out[3] = {c.pid, (int32_t)c.uid, (int32_t)c.gid};
   return array(env, out, 3);
+#else
+  struct xucred c;
+  socklen_t len = sizeof c;
+  pid_t pid = 0;
+  socklen_t plen = sizeof pid;
+  if (getsockopt(int_arg(&a, 0), SOL_LOCAL, LOCAL_PEERCRED, &c, &len) < 0) return result(env, -1);
+  getsockopt(int_arg(&a, 0), SOL_LOCAL, LOCAL_PEERPID, &pid, &plen);
+  int32_t out[3 + NGROUPS] = {pid, (int32_t)c.cr_uid, c.cr_ngroups > 0 ? (int32_t)c.cr_groups[0] : -1};
+  int n = c.cr_ngroups < 0 ? 0 : c.cr_ngroups > NGROUPS ? NGROUPS : c.cr_ngroups;
+  for (int i = 0; i < n; i++) out[3 + i] = (int32_t)c.cr_groups[i];
+  return array(env, out, 3 + n);
+#endif
+}
+
+// threads() -> the names of our native threads, from Mach's thread list;
+// on Linux the daemon reads /proc/self/task itself, and gets [].
+static napi_value Threads(napi_env env, napi_callback_info info) {
+  napi_value out;
+  napi_create_array_with_length(env, 0, &out);
+#ifndef __linux__
+  uint32_t n = 0;
+  thread_act_array_t list;
+  mach_msg_type_number_t count;
+  if (task_threads(mach_task_self(), &list, &count) != KERN_SUCCESS) return out;
+  for (mach_msg_type_number_t i = 0; i < count; i++) {
+    struct thread_extended_info ext;
+    mach_msg_type_number_t size = THREAD_EXTENDED_INFO_COUNT;
+    const char *name = "";
+    if (thread_info(list[i], THREAD_EXTENDED_INFO, (thread_info_t)&ext, &size) == KERN_SUCCESS) name = ext.pth_name;
+    napi_value v;
+    napi_create_string_utf8(env, name, strlen(name), &v);
+    napi_set_element(env, out, n++, v);
+    mach_port_deallocate(mach_task_self(), list[i]);
+  }
+  vm_deallocate(mach_task_self(), (vm_address_t)list, count * sizeof *list);
+#endif
+  return out;
 }
 
 // recvfds(fd, max, maxFds) -> [Buffer, fd...], or -errno.
@@ -421,7 +540,11 @@ static napi_value Recvfds(napi_env env, napi_callback_info info) {
   struct iovec iov = {buf, (size_t)max};
   struct msghdr msg = {.msg_iov = &iov, .msg_iovlen = 1, .msg_control = ctl, .msg_controllen = space};
   ssize_t r;
+#ifdef __linux__
   do r = recvmsg(int_arg(&a, 0), &msg, MSG_CMSG_CLOEXEC);
+#else
+  do r = recvmsg(int_arg(&a, 0), &msg, 0);
+#endif
   while (r < 0 && errno == EINTR);
   napi_value out;
   if (r < 0) {
@@ -436,6 +559,9 @@ static napi_value Recvfds(napi_env env, napi_callback_info info) {
       for (int i = 0; i < count; i++) {
         int fd;
         memcpy(&fd, CMSG_DATA(c) + i * sizeof(int), sizeof fd);
+#ifndef __linux__
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+#endif
         napi_set_element(env, out, n++, num(env, fd));
       }
     }
@@ -484,7 +610,7 @@ static void on_signal(int sig) {
 static napi_value Selfpipe(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
   int p[2];
-  if (pipe2(p, O_NONBLOCK | O_CLOEXEC) < 0) return result(env, -1);
+  if (sr_pipe2(p, O_NONBLOCK | O_CLOEXEC) < 0) return result(env, -1);
   pipe_w = p[1];
   uint32_t n = 0;
   napi_get_array_length(env, a.argv[0], &n);
@@ -529,8 +655,13 @@ static napi_value Disposition(napi_env env, napi_callback_info info) {
 
 // --- files ----------------------------------------------------------------------
 
+// inotify on Linux; -ENOSYS elsewhere, where the daemon stats instead.
 static napi_value InotifyInit(napi_env env, napi_callback_info info) {
+#ifdef __linux__
   return result(env, inotify_init1(IN_NONBLOCK | IN_CLOEXEC));
+#else
+  return num(env, -ENOSYS);
+#endif
 }
 
 // watch(fd, path) -> watch descriptor: any change to the file.
@@ -538,14 +669,23 @@ static napi_value InotifyWatch(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
   char path[4096];
   str_arg(&a, 1, path, sizeof path);
+#ifdef __linux__
   return result(env, inotify_add_watch(int_arg(&a, 0), path,
                                        IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVE_SELF | IN_DELETE_SELF));
+#else
+  return num(env, -ENOSYS);
+#endif
 }
 
 // openpty(rows, cols) -> [master, slave], for imports that look for a terminal.
 static napi_value Openpty(napi_env env, napi_callback_info info) {
   args_t a = args(env, info);
+#ifdef __linux__
   int m = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+#else
+  int m = posix_openpt(O_RDWR | O_NOCTTY); // no O_CLOEXEC there
+  if (m >= 0) fcntl(m, F_SETFD, FD_CLOEXEC);
+#endif
   if (m < 0 || grantpt(m) < 0 || unlockpt(m) < 0) return result(env, -1);
   char *name = ptsname(m);
   int s = name ? open(name, O_RDWR | O_NOCTTY | O_CLOEXEC) : -1;
@@ -558,6 +698,49 @@ static napi_value Openpty(napi_env env, napi_callback_info info) {
   if (ws.ws_row && ws.ws_col) ioctl(s, TIOCSWINSZ, &ws);
   int32_t out[2] = {m, s};
   return array(env, out, 2);
+}
+
+// fdpath(fd) -> a path naming the directory open as fd: /proc/self/fd/N on
+// Linux, F_GETPATH on macOS ("" if unknown).
+static napi_value Fdpath(napi_env env, napi_callback_info info) {
+  args_t a = args(env, info);
+  char path[4096] = "";
+#ifdef __linux__
+  snprintf(path, sizeof path, "/proc/self/fd/%d", int_arg(&a, 0));
+#else
+  if (fcntl(int_arg(&a, 0), F_GETPATH, path) < 0) path[0] = 0;
+#endif
+  napi_value v;
+  napi_create_string_utf8(env, path, strlen(path), &v);
+  return v;
+}
+
+// cfUnsafe() -> 1 if a forked child of ours would be killed for using
+// CoreFoundation, because this process used it first (see cf_unsafe in
+// speedrunner_daemon.py); 0 otherwise, and always on Linux. A throwaway
+// child calls SCDynamicStoreCopyProxies, as Python's _scproxy does, and
+// leaves by _exit, not by a crash: a crash report would pop up a dialog.
+static napi_value CfUnsafe(napi_env env, napi_callback_info info) {
+#ifdef __linux__
+  return num(env, 0);
+#else
+  pid_t pid = fork();
+  if (pid == 0) {
+    int fatal[] = {SIGSEGV, SIGBUS, SIGILL, SIGTRAP, SIGABRT};
+    for (size_t i = 0; i < sizeof fatal / sizeof *fatal; i++) signal(fatal[i], (void (*)(int))_exit);
+    int null = open("/dev/null", O_RDWR);
+    for (int fd = 0; fd < 3; fd++) dup2(null, fd); // "The process has forked and you cannot use..."
+    void *sc = dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration", RTLD_NOW);
+    void *(*proxies)(void *) = sc ? (void *(*)(void *))dlsym(sc, "SCDynamicStoreCopyProxies") : NULL;
+    if (proxies) proxies(NULL);
+    _exit(0);
+  }
+  int st = 0;
+  pid_t r;
+  do r = waitpid(pid, &st, 0);
+  while (r < 0 && errno == EINTR);
+  return num(env, r < 0 || !WIFEXITED(st) || WEXITSTATUS(st) != 0);
+#endif
 }
 
 // --- module -----------------------------------------------------------------------
@@ -577,6 +760,7 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
       FN("sendfd", Sendfd),     FN("selfpipe", Selfpipe), FN("signals", Signals),
       FN("unblock", Unblock),   FN("disposition", Disposition),
       FN("inotifyInit", InotifyInit), FN("inotifyWatch", InotifyWatch), FN("openpty", Openpty),
+      FN("threads", Threads),   FN("fdpath", Fdpath),     FN("cfUnsafe", CfUnsafe),
   };
   napi_define_properties(env, exports, sizeof props / sizeof props[0], props);
   return exports;

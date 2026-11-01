@@ -41,7 +41,7 @@ module Speedrunner
   PROBE_STEP_S = 0.25 # a probe hands back what is left after this long
   MACOS = RUBY_PLATFORM.include?("darwin")
   # The client sets OBJC_DISABLE_INITIALIZE_FORK_SAFETY for us on macOS (see
-  # ruby_daemon_env in client/src/platform.rs): ours, not the tool's.
+  # objc_fork_env in client/src/platform.rs): ours, not the tool's.
   ENV.delete("OBJC_DISABLE_INITIALIZE_FORK_SAFETY") if ENV.delete("SPEEDRUNNER_OBJC_ADDED")
 
   def self.log(msg)
