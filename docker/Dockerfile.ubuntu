@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-venv ruby ruby-dev build-essential \
         php-cli php-opcache php-xml php-mbstring composer \
-        cargo rustc zsh procps rsync git ca-certificates unzip \
+        cargo rustc zsh procps rsync git ca-certificates unzip curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root/speedrunner

@@ -1,6 +1,7 @@
 # Points the package managers at a published release: pushes the Homebrew
 # formula to the tap anthonyGosme/homebrew-speedrunner and checks that
 # `brew install` takes it (Linuxbrew, and macOS on Intel and Apple Silicon),
+# builds, installs and removes the AUR package in Arch Linux,
 # then opens a pull request that brings
 # packaging/ (the formula, the AUR files) to that version on main.
 # Called by release.yml after each release; by hand, it redoes it for a
@@ -106,6 +107,27 @@ jobs:
           test -x "$(brew --prefix)/bin/srr"
           brew test speedrunner
           brew uninstall speedrunner
+
+  arch:  # the AUR recipe, as packaging/update.sh sets it for this release
+    permissions: {}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: makepkg, pacman -U, pacman -R, in an Arch Linux container
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          packaging/update.sh "${VERSION#v}"
+          docker run --rm -v "$PWD/packaging:/pkg:ro" -e "VERSION=${VERSION#v}" archlinux:latest bash -ec '
+          pacman -Syu --noconfirm --needed -q base-devel > /dev/null
+          useradd -m builder && cp -r /pkg/aur /home/builder/aur && chown -R builder /home/builder/aur
+          cd /home/builder/aur
+          su builder -c "makepkg --noconfirm && makepkg --printsrcinfo | diff - .SRCINFO"
+          pacman -U --noconfirm ./speedrunner-bin-*.pkg.tar.zst
+          speedrunner --version | grep -F "$VERSION"
+          test "$(readlink /usr/bin/srr)" = speedrunner
+          pacman -R --noconfirm speedrunner-bin
+          test ! -e /usr/bin/speedrunner && test ! -L /usr/bin/srr'
 
   pull-request:
     needs: tap

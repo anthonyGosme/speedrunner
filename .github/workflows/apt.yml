@@ -104,4 +104,6 @@ jobs:
           done;
           apt-get install -yq speedrunner;
           speedrunner --version | grep -F "$VERSION";
-          test "$(readlink /usr/bin/srr)" = speedrunner'
+          test "$(readlink /usr/bin/srr)" = speedrunner;
+          apt-get remove -yq speedrunner;
+          test ! -e /usr/bin/speedrunner && test ! -L /usr/bin/srr'
