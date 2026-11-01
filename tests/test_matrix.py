@@ -562,8 +562,8 @@ main()
 def ptrace_allowed():
     """Whether a process may be traced by its parent (PTRACE_TRACEME), as the
     client does to follow a launcher: seccomp or Yama may forbid it. The
-    client follows launchers on Linux only."""
-    if sys.platform != "linux":
+    client follows launchers on Linux and macOS."""
+    if sys.platform not in ("linux", "darwin"):
         return False
     import ctypes
     libc = ctypes.CDLL(None, use_errno=True)
@@ -574,8 +574,9 @@ def ptrace_allowed():
 
 
 PTRACE = ptrace_allowed()
-needs_ptrace = unittest.skipUnless(PTRACE, "ptrace is not allowed here" if sys.platform == "linux"
-                                   else "launchers are followed on Linux only")
+needs_ptrace = unittest.skipUnless(PTRACE, "ptrace is not allowed here"
+                                   if sys.platform in ("linux", "darwin")
+                                   else "launchers are followed on Linux and macOS only")
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
@@ -611,12 +612,17 @@ class Launchers(Matrix):
         for tool in ("sh-tool", "py-tool"):
             stop(tool, cls.env)
 
-    def warm(self, tool, timeout=30.0):
+    def warm(self, tool, timeout=30.0, native_ok=False):
         deadline = time.monotonic() + timeout
         while run("hs", [tool], cwd=self.work, env=self.env).returncode == EXIT_NOT_FAST:
             if time.monotonic() > deadline:
                 raise RuntimeError(f"no daemon for {tool}")
             time.sleep(0.1)
+        if MACOS and not native_ok and status(tool, self.env) == "down":
+            # Served natively, start to end: after a signed interpreter's
+            # exec (Apple's Python, from its stub), macOS stops reporting
+            # the execs of the process the client traces.
+            self.skipTest(f"{tool}: this Python drops the trace (macOS): it runs natively")
 
     def log(self):
         try:
@@ -649,7 +655,7 @@ class Launchers(Matrix):
     def test_launcher_and_tool_run_once_per_call(self):
         for tool in ("sh-tool", "py-tool"):
             with self.subTest(tool=tool):
-                self.warm(tool)
+                self.warm(tool, native_ok=True)
                 before = len(self.log())
                 for _ in range(3):
                     self.assertEqual(run("hs", [tool], cwd=self.work, env=self.env).returncode, 0)

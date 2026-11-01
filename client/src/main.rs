@@ -1817,12 +1817,18 @@ fn node_without_code_cache(interp: &[u8]) -> bool {
         Some(d) if !d.is_empty() => PathBuf::from(d),
         _ => Path::new(&env::var_os("HOME").unwrap_or_default()).join(".cache"),
     };
-    let Ok(noted) = std::fs::read(base.join("speedrunner").join("node-no-code-cache")) else {
-        return false;
+    let noted = match std::fs::read(base.join("speedrunner").join("node-no-code-cache")) {
+        Ok(noted) => noted,
+        Err(_) => return false,
     };
-    let Ok(real) = std::fs::canonicalize(OsStr::from_bytes(interp)) else { return false };
-    let Ok(meta) = std::fs::metadata(&real) else { return false };
-    let line = [real.as_os_str().as_bytes(), format!("\t{}\t{}", meta.len(), meta.mtime()).as_bytes()].concat();
+    let line = match std::fs::canonicalize(OsStr::from_bytes(interp)) {
+        Ok(real) => match std::fs::metadata(&real) {
+            Ok(meta) => [real.as_os_str().as_bytes(),
+                         format!("\t{}\t{}", meta.len(), meta.mtime()).as_bytes()].concat(),
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
     noted.split(|b| *b == b'\n').any(|l| l == &line[..])
 }
 
