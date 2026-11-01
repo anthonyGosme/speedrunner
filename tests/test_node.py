@@ -217,6 +217,34 @@ class CoreFoundation(m.Matrix):
         self.assertEqual(len(refused), 1)
 
 
+def node_has_code_cache():
+    node = shutil.which("node", path=m.BASE_ENV["PATH"])
+    p = subprocess.run([node, "-p", "process.config.variables.node_use_node_code_cache"],
+                       capture_output=True, text=True)
+    return p.stdout.strip() != "false"
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class CodeCache(m.Matrix):
+    """A Node built without the code cache of its internals (Fedora's,
+    Homebrew's node@22): --no-lazy would rename frames of its loader in a
+    stack. Its first daemon notes it and leaves; the next starts without
+    --no-lazy, and serves the same stacks as natively."""
+
+    def test_noted_and_served_without_no_lazy(self):
+        root, env = m.private_daemon("nodetest")
+        self.addCleanup(m.stop, "nodetest", env)
+        note = os.path.join(env["XDG_CACHE_HOME"], "speedrunner", "node-no-code-cache")
+        if node_has_code_cache():
+            self.assertFalse(os.path.exists(note))
+            return
+        with open(note) as f:
+            self.assertEqual(len(f.read().splitlines()), 1)
+        argv = ["nodetest", "exit", "throw"]
+        rc, _, err = self.assertSame(argv, env=env)
+        self.assertIn(b"Module._extensions..js", err)
+
+
 class ExitWrappers(m.Matrix):
     def test_exit_through_wrappers(self):
         # signal-exit (jest) wraps process.emit and process.reallyExit: its

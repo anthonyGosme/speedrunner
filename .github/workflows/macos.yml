@@ -69,7 +69,11 @@ jobs:
           HS_PATH: ${{ env.RB_GEM_HOME }}/bin:${{ env.HS_PATH }}
       - run: |  # wherever the image keeps node, which the tests' PATH must have
           echo "NODE_PATH_DIRS=$PWD/tests/fixture/nodetest/bin:$(dirname "$(command -v node)")" >> "$GITHUB_ENV"
-      - name: Node 24 from nodejs.org (the Intel image's is Homebrew's node@22, without a code cache, not served)
+      - name: Node suite with the image's Node (on Intel, Homebrew's node@22, without code cache)
+        run: node --version && python3 tests/test_node.py -v
+        env:
+          HS_PATH: ${{ env.NODE_PATH_DIRS }}:${{ env.HS_PATH }}
+      - name: Node 24 from nodejs.org
         run: |
           V=v24.22.2 A=$(uname -m | sed 's/x86_64/x64/')
           curl -fsSLO "https://nodejs.org/dist/$V/node-$V-darwin-$A.tar.gz"
