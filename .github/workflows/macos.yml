@@ -68,7 +68,7 @@ jobs:
           echo "HS_BIN=$PWD/client/target/release/speedrunner" >> "$GITHUB_ENV"
           echo "HS_PATH=$PWD/tests/fixture/phptest/bin:$(brew --prefix php@8.4)/bin" >> "$GITHUB_ENV"
       - run: python3 tests/test_php.py -v
-      - name: warm bench (indicative: a shared runner)
+      - name: warm bench, indicative on a shared runner
         run: python3 bench/macos/warm.py "$HS_BIN" 10 "$HS_PATH" -- phptest argv x -- composer --version
         continue-on-error: true
       - if: failure()
