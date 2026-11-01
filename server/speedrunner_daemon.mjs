@@ -307,8 +307,7 @@ function pendingWork() {
 }
 
 // Loads one module and judges it: null if it may stay, else the reason.
-// cf: also whether it used CoreFoundation (macOS; a fork each time).
-async function loadJudged(entry, outs, threads, cf = false) {
+async function loadJudged(entry, outs, threads) {
   const env = JSON.stringify(realEnv);
   const work = pendingWork();
   const s = (step = {});
@@ -325,7 +324,6 @@ async function loadJudged(entry, outs, threads, cf = false) {
   if (s.argv) return "reads the command line";
   if (foreignThreads() > threads) return "starts a thread";
   if (pendingWork() > work) return "leaves work pending";
-  if (cf && sys.cfUnsafe()) return "uses CoreFoundation";
   return null;
 }
 
@@ -686,7 +684,7 @@ function probe(candidates) {
     (async () => {
       startTracking();
       for (const entry of candidates) {
-        const why = await loadJudged(entry, [out1, out2], 1, MACOS);
+        const why = await loadJudged(entry, [out1, out2], 1);
         writeAll(wr, Buffer.from(JSON.stringify(why === null ? { ok: entry[0] } : { refused: entry[0], why }) + "\n"));
         if (why !== null) break;
       }
@@ -744,9 +742,11 @@ async function applyLearned(candidates) {
       added++;
     }
     stopTracking();
+    // macOS: CoreFoundation used (a canary, a fork: once per batch, not per
+    // module in the probe, where its usual user, process.title, starts
+    // threads anyway). Then none of the batch again.
     const batch = todo.slice(0, v.accepted.length);
     if (batch.length && sys.cfUnsafe()) {
-      // Vetted one by one, yet together they did: none of them again.
       for (const [u] of batch) state.blacklist.add(u);
       saveCache();
       log(`${batch.length} learned modules used CoreFoundation in the daemon; exiting`);
