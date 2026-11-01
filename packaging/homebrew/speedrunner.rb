@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.4.0"
+  version "0.4.1"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "a19d8adff7cf7e77e368bc5760e2419dfa603d1bf7bf9e5b96969ec4c5034475"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.1/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "b27a4c8f3da710f26370a4865c59c785dc8c9a4a429a1ba262b8c8ea9af06545"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "a19d8adff7cf7e77e368bc5760e2419dfa603d1bf7bf9e5b96969ec4c5034475"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.1/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "b27a4c8f3da710f26370a4865c59c785dc8c9a4a429a1ba262b8c8ea9af06545"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "48fb0bdc9b1373cd9cedd6d25f475400dc1fa51f4d0592687e86a5a503490336"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.1/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "bf18aa3eaaf6f5d31edbc32c8cbdc5dc62c55d06fb60b8ef99c0a739633f2488"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "19ea13ad37d2aacc00bde909424a7965f19b0126f0f89142e1b0a7b8c35f8c4d"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.1/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "af6e97a0dfc0363d446737245bf0bc80e4d1c27b4868d53e18daf773fd47b6df"
     end
   end
 
