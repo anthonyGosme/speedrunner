@@ -1,0 +1,6 @@
+{"command": "npm --version", "same_output": true, "native": {"median_ms": 202.8, "min_ms": 199.3, "max_ms": 209.3}, "served": {"median_ms": 72.2, "min_ms": 69.6, "max_ms": 74.5}, "gain": 2.8}
+{"command": "eslint --version", "same_output": true, "native": {"median_ms": 285.5, "min_ms": 278.3, "max_ms": 417.4}, "served": {"median_ms": 50.1, "min_ms": 49.0, "max_ms": 58.9}, "gain": 5.7}
+{"command": "eslint srr-sample.js", "same_output": true, "native": {"median_ms": 380.6, "min_ms": 347.5, "max_ms": 654.9}, "served": {"median_ms": 116.1, "min_ms": 88.2, "max_ms": 121.8}, "gain": 3.3}
+{"command": "prettier --version", "same_output": true, "native": {"median_ms": 157.7, "min_ms": 154.3, "max_ms": 165.0}, "served": {"median_ms": 32.5, "min_ms": 29.1, "max_ms": 33.7}, "gain": 4.9}
+{"command": "prettier srr-sample.js", "same_output": true, "native": {"median_ms": 221.2, "min_ms": 218.5, "max_ms": 224.0}, "served": {"median_ms": 71.2, "min_ms": 70.1, "max_ms": 72.4}, "gain": 3.1}
+{"command": "tsc --version", "same_output": true, "native": {"median_ms": 137.0, "min_ms": 134.5, "max_ms": 146.3}, "served": {"median_ms": 58.8, "min_ms": 52.9, "max_ms": 66.7}, "gain": 2.3}
