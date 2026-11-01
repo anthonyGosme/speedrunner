@@ -619,9 +619,9 @@ class Launchers(Matrix):
                 raise RuntimeError(f"no daemon for {tool}")
             time.sleep(0.1)
         if MACOS and not native_ok and status(tool, self.env) == "down":
-            # Served natively, start to end: after a signed interpreter's
-            # exec (Apple's Python, from its stub), macOS stops reporting
-            # the execs of the process the client traces.
+            # Run natively, start to end: after a framework Python's exec of
+            # its Python.app, macOS stops reporting the execs of the process
+            # the client traces.
             self.skipTest(f"{tool}: this Python drops the trace (macOS): it runs natively")
 
     def log(self):
