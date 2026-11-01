@@ -100,9 +100,9 @@ Un lanceur prépare un environnement, puis exécute l'interpréteur sur le vrai 
 - **`-m module` dans le démon** (`--module`). Le fichier exécuté est trouvé comme le fait runpy : en important les paquets parents, et le paquet lui-même s'il a un `__main__`. Cet import vient en tête du niveau 1, sous les mêmes garde-fous. Natif, `sys.path[0]` est le cwd : le démon le retire, et chaque enfant met le cwd du client. Un fichier du cwd qui masquerait un module préchargé (`json.py`, ou un paquet avec `__init__`) fait partir l'appel en natif. L'enfant exécute par `runpy._run_module_as_main` dans un `__main__` neuf : une trace montre les mêmes frames qu'en natif.
 - **Entrées de `sys.path` ajoutées par l'outil** (gcloud ajoute `lib/third_party`). L'enfant les envoie avec ses imports appris, et le cache les garde (`"paths"`). La sonde et le parent importent avec ces entrées en tête de `sys.path`, puis le restaurent. Un module trouvé dans un autre fichier que chez l'enfant est refusé.
 
-## 2 quinquies. macOS (M1 : le démon Python et le client)
+## 2 quinquies. macOS (M1 : Python et le client ; M2 : Ruby et PHP)
 
-Même produit, même protocole ; seuls les mécanismes du système changent. Côté client, ils sont regroupés dans [client/src/platform.rs](../client/src/platform.rs) (`cfg(target_os)`) ; côté démon Python, dans la section « platform » de `speedrunner_daemon.py` (`MACOS`). Linux garde exactement son comportement.
+Même produit, même protocole ; seuls les mécanismes du système changent. Côté client, ils sont regroupés dans [client/src/platform.rs](../client/src/platform.rs) (`cfg(target_os)`) ; côté démons, dans une section « platform » (`MACOS`) des démons Python et Ruby, et dans `libc()` du démon PHP. Linux garde exactement son comportement.
 
 | Pièce | Linux | macOS |
 |---|---|---|
@@ -117,7 +117,9 @@ Même produit, même protocole ; seuls les mécanismes du système changent. Cô
 | SIGTERM relayé | par pidfd | par pid |
 | Script appelant (`activate`) | `/proc/<ppid>/cmdline`, `cwd`, `fd/255` | `KERN_PROCARGS2`, `PROC_PIDVNODEPATHINFO`, `proc_pidfdinfo` sur le fd 255 |
 | Lanceurs (az, gcloud) | suivis sous ptrace | exécutés en natif |
-| Ruby, PHP, Node | servis | exécutés en natif (M2, M3) |
+| Ruby | `O_TMPFILE`, inotify, `/proc/self/fd` | fichier supprimé dans `$TMPDIR`, `stat`, `fchdir` par Fiddle |
+| PHP (FFI vers la libc) | `msghdr`, `cmsghdr` 64 bits, `accept4`, `SOCK_CLOEXEC` | ceux de libSystem : `cmsghdr` à longueur 32 bits alignée sur 4, `accept` + `fcntl` (le socket accepté hériterait d'`O_NONBLOCK`), `fcntl` déclaré variadique |
+| Node | servi | exécuté en natif (M3) |
 
 **La règle CoreFoundation.** Une fois que CoreFoundation a servi dans un processus, un enfant forké qui s'en sert à son tour est tué (« The process has forked and you cannot use this CoreFoundation functionality safely »). Mesures dans `bench/results/…-macos-m1-mac/ANALYSE.md` :
 
@@ -130,6 +132,10 @@ Même produit, même protocole ; seuls les mécanismes du système changent. Cô
 **L'empreinte par kqueue.** Une file kqueue n'est pas héritée au fork, et `EVFILT_VNODE` demande un fd par fichier (`O_EVTONLY`). Le parent seul surveille donc les fichiers de modules. Il relève sa limite de fichiers ouverts (jusqu'à 10 240 ; celle d'un Terminal est 256), et chaque spare ferme ces fds et rend la limite avant d'accepter : l'outil voit la même qu'en natif (test `test_open_file_limit`). Au message `A` d'un enfant, le parent lit la file et répond `F` (rien) ou `S` (périmé) sur le socket de contrôle ; le noyau range l'événement pendant l'écriture même, comme pour inotify. Sans réponse en 20 ms (parent occupé à apprendre, ou disparu), l'enfant fait un `stat` de chaque fichier. Comme sous Linux, le parent s'arrête dès qu'un événement arrive. Pas de `NOTE_ATTRIB` : une extension `.so` en reçoit un chaque fois qu'un autre processus la charge, sans changement ; écriture, extension, suppression, renommage (pip qui remplace un fichier) restent vus. Gain : la phase connexion → prêt de black passe de 8,9 à 3,4 ms sur un i7.
 
 **Le canari ne fait pas de rapport de crash.** Un enfant qui plante fait écrire un rapport par macOS et ouvrir la fenêtre « Python a quitté de manière imprévue » sur l'écran de l'utilisateur. L'enfant canari transforme donc SIGSEGV, SIGBUS, SIGILL, SIGTRAP et SIGABRT en `_exit(signal)` : statut non nul, pas de rapport (vérifié sur le Mac mini).
+
+**Ruby et Objective-C.** Un processus Ruby a toujours un second thread, sa minuterie. Après un fork dans un processus qui a des threads, le runtime Objective-C refuse à l'enfant la première utilisation de toute classe (« +initialize may have been in progress in another thread when fork() was called », SIGABRT), même dans un parent qui n'a jamais touché CoreFoundation : un outil Ruby servi qui toucherait Foundation planterait, là où il marche en natif. Le thread de Ruby ne fait jamais d'Objective-C : le client lance le démon Ruby avec `OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES` (et `SPEEDRUNNER_OBJC_ADDED=1`), que le démon retire aussitôt de son env ; rien si l'utilisateur l'avait lui-même. Le canari Ruby appelle `SCDynamicStoreCopyProxies` par Fiddle, comme `_scproxy`, aux mêmes moments qu'en Python. Python et PHP n'ont qu'un thread : pas concernés.
+
+**PHP.** Rien de l'outil ne s'exécute dans le parent : un seul canari, au démarrage (une extension qui aurait utilisé CoreFoundation). Toute la couche C passe par FFI, avec des structures et constantes propres à chaque système. Sur l'arm64 d'Apple, les arguments variadiques passent par la pile : `fcntl` déclaré avec un prototype fixe recevait n'importe quoi, et chaque spare mourait.
 
 **L'env que voit l'outil.** Sous macOS, `python3.x` est souvent un lanceur qui fait lui-même un `exec` : celui de python.org ajoute `__CF_USER_TEXT_ENCODING` (absent d'une session ssh), `/usr/bin/python3` ajoute `SDKROOT`, `CPATH`, `LIBRARY_PATH` et `MANPATH`. `KERN_PROCARGS2` donne l'env de l'interpréteur après ce lanceur, sans dire ce qui venait du client. Le client passe donc au démon, dans `SPEEDRUNNER_LAUNCH_ENV`, une empreinte FNV-1a 64 de chaque entrée de son env, suivie de son nom. Le démon en déduit ce que le lanceur et CPython ont ajouté ou changé, et l'ajoute à l'env de chaque requête, comme en natif. Une clé de démarrage (`PYTHON*`, `LC_*`, `LANG`) changée par le lanceur fait partir l'appel en natif.
 
@@ -387,6 +393,9 @@ Une release est un seul fichier : le client embarque les quatre démons, l'addon
 - **macOS, `os.set_inheritable`** passe par `ioctl(FIOCLEX)`, qui échoue en EBADF sur un fd ouvert `O_SEARCH` (le cwd reçu du client) : chaque enfant échouait avant de répondre. Le démon utilise `fcntl(F_SETFD)`.
 - **macOS, chemins de socket** : 104 octets au plus (108 sous Linux), et le dossier temporaire de macOS (`/var/folders/…/T/`) est profond. Le dossier runtime par défaut, `/tmp/speedrunner-<uid>`, est court ; les tests créent leurs dossiers sous `/tmp`. Un chemin trop long fait partir l'appel en natif.
 - **macOS, le canari et les threads.** Après la détection de proxy (3 threads), le canari CoreFoundation passe sur l'Intel : dans un processus qui a des threads, il ne prouve rien. La sonde vérifie donc les threads d'abord.
+- **macOS, `fcntl` par FFI.** PHP le déclarait `int fcntl(int, int, int)` ; il est variadique, et sur l'arm64 d'Apple ses arguments variadiques passent par la pile : chaque spare mourait (« spare children keep dying »), sur les deux runners. Déclaré `int fcntl(int, int, ...)` sur macOS.
+- **PHP 8.5 enregistre `argv` en CLI quoi que dise `register_argc_argv`** (RFC « deprecations PHP 8.5 »). Le démon PHP comptait sur `-d register_argc_argv=0` pour que `getopt()` lise le `$argv` reconstruit par l'enfant : en 8.5, `getopt()` lit le `$_SERVER['argv']` interne, celui du démon. Le démon se désactive donc sur PHP ≥ 8.5 (exécution native, sortie juste), sous Linux comme sous macOS ; la CI macOS teste PHP 8.4. Trouvé par `test_getopt` sur le runner Intel (PHP 8.5.9). Pour servir PHP 8.5, il faudrait refaire `$_SERVER` interne dans l'enfant (FFI vers `sapi_globals`, à valider par version).
+- **macOS, `script(1)` BSD.** Sur une longue sortie, il transforme parfois un `\r\n` en `\r\r\n` ; et il renvoie l'écho du ^D qu'il envoie au pty quand sa propre entrée est finie, tôt ou tard. Côté natif comme côté servi : le harnais les neutralise des deux côtés.
 - **`PATH` lu à l'import, et `speedrunner exec`.** pre-commit lit `PATH` en se chargeant. Son démon, démarré par `srr`, avait un `PATH` sans le dossier de liens de `exec` ; sous `exec`, chaque appel partait en natif (« import-time env differs: PATH »). Les démons Python, Ruby et Node comparent désormais ce `PATH` sans leurs propres dossiers `bin-*` du dossier runtime, qui mènent aux mêmes outils : au pire, un sous-outil lancé par l'outil n'est pas servi. Trouvé par le bench pre-commit ; test `test_tool_reading_path_at_import_served_under_exec`.
 - **pre-commit mesure l'environnement en se chargeant.** `pre_commit/xargs.py` calcule à l'import la longueur maximale d'une ligne de commande (`ARG_MAX`, moins la taille de tout l'env, plafonnée à 128 Kio) et la fige comme valeur par défaut d'un argument. Il lit ainsi toutes les clés de l'env. Or git passe au hook `GIT_AUTHOR_DATE`, qui change à chaque commit : chaque appel du hook partait en natif (« import-time env differs: GIT_AUTHOR_DATE »). Adaptateur, comme pour rspec : les lectures faites depuis `_environ_size` de `pre_commit.xargs` ne sont pas notées, et l'enfant recalcule cette valeur avec l'env du client, avant de réappliquer les changements d'env de l'import, puisque `pre_commit.main` retire ses clés après avoir importé xargs. Trouvé par le test du vrai pre-commit sous git.
 
@@ -410,7 +419,8 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 - Node, un import qui parcourt les clés de l'environnement fait partir en natif un client dont l'ensemble des clés diffère (hors `PWD`, `OLDPWD`, `SHLVL`, `_` et `SPEEDRUNNER_*`) ; une pile capturée pendant l'évaluation du point d'entrée, et que l'outil affiche lui-même, montre les frames du démon.
 - pour un lanceur, `prewarm` exécute le préambule sans argument : sans effet pour az et gcloud, mais un lanceur qui ferait autre chose que préparer son exec le ferait aussi à chaque préchauffage.
 - hook git de pre-commit : servi seulement sous `speedrunner exec` ou `activate` (git lancé hors d'eux ne voit pas le lien `bash`), et si pre-commit est sur le `PATH` ou nommé. Sous eux, tout `bash` appelé par son nom passe par le client (un démarrage de plus, +4 ms mesurés dans Docker Desktop), et `$BASH` y nomme le lien, qui mène au même bash. Le démon du hook (`python -mpre_commit`) est distinct de celui du script `pre-commit` : `speedrunner status pre-commit` et `stop pre-commit` visent le second, le premier s'arrête après 4 h sans appel.
-- macOS : Python seulement (Ruby, PHP et Node partent en natif) ; lanceurs en natif ; l'empreinte kqueue ne voit pas un simple changement d'attributs (`touch`, `chmod`) d'un fichier de module ; un outil qui utilise CoreFoundation en se chargeant (détection de proxy, boucle d'exécution) voit ce module rechargé à chaque appel ; le hook bash demande bash ≥ 4.2, celui du système est 3.2 (zsh, le shell par défaut, n'a pas cette limite).
+- macOS : Python, Ruby et PHP (Node part en natif) ; lanceurs en natif ; l'empreinte kqueue ne voit pas un simple changement d'attributs (`touch`, `chmod`) d'un fichier de module ; un outil qui utilise CoreFoundation en se chargeant (détection de proxy, boucle d'exécution) voit ce module rechargé à chaque appel ; le hook bash demande bash ≥ 4.2, celui du système est 3.2 (zsh, le shell par défaut, n'a pas cette limite) ; le Ruby 2.6 du système n'est pas servi (le démon demande Ruby ≥ 3.0).
+- PHP ≥ 8.5 n'est pas servi : sa CLI enregistre `argv` quoi qu'il arrive, et `getopt()` lirait les arguments du démon (§11).
 
 ## 13. État et suite
 
@@ -442,6 +452,7 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 | Release 0.3.1 | fait | binaires statiques x86_64 et aarch64, attestations de provenance signées |
 | M0 macOS, go/no-go | fait | GO pour Python : plafonds x5 à x50 ; CoreFoundation tue les enfants d'un parent qui l'a utilisé |
 | M1 macOS : démon Python et client | fait | Intel x4,4 (aws) à x20,6 (pip), M6 x4,2 à x16,6 ; 16/16 sorties identiques ; matrice verte sur les deux ; règle CoreFoundation (canari) ; empreinte par kqueue |
+| M2 macOS : démons Ruby et PHP | fait | rubocop x4,9, rake x8,5, gem x8 (i7) ; phptest x5,7 à x8,9, composer x2,3 (CI) ; suites Ruby et PHP vertes sur Intel et Apple Silicon ; Ruby et Objective-C ; PHP 8.5 non servi |
 
 Décision ouverte : quand le client meurt (`kill -9`), l'enfant va aujourd'hui jusqu'au bout ; lui envoyer SIGHUP serait plus proche du natif, mais moins sûr pour une commande comme `aws s3 rm`.
 
@@ -450,7 +461,7 @@ Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licenc
 Suite :
 
 - publier le paquet AUR et le tap Homebrew (prêts dans `packaging/`) ;
-- macOS : le démon Python et le client sont portés (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Restent Ruby et PHP (M2), puis Node (M3), et la distribution (binaire universel, formule Homebrew pour macOS), à décider ;
+- macOS : le démon Python et le client sont portés (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Ruby et PHP aussi (M2, `bench/results/…-macos-m2-mac/ANALYSE.md`). Restent Node (M3), servir PHP 8.5, et la distribution (binaire universel, formule Homebrew pour macOS), à décider ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
 - traduire ce document en anglais.
 
