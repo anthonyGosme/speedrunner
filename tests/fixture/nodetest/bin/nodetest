@@ -76,6 +76,13 @@ const commands = {
     out(`ready ${process.pid}`);
     setTimeout(() => fs.appendFileSync(marker, "done\n"), Number(seconds) * 1000);
   },
+  execve() {
+    // The process becomes another program (TypeScript 7's tsc execs its
+    // native compiler): only the daemon's wait status reports its end.
+    if (typeof process.execve === "function") process.execve("/bin/sh", ["sh", "-c", "echo execd; exit 3"]);
+    out("execd");
+    process.exitCode = 3;
+  },
   title() {
     // Loaded on use (learned, refused on macOS), then the title set again, here.
     require("../lib/lazy-title");

@@ -74,7 +74,10 @@ const MAGIC = Buffer.from("HS1");
 const HANDSHAKE_TIMEOUT_MS = 5000;
 const LOCK_WAIT_MS = 10000;
 const PROBE_STEP_MS = 3000; // a probe silent this long hangs on its current module
-const SIG = { HUP: 1, INT: 2, USR1: 10, TERM: 15, CHLD: 17 };
+// By name: their numbers differ between Linux and macOS (SIGCHLD 17 or 20).
+const { signals } = require("node:os").constants;
+const SIG = { HUP: signals.SIGHUP, INT: signals.SIGINT, USR1: signals.SIGUSR1, TERM: signals.SIGTERM,
+              CHLD: signals.SIGCHLD };
 const CAUGHT = [SIG.CHLD, SIG.TERM, SIG.USR1, SIG.INT, SIG.HUP];
 const EINTR = -4, EAGAIN = -11;
 // What Node reads at its own start: a client with other values runs natively.
@@ -798,6 +801,9 @@ async function serve(opts) {
   state.boundIno = fs.statSync(name).ino;
   state.mainFrame = mainFrame();
   const sigfd = sys.selfpipe(CAUGHT); // after mainFrame: spawning sets libuv's SIGCHLD handler
+  // Without it no child's end is seen, unless it sends X itself (macOS once
+  // had the signals' Linux numbers here, and an execve'd child hung its client).
+  if (sigfd < 0) state.disabled = `cannot catch signals (${sigfd})`;
   state.inotify = sys.inotifyInit();
 
   // What earlier daemons learned, loaded with a pty on the fds that were

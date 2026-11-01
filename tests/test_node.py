@@ -159,6 +159,10 @@ class Context(m.Matrix):
     def test_argv(self):
         self.assertSame(["nodetest", "argv", "a b", "", "--x=1"])
 
+    def test_execve(self):
+        rc, out, _ = self.assertSame(["nodetest", "execve"])
+        self.assertEqual((rc, out), (3, b"execd\n"))
+
     def test_own_pids(self):
         _, out, _ = self.assertSame(["nodetest", "pid"])
         self.assertEqual(json.loads(out), {"pid": True, "ppid": True})
