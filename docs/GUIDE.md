@@ -196,7 +196,7 @@ stops after 4 hours unused, or with the [stop-everything loop](#stopping-every-d
 | `speedrunner prewarm <tool>` | Starts the daemon if none is up, or replaces one the tool's upgrade made stale. Returns at once. | 0, 1 if it cannot start one |
 | `speedrunner enroll [<tool>…]` | Enrolls tools; with no argument, lists them. | 0, 1 or 127 if refused |
 | `speedrunner init zsh\|bash` | Prints the shell hook, for `eval`. | 0 |
-| `speedrunner --version` | Prints `speedrunner 0.4.0`. | 0 |
+| `speedrunner --version`, `speedrunner version` | Prints `speedrunner 0.4.0`. | 0 |
 
 All of them exit with 127 for a tool not found on `PATH`, and 2 on a usage error.
 `status`, `stop` and `prewarm` also take `php <script>`
@@ -277,7 +277,6 @@ The reasons you can meet, and what to do:
 | `connect: No such file or directory` | No daemon yet; this call started one. | Nothing: the next call is served. |
 | `connect: Connection refused` | The daemon died; this call started another. | Nothing. |
 | `runtime dir: …` | The [runtime directory](#where-things-live) is missing (the very first call) or is not yours with mode 0700. | If it persists, check `ls -ld` on it. |
-| `connect: path must be shorter than SUN_LEN` | The socket path is too long: `$XDG_RUNTIME_DIR` is too deep. | Use a shorter `XDG_RUNTIME_DIR`, or unset it. |
 | `not a script of a runtime speedrunner serves` | A native binary, or a script for another interpreter. | Nothing to gain. |
 | `stale: installed files changed` | The tool, a module it loaded, or its interpreter changed. The daemon exits and a new one starts. | Nothing. |
 | `startup env differs: LANG` | A variable the interpreter reads as it starts differs from the daemon's: `PYTHON*`, `LANG`, `LC_ALL`, `LC_CTYPE` (Python); `RUBY*`, `GEM_*` and the same locale variables (Ruby); `PHPRC`, `PHP_INI_SCAN_DIR` (PHP); `NODE_*`, `UV_THREADPOOL_SIZE`, `LANG`, `LC_ALL`, `LC_MESSAGES` (Node). | `speedrunner stop <tool>`: the next call starts a daemon with your current environment. |
@@ -341,7 +340,7 @@ The standard `XDG_RUNTIME_DIR`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME` and
 
 | What | Where |
 |---|---|
-| Sockets, locks, logs, link directories | `$XDG_RUNTIME_DIR/speedrunner/`, else `/tmp/speedrunner-<uid>/` (the usual case on macOS, under `sudo` and in containers) |
+| Sockets, locks, logs, link directories | `$XDG_RUNTIME_DIR/speedrunner/`, else `/tmp/speedrunner-<uid>/` (the usual case on macOS, under `sudo` and in containers, and when `$XDG_RUNTIME_DIR` is too deep for a socket path: 104 bytes on macOS, 108 on Linux) |
 | Enrolled tools | `$XDG_CONFIG_HOME/speedrunner/tools`, else `~/.config/speedrunner/tools` |
 | What daemons learned | `$XDG_CACHE_HOME/speedrunner/`, else `~/.cache/speedrunner/`: one `<tool>-<hash>.json` per tool and installed version |
 | The daemons themselves | `$XDG_DATA_HOME/speedrunner/daemons/<hash>/`, else `~/.local/share/speedrunner/daemons/<hash>/` |
@@ -441,10 +440,11 @@ Limits:
 - ptrace must be allowed. In a container without it, or with Yama
   `ptrace_scope` set to 3, the client says `cannot follow the launcher: ptrace
   unavailable` and runs the launcher natively, once.
-- In scripts, prefix launchers with `srr` (`srr gcloud …`). Auto mode links only
-  Python, Ruby, PHP and Node scripts, so az is linked and gcloud, a shell script,
-  is not; and `exec -t` and `activate` refuse to link a shell launcher
-  (`gcloud: cannot be preloaded …; left native`).
+- In scripts, name shell launchers: `speedrunner exec -t gcloud …`,
+  `activate gcloud`, or enroll them. Auto mode links only Python, Ruby, PHP and
+  Node scripts, so az is linked and gcloud, a shell script, is not. Once a call
+  has been followed, naming the launcher also starts its daemon, as `prewarm`
+  does.
 - `prewarm` of a launcher does nothing until one call has been followed. After
   that, it runs the launcher's preamble without arguments to find its target.
 - On macOS, a launcher written in Python on a framework build of Python (az

@@ -341,8 +341,7 @@ impl<'a> Tool<'a> {
         // `./manage.py` names a different script in each project: the
         // daemon, which runs elsewhere, gets it relative to no directory.
         let path = absolute(&found)?;
-        let dir = runtime_dir();
-        let sock = dir.join(socket_name(name, &path));
+        let (dir, sock) = socket_at(socket_name(name, &path).as_ref());
         Some(Tool { name, path, found, sock, dir, form: None, target: None, learned: false })
     }
 
@@ -366,8 +365,7 @@ impl<'a> Tool<'a> {
             }
         };
         identity.extend_from_slice(&path);
-        let dir = runtime_dir();
-        let sock = dir.join(socket_name(name, &identity));
+        let (dir, sock) = socket_at(socket_name(name, &identity).as_ref());
         Tool { name, path, found, sock, dir, form: None, target: Some(target), learned: false }
     }
 
@@ -405,8 +403,9 @@ impl<'a> Tool<'a> {
         if !plain {
             return None;
         }
+        let (dir, sock) = socket_at(OsStr::from_bytes(&name));
         Some(Tool { name: self.name, path: self.path.clone(), found: self.found.clone(),
-                    sock: self.dir.join(OsStr::from_bytes(&name)), dir: self.dir.clone(),
+                    sock, dir,
                     form: None, target: None, learned: true })
     }
 
@@ -426,8 +425,7 @@ impl<'a> Tool<'a> {
             return None;
         }
         let path = script.into_os_string().into_vec();
-        let dir = runtime_dir();
-        let sock = dir.join(socket_name(OsStr::from_bytes(basename(&path)), &path));
+        let (dir, sock) = socket_at(socket_name(OsStr::from_bytes(basename(&path)), &path).as_ref());
         Some(Tool { name: self.name, found: path.clone(), path, sock, dir,
                     form: Some(ScriptForm { interp: self.path.clone(), typed: typed.clone() }),
                     target: None, learned: false })
@@ -974,8 +972,25 @@ fn read_msg(sock: &UnixStream) -> io::Result<(u8, Vec<u8>)> {
 fn runtime_dir() -> PathBuf {
     match env::var_os("XDG_RUNTIME_DIR") {
         Some(d) if !d.is_empty() => Path::new(&d).join("speedrunner"),
-        _ => PathBuf::from(format!("/tmp/speedrunner-{}", unsafe { libc::getuid() })),
+        _ => tmp_runtime_dir(),
     }
+}
+
+fn tmp_runtime_dir() -> PathBuf {
+    PathBuf::from(format!("/tmp/speedrunner-{}", unsafe { libc::getuid() }))
+}
+
+/// The directory and path of the socket named `name`: in the runtime dir,
+/// or in /tmp/speedrunner-<uid> when the path would not fit a socket address
+/// (104 bytes on macOS, 108 on Linux). A daemon could still bind it,
+/// relative to its directory, but no client could connect to it.
+fn socket_at(name: &OsStr) -> (PathBuf, PathBuf) {
+    let dir = runtime_dir();
+    let room = unsafe { mem::zeroed::<libc::sockaddr_un>() }.sun_path.len();
+    // The directory, a slash, the name and the final NUL.
+    let dir = if dir.as_os_str().len() + 1 + name.len() + 1 > room { tmp_runtime_dir() } else { dir };
+    let sock = dir.join(name);
+    (dir, sock)
 }
 
 fn check_runtime_dir(dir: &Path) -> io::Result<()> {
@@ -1057,7 +1072,7 @@ fn cmd_prewarm(tool: &Tool) -> i32 {
         return 0; // never seen to exec a daemon's tool: its first run will tell
     }
     if tool.learned {
-        return prewarm_launcher(tool);
+        return prewarm_launcher(tool, "prewarm");
     }
     match request(tool, b'P') {
         // A stale daemon is exiting; its replacement waits for the lock.
@@ -1076,7 +1091,7 @@ fn cmd_prewarm(tool: &Tool) -> i32 {
 
 /// A launcher's daemon, as its last run found it: up, or started from what
 /// the launcher execs when run without arguments, if that is the same.
-fn prewarm_launcher(learned: &Tool) -> i32 {
+fn prewarm_launcher(learned: &Tool, origin: &str) -> i32 {
     match request(learned, b'P') {
         Ok((b'P', text)) if !text.starts_with(b"stale") => return 0,
         _ => {}
@@ -1096,7 +1111,7 @@ fn prewarm_launcher(learned: &Tool) -> i32 {
     if target.sock != learned.sock {
         return 0; // execs another daemon's tool without arguments: leave it to the run
     }
-    match spawn_daemon(&target, "prewarm") {
+    match spawn_daemon(&target, origin) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("speedrunner: cannot start {} daemon: {}", target.display(), e);
@@ -1658,6 +1673,7 @@ fn prepare_links(extra: &[OsString], origin: &str, script: Option<(String, PathB
     }
     let mut good: Vec<OsString> = Vec::new();
     let mut to_start: Vec<Tool> = Vec::new();
+    let mut launchers: Vec<Tool> = Vec::new();
     for name in &names {
         let text = name.to_string_lossy();
         let valid = !text.is_empty() && !text.starts_with('-')
@@ -1675,7 +1691,16 @@ fn prepare_links(extra: &[OsString], origin: &str, script: Option<(String, PathB
             }
         };
         if let Err(e) = read_shebang(&tool.path) {
-            eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", text, e);
+            if !tool.is_launcher() {
+                eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", text, e);
+                continue;
+            }
+            // Its daemon is the one of what it execs, which its first run
+            // through the link finds out; once known, it is started here.
+            if let Some(learned) = tool.learned() {
+                launchers.push(learned);
+            }
+            good.push(name.clone());
             continue;
         }
         good.push(name.clone());
@@ -1683,6 +1708,9 @@ fn prepare_links(extra: &[OsString], origin: &str, script: Option<(String, PathB
     }
     if env::var_os("SPEEDRUNNER_NO_AUTOSTART").is_none() {
         start_daemons(&to_start, origin); // in the background: the script goes on
+        for learned in &launchers {
+            prewarm_launcher(learned, origin); // runs its preamble: a few ms each
+        }
     }
     let runtime = runtime_dir();
     ensure_runtime_dir(&runtime)?;
@@ -1851,7 +1879,8 @@ fn enrolled() -> Vec<String> {
 }
 
 /// Add tools to the list shell/speedrunner.zsh and .bash wrap and warm up. Only
-/// Python scripts are accepted: a native binary has nothing to gain.
+/// scripts of a served runtime and launchers are accepted: a native binary
+/// has nothing to gain.
 fn cmd_enroll(rest: &[OsString]) -> i32 {
     let mut tools = enrolled();
     if rest.is_empty() {
