@@ -74,7 +74,7 @@ class Outputs(m.Matrix):
 
     def test_exit_variants(self):
         for kind, expected in [("none", 0), ("code:3", 3), ("code:300", 44), ("exitcode:5", 5),
-                               ("throw", 1), ("reject", 1), ("late", 1)]:
+                               ("throw", 1), ("throw-props", 1), ("reject", 1), ("late", 1)]:
             with self.subTest(kind=kind):
                 rc, out, err = self.assertSame(["nodetest", "exit", kind])
                 self.assertEqual(rc, expected)
@@ -190,6 +190,27 @@ class Learning(m.Matrix):
         learn(["nodetest", "lazy"])
         argv = ["nodetest", "lazy", "--shout"]
         self.assertEqual(outcome(run("native", argv)), outcome(run("hs", argv, require_fast=False)))
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+@unittest.skipUnless(m.MACOS, "CoreFoundation is macOS's")
+class CoreFoundation(m.Matrix):
+    """macOS, as test_matrix.CoreFoundation: a module that sets the process
+    title at load (CoreFoundation, through libuv) is not kept, and each run
+    that sets its own is served as natively."""
+
+    def test_module_setting_the_title_is_refused(self):
+        root, env = m.private_daemon("nodetest")
+        self.addCleanup(m.stop, "nodetest", env)
+        learn(["nodetest", "title"], env)
+        for _ in range(3):
+            _, out, _ = self.assertSame(["nodetest", "title"], env=env)
+            self.assertEqual(out, b"title: nodetest-run\n")
+        [cache] = [os.path.join(dp, f) for dp, _, fs in os.walk(env["XDG_CACHE_HOME"])
+                   for f in fs if f.startswith("nodetest-node-") and f.endswith(".json")]
+        with open(cache) as f:
+            refused = [u for u in json.load(f)["blacklist"] if u.endswith("/lib/lazy-title.js")]
+        self.assertEqual(len(refused), 1)
 
 
 class ExitWrappers(m.Matrix):

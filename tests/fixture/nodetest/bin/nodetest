@@ -29,6 +29,7 @@ const commands = {
     if (kind.startsWith("code:")) process.exit(Number(kind.slice(5)));
     if (kind.startsWith("exitcode:")) process.exitCode = Number(kind.slice(9));
     if (kind === "throw") throw new Error("nodetest failure");
+    if (kind === "throw-props") throw Object.assign(new Error("nodetest failure"), { code: "ENODETEST", errno: -2 });
     if (kind === "reject") Promise.reject(new Error("nodetest rejection"));
     if (kind === "late") setTimeout(() => { throw new TypeError("nodetest late failure"); }, 5);
   },
@@ -58,8 +59,13 @@ const commands = {
     out(String(Math.random()));
   },
   pid() {
-    out(JSON.stringify({ pid: process.pid === Number(fs.readlinkSync("/proc/self")),
-                         ppid: process.ppid === Number(fs.readFileSync("/proc/self/stat", "utf8").split(") ")[1].split(" ")[1]) }));
+    // The kernel's view: /proc on Linux, ps elsewhere.
+    const ps = (field) => Number(require("child_process").execFileSync("ps", ["-o", `${field}=`, "-p", String(real)]));
+    const real = fs.existsSync("/proc/self") ? Number(fs.readlinkSync("/proc/self"))
+      : Number(require("child_process").execFileSync("/bin/sh", ["-c", "echo $PPID"]));
+    const ppid = fs.existsSync("/proc/self")
+      ? Number(fs.readFileSync("/proc/self/stat", "utf8").split(") ")[1].split(" ")[1]) : ps("ppid");
+    out(JSON.stringify({ pid: process.pid === real, ppid: process.ppid === ppid }));
   },
   sleep([seconds]) {
     out("ready");
@@ -69,6 +75,12 @@ const commands = {
     fs.appendFileSync(marker, "start\n"); // before "ready": the test may kill us then
     out(`ready ${process.pid}`);
     setTimeout(() => fs.appendFileSync(marker, "done\n"), Number(seconds) * 1000);
+  },
+  title() {
+    // Loaded on use (learned, refused on macOS), then the title set again, here.
+    require("../lib/lazy-title");
+    process.title = "nodetest-run";
+    out(`title: ${process.title}`);
   },
   lazy() {
     // Loaded on use, as tools load most of what they need: learned by the

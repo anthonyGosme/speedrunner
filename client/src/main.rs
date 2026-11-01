@@ -45,13 +45,14 @@ static CHILD_PIDFD: AtomicI32 = AtomicI32::new(-1);
 
 // The daemons and the shell hooks, built in: a release is this one file. The
 // Node daemon's addon comes per libc, as build.rs made it (empty if not).
-const EMBEDDED: [(&str, &[u8]); 6] = [
+const EMBEDDED: [(&str, &[u8]); 7] = [
     ("speedrunner_daemon.py", include_bytes!("../../server/speedrunner_daemon.py")),
     ("speedrunner_daemon.rb", include_bytes!("../../server/speedrunner_daemon.rb")),
     ("speedrunner_daemon.php", include_bytes!("../../server/speedrunner_daemon.php")),
     ("speedrunner_daemon.mjs", include_bytes!("../../server/speedrunner_daemon.mjs")),
     ("speedrunner_node-gnu.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-gnu.node"))),
     ("speedrunner_node-musl.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-musl.node"))),
+    ("speedrunner_node-darwin.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-darwin.node"))),
 ];
 const ZSH_HOOK: &str = include_str!("../../shell/speedrunner.zsh");
 const BASH_HOOK: &str = include_str!("../../shell/speedrunner.bash");
@@ -1351,7 +1352,7 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
         let mut given = env.take().unwrap_or_else(environ);
         let extra = match runtime {
             Runtime::Python => platform::launch_env_var(&given).into_iter().collect(),
-            Runtime::Ruby => platform::ruby_daemon_env(&given),
+            Runtime::Ruby | Runtime::Node => platform::objc_fork_env(&given),
             _ => Vec::new(),
         };
         given.extend(extra);
@@ -1986,13 +1987,18 @@ fn locate_daemon(runtime: Runtime, interp: &[u8]) -> io::Result<Vec<u8>> {
     Ok(extract_daemon(file)?.into_os_string().into_vec())
 }
 
-/// The addon file for a Node interpreter: glibc or musl, from its ELF
-/// interpreter (ld-musl-*). An error if this build has none for it.
+/// The addon file for a Node interpreter: on Linux glibc or musl, from its
+/// ELF interpreter (ld-musl-*); on macOS the one there is. An error if this
+/// build has none for it.
 fn node_addon(interp: &[u8]) -> io::Result<&'static str> {
-    let mut head = vec![0u8; 4096];
-    let n = File::open(OsStr::from_bytes(interp))?.read(&mut head)?;
-    let musl = head[..n].windows(7).any(|w| w == b"ld-musl");
-    let name = if musl { "speedrunner_node-musl.node" } else { "speedrunner_node-gnu.node" };
+    let name = if cfg!(target_os = "macos") {
+        "speedrunner_node-darwin.node"
+    } else {
+        let mut head = vec![0u8; 4096];
+        let n = File::open(OsStr::from_bytes(interp))?.read(&mut head)?;
+        let musl = head[..n].windows(7).any(|w| w == b"ld-musl");
+        if musl { "speedrunner_node-musl.node" } else { "speedrunner_node-gnu.node" }
+    };
     match EMBEDDED.iter().find(|(f, _)| *f == name) {
         Some((_, bytes)) if !bytes.is_empty() => Ok(name),
         _ => Err(unsupported("this build has no Node addon for this libc")),
