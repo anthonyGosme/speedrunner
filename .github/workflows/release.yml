@@ -1,5 +1,6 @@
 # On a version tag (v0.1.0): static Linux binaries for x86_64 and aarch64,
-# as archives and .deb packages, their SHA-256 sums and install.sh,
+# as archives and .deb packages, a universal macOS binary (x86_64 and arm64)
+# as an archive, their SHA-256 sums and install.sh,
 # published as the GitHub release that
 # `curl -fsSL .../install.sh | sh` downloads from. Each archive gets a
 # signed build provenance attestation (each .deb too): `gh attestation verify <archive>
@@ -80,13 +81,49 @@ jobs:
             speedrunner-*.tar.gz*
             speedrunner_*.deb*
 
+  build-macos:
+    permissions:
+      contents: read
+      id-token: write  # to sign the attestation (Sigstore)
+      attestations: write
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag is the crate's version
+        run: test "${GITHUB_REF_NAME#v}" = "$(sed -n 's/^version = "\(.*\)"/\1/p' client/Cargo.toml)"
+      - name: Build, both architectures in one binary
+        run: client/macos-universal.sh speedrunner-universal-apple-darwin/speedrunner
+      - name: Runs, under Rosetta too when the runner has it
+        run: |
+          bin=speedrunner-universal-apple-darwin/speedrunner
+          "$bin" init zsh > /dev/null
+          if arch -x86_64 /usr/bin/true 2> /dev/null; then arch -x86_64 "$bin" --version; fi
+      - name: Package
+        run: |
+          name=speedrunner-universal-apple-darwin
+          cp LICENSE-MIT LICENSE-APACHE README.md "$name/"
+          tar czf "$name.tar.gz" "$name"
+          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: speedrunner-*.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-macos
+          path: speedrunner-*.tar.gz*
+
   platforms:
     permissions:
       contents: read
     uses: ./.github/workflows/platforms.yml
 
+  macos:  # the suites, with the universal binary built as above
+    permissions:
+      contents: read
+    uses: ./.github/workflows/macos.yml
+
   publish:
-    needs: [build, platforms]
+    needs: [build, build-macos, platforms, macos]
     permissions:
       contents: write  # to create the release
     runs-on: ubuntu-24.04
