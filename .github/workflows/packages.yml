@@ -1,6 +1,7 @@
 # Points the package managers at a published release: pushes the Homebrew
 # formula to the tap anthonyGosme/homebrew-speedrunner and checks that
-# `brew install` takes it, then opens a pull request that brings
+# `brew install` takes it (Linuxbrew, and macOS on Intel and Apple Silicon),
+# then opens a pull request that brings
 # packaging/ (the formula, the AUR files) to that version on main.
 # Called by release.yml after each release; by hand, it redoes it for a
 # published version (unchanged files are not committed again).
@@ -79,6 +80,32 @@ jobs:
           test -x "$(brew --prefix)/bin/srr";
           brew test speedrunner;
           brew uninstall speedrunner'
+
+  brew-macos:
+    needs: tap
+    permissions: {}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26]  # Intel, Apple Silicon
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: brew install from the tap (releases after 0.3.2 have the macOS archive)
+        env:
+          VERSION: ${{ inputs.version }}
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_ENV_HINTS: 1
+        run: |
+          v=${VERSION#v}
+          if ! curl -fsIL -o /dev/null "https://github.com/anthonyGosme/speedrunner/releases/download/v$v/speedrunner-universal-apple-darwin.tar.gz.sha256"; then
+            echo "::notice::v$v has no macOS archive: the formula is for Linux only"
+            exit 0
+          fi
+          brew install anthonyGosme/speedrunner/speedrunner
+          speedrunner --version | grep -F "$v"
+          test -x "$(brew --prefix)/bin/srr"
+          brew test speedrunner
+          brew uninstall speedrunner
 
   pull-request:
     needs: tap
