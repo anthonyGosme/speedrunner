@@ -1,30 +1,32 @@
-# État de l'art : JumpTheGun, quicken, python-preloaded
+# Prior art: JumpTheGun, quicken, python-preloaded
 
-Étude faite le 2026-10-28 par lecture des sources (clones `--depth 1` des dépôts GitHub). **Rien n'a été exécuté.** Les comportements décrits ci-dessous viennent de la lecture du code et restent à confirmer par des tests sur la machine Linux.
+Study made on 2026-10-28 by reading the sources (`--depth 1` clones of the GitHub repositories). **Nothing was run.** The behaviours described below come from reading the code and were to be confirmed by tests on the Linux machine.
 
-## Synthèse
+**Status (2026-11-01).** This is the study as written before the first line of speedrunner. Every "To do" and "To add" below has since been done (exit semantics, stream buffering, `flock` at startup, umask and process credentials, `/dev/tty`, reaping on `SIGCHLD`, the matrix cases): see [ARCHITECTURE.md](ARCHITECTURE.md). Only the decision about a client that dies is still open; the child is currently left to finish.
+
+## Summary
 
 | | JumpTheGun | quicken | python-preloaded |
 |---|---|---|---|
-| Version lue | 0.2.0 (`f1a658c`, 2025-12-14) | 0.1.0 + master (`2019-07-07`, abandonné) | main (`2025-06-12`) |
-| Licence | **Ambiguë** : `LICENSE` et README = MIT, `pyproject.toml` et classifier PyPI = Apache-2.0. Inclut `filelock` 3.9.0 (Unlicense) | MIT | MIT |
-| Taille (hors tests) | ~880 lignes Python + 204 lignes Bash | ~3 100 lignes | ~780 lignes |
-| Transport | Socket Unix (0.2.0 ; le README parle encore de TCP) | Socket Unix | Socket Unix |
+| Version read | 0.2.0 (`f1a658c`, 2025-12-14) | 0.1.0 + master (`2019-07-07`, abandoned) | main (`2025-06-12`) |
+| Licence | **Ambiguous**: `LICENSE` and README = MIT, `pyproject.toml` and PyPI classifier = Apache-2.0. Includes `filelock` 3.9.0 (Unlicense) | MIT | MIT |
+| Size (without tests) | ~880 lines of Python + 204 lines of Bash | ~3,100 lines | ~780 lines |
+| Transport | Unix socket (0.2.0; the README still talks about TCP) | Unix socket | Unix socket |
 | Client | Bash | Python | Python |
-| Stdio | Multiplexé dans le socket, ligne par ligne | fd passés (`SCM_RIGHTS`, via `multiprocessing.reduction`) | Nouveau PTY par appel, proxy |
-| Fork | Après `accept()`, à la demande | `multiprocessing` sur boucle asyncio | Après `accept()`, à la demande |
-| Invalidation | Aucune (timeout d'inactivité 4 h) | Version de la lib, gid, groupes, mtime/ctime du script | Aucune |
-| Contrôle d'accès | Socket 0600, dossier 0700 | Dossier vérifié (propriétaire + 0700) après `open` | Aucun |
-| Env transmis | Oui | Oui | **Non** |
-| Code de sortie | Oui, avec bugs (voir plus bas) | Oui | **Non** (toujours 0) |
+| Stdio | Multiplexed in the socket, line by line | fds passed (`SCM_RIGHTS`, through `multiprocessing.reduction`) | New PTY per call, proxied |
+| Fork | After `accept()`, on demand | `multiprocessing` on an asyncio loop | After `accept()`, on demand |
+| Invalidation | None (4 h idle timeout) | Library version, gid, groups, script mtime/ctime | None |
+| Access control | Socket 0600, directory 0700 | Directory checked (owner + 0700) after `open` | None |
+| Env passed on | Yes | Yes | **No** |
+| Exit code | Yes, with bugs (see below) | Yes | **No** (always 0) |
 
-**Côté licences** : tout est permissif. On peut reprendre des idées et des petits morceaux en gardant les mentions de copyright. Pour JumpTheGun, la licence est ambiguë (MIT ou Apache-2.0). Si on reprend du code, appliquer les deux mentions ou demander à l'auteur. Rien ici n'est assez gros ni assez juste pour mériter une copie : **on réécrit**.
+**Licences**: all permissive. Ideas and small pieces can be reused, keeping the copyright notices. For JumpTheGun, the licence is ambiguous (MIT or Apache-2.0). If code is reused, apply both notices or ask the author. Nothing here is big enough or correct enough to deserve a copy: **we rewrite**.
 
-## Constat bloquant pour notre brief : `aws` v1 n'a pas d'entry point
+## Blocking finding for our brief: `aws` v1 has no entry point
 
-Vérifié dans le `setup.py` d'aws-cli (branche `develop` = v1, version 1.46.2) : `aws` est déclaré via `scripts=['bin/aws', ...]`, **pas** via `entry_points={'console_scripts': ...}`. `importlib.metadata.entry_points()` ne trouvera donc rien pour `aws`. C'est pour cela que JumpTheGun code `aws → awscli.clidriver:main` en dur.
+Checked in aws-cli's `setup.py` (branch `develop` = v1, version 1.46.2): `aws` is declared through `scripts=['bin/aws', ...]`, **not** through `entry_points={'console_scripts': ...}`. So `importlib.metadata.entry_points()` will find nothing for `aws`. That is why JumpTheGun hard-codes `aws → awscli.clidriver:main`.
 
-En plus, `bin/aws` exécute du code dépendant de l'environnement *avant* l'import :
+On top of that, `bin/aws` runs environment-dependent code *before* the import:
 
 ```python
 if os.environ.get('LC_CTYPE', '') == 'UTF-8':
@@ -32,94 +34,94 @@ if os.environ.get('LC_CTYPE', '') == 'UTF-8':
 import awscli.clidriver
 ```
 
-Si on appelle `awscli.clidriver.main()` directement, cette ligne est sautée et on obtient un écart de comportement silencieux.
+Calling `awscli.clidriver.main()` directly skips that line, and gives a silent difference in behaviour.
 
-**Proposition, à valider** : à l'enrôlement, résoudre le script réellement exécuté (`command -v aws`, shebang pointant vers le Python du venv).
-- *Préchargement* : importer les modules dont le script dépend. Pour un script `console_scripts` généré par pip, c'est le module de l'entry point. Pour un `scripts=`, on exécute le script avec `__name__ != "__main__"`.
-- *Par requête* : exécuter le script lui-même avec `runpy.run_path(path, run_name="__main__")`. Les imports sont déjà dans `sys.modules`, donc l'appel coûte peu. Le code de haut niveau du script (ici la ligne `LC_CTYPE`) est rejoué avec l'env du client, et `sys.exit(main())` garde sa sémantique native.
+**Proposal, to be validated**: at enrollment, resolve the script that actually runs (`command -v aws`, shebang pointing to the venv's Python).
+- *Preloading*: import the modules the script depends on. For a `console_scripts` script generated by pip, that is the entry point's module. For a `scripts=` one, run the script with `__name__ != "__main__"`.
+- *Per request*: run the script itself with `runpy.run_path(path, run_name="__main__")`. The imports are already in `sys.modules`, so the call costs little. The script's top-level code (here the `LC_CTYPE` line) is replayed with the client's env, and `sys.exit(main())` keeps its native semantics.
 
-Cette approche unifie les deux cas et reste « zéro configuration ». À confirmer par la mesure à l'étape 0, et à faire figurer dans le brief si elle est retenue.
+This approach unifies both cases and stays "zero configuration". To be confirmed by measurement at stage 0, and to be written into the brief if adopted.
 
-Autre point : awscli v1 exige maintenant **Python ≥ 3.10**. La machine Debian 12 a 3.11.2, ça convient.
+Another point: awscli v1 now requires **Python ≥ 3.10**. The Debian 12 machine has 3.11.2, which is fine.
 
-## Pièges relevés, et ce qu'on en fait
+## Pitfalls found, and what we do about them
 
-### 1. Environnement modifié pendant l'import (JumpTheGun)
-JumpTheGun calcule le diff de `os.environ` avant/après l'import de l'outil, puis le réapplique sur l'env du client. Notre brief dit seulement « remplace `os.environ` ». Si on se contente de ça, on efface les variables posées par les imports.
-→ **Repris.** On capture le diff à l'import et on le réapplique. Test dédié dans la matrice.
+### 1. Environment changed during import (JumpTheGun)
+JumpTheGun computes the diff of `os.environ` before/after importing the tool, then applies it again on the client's env. Our brief only says "replace `os.environ`". If we stop there, we erase the variables set by the imports.
+→ **Adopted.** We capture the diff at import and apply it again. Dedicated test in the matrix.
 
-### 2. Références à `sys.stdout`/`sys.stderr` figées à l'import
-- JumpTheGun remplace `sys.stdout`/`sys.stderr` *pendant* l'import pour que les handlers `logging` créés à ce moment pointent vers ses objets.
-- quicken parcourt `logging.Logger.manager.loggerDict` et rebranche les `StreamHandler` qui pointent sur les anciens flux.
+### 2. References to `sys.stdout`/`sys.stderr` frozen at import
+- JumpTheGun replaces `sys.stdout`/`sys.stderr` *during* the import so that the `logging` handlers created at that time point to its objects.
+- quicken walks `logging.Logger.manager.loggerDict` and reconnects the `StreamHandler`s that point to the old streams.
 
-Chez nous, `dup2` sur 0/1/2 garde les objets valides, puisque les fd restent les mêmes. Mais les `TextIOWrapper` du démon ont été créés sur un fd non-TTY. Ils sont donc en *block buffering*, alors qu'en natif sur un TTY stdout est *line-buffered*. Conséquence : l'entrelacement stdout/stderr diffère sur un terminal, et une sortie peut être perdue si le processus finit par `os._exit`.
-→ **À faire.** Après `dup2`, reconfigurer les flux (`sys.stdout.reconfigure(line_buffering=isatty)`) au lieu de les recréer, pour garder valides les références prises à l'import. Ajouter un test d'entrelacement stdout/stderr sur TTY.
+For us, `dup2` on 0/1/2 keeps the objects valid, since the fds stay the same. But the daemon's `TextIOWrapper`s were created on a non-TTY fd. So they are *block buffered*, whereas natively on a TTY stdout is *line buffered*. Consequence: stdout/stderr interleaving differs on a terminal, and output can be lost if the process ends with `os._exit`.
+→ **To do.** After `dup2`, reconfigure the streams (`sys.stdout.reconfigure(line_buffering=isatty)`) instead of recreating them, to keep the references taken at import valid. Add a test of stdout/stderr interleaving on a TTY.
 
-### 3. Sémantique de sortie (JumpTheGun bogué, quicken corrigé)
-JumpTheGun fait `exit_code = exc.code if isinstance(exc.code, int) else 1`. Conséquences :
-- `sys.exit()` / `sys.exit(None)` donne **1** au lieu de 0 ;
-- `sys.exit("message")` donne 1 *sans afficher le message* sur stderr.
+### 3. Exit semantics (JumpTheGun buggy, quicken fixed)
+JumpTheGun does `exit_code = exc.code if isinstance(exc.code, int) else 1`. Consequences:
+- `sys.exit()` / `sys.exit(None)` gives **1** instead of 0;
+- `sys.exit("message")` gives 1 *without printing the message* on stderr.
 
-quicken corrige le cas `None` (bpo-35727), mais pas le cas de la chaîne.
-→ **À faire.** Reproduire exactement la sémantique de CPython. Avec `runpy` + le `sys.exit(main())` du script, on doit passer par le même chemin : `SystemExit` remonte et on l'interprète comme `Py_Exit` (`None` → 0, `int` → code, sinon on affiche sur stderr et on renvoie 1). Il faut aussi lancer `atexit` et vider les flux avant de renvoyer le code. Cas à ajouter à la matrice.
+quicken fixes the `None` case (bpo-35727), but not the string case.
+→ **To do.** Reproduce CPython's semantics exactly. With `runpy` + the script's `sys.exit(main())`, we must go through the same path: `SystemExit` propagates and we interpret it like `Py_Exit` (`None` → 0, `int` → code, otherwise print on stderr and return 1). `atexit` must also run and the streams be flushed before returning the code. Cases to add to the matrix.
 
-### 4. Transport de stdio : ne pas multiplexer, ne pas faire de PTY
-- **JumpTheGun** relit la sortie ligne par ligne en Bash (`read`/`echo`). On perd les octets NUL et le binaire, `isatty()` vaut toujours faux (donc pas de couleurs, mauvaise taille de terminal), et stdin ne se lit qu'en `readline`.
-- **python-preloaded** crée un PTY par appel : stdout et stderr sont fusionnés, `tcgetattr(0)` plante quand stdin est un pipe, et l'env n'est pas transmis.
+### 4. Stdio transport: do not multiplex, do not use a PTY
+- **JumpTheGun** reads the output back line by line in Bash (`read`/`echo`). NUL bytes and binary data are lost, `isatty()` is always false (so no colours, wrong terminal size), and stdin can only be read with `readline`.
+- **python-preloaded** creates a PTY per call: stdout and stderr are merged, `tcgetattr(0)` crashes when stdin is a pipe, and the env is not passed on.
 
-→ **Ça confirme notre choix** : passer les fd 0/1/2 par `SCM_RIGHTS`, comme quicken.
+→ **This confirms our choice**: pass fds 0/1/2 through `SCM_RIGHTS`, like quicken.
 
-### 5. L'enfant n'a pas de terminal de contrôle
-Avec le passage de fd, l'enfant vit dans la session du démon (`setsid`). Il a les fd du TTY, mais pas de *controlling terminal*. Conséquences :
-- `open("/dev/tty")` échoue. `getpass` se replie sur stdin et affiche un `GetPassWarning`, et l'écho n'est pas coupé. Or `aws configure`, en mode interactif, lit les clés au clavier.
-- Ctrl-C vient du TTY vers le groupe de processus au premier plan, c'est-à-dire le client. Le client doit donc relayer les signaux (c'est déjà prévu).
+### 5. The child has no controlling terminal
+With fd passing, the child lives in the daemon's session (`setsid`). It has the TTY's fds, but no *controlling terminal*. Consequences:
+- `open("/dev/tty")` fails. `getpass` falls back to stdin and prints a `GetPassWarning`, and echo is not turned off. Yet `aws configure`, in interactive mode, reads the keys from the keyboard.
+- Ctrl-C comes from the TTY to the foreground process group, i.e. the client. So the client must relay signals (already planned).
 
-→ **À ajouter à la matrice** : prompt interactif (`aws configure` sans argument), et outil qui ouvre `/dev/tty`. Si l'écart est inévitable, détecter le cas et basculer en natif.
+→ **To add to the matrix**: interactive prompt (`aws configure` without arguments), and a tool that opens `/dev/tty`. If the difference cannot be avoided, detect the case and switch to native.
 
-### 6. Dossier runtime détournable (JumpTheGun)
-En repli `/tmp`, JumpTheGun cherche `jumpthegun-$USER-??????` par glob et **réutilise le premier dossier trouvé sans en vérifier le propriétaire**. Un autre utilisateur local peut créer ce dossier à l'avance, remplacer le socket et recevoir l'env du client, donc des identifiants AWS. quicken fait ce qu'il faut : il `open` le dossier, puis `fstat` sur le fd, vérifie `st_uid == getuid()`, `S_ISDIR` et le mode `0700` exact, puis travaille relativement à ce fd.
-→ **Repris.** Le schéma de quicken s'applique à `/tmp/speedrunner-$UID/`, côté démon comme côté client Rust. On vérifie aussi `SO_PEERCRED` des deux côtés : le client vérifie que le démon a bien notre UID.
+### 6. Runtime directory that can be hijacked (JumpTheGun)
+In its `/tmp` fallback, JumpTheGun looks for `jumpthegun-$USER-??????` with a glob and **reuses the first directory found without checking its owner**. Another local user can create that directory in advance, replace the socket and receive the client's env, hence AWS credentials. quicken does what is needed: it `open`s the directory, then `fstat`s the fd, checks `st_uid == getuid()`, `S_ISDIR` and the exact `0700` mode, then works relative to that fd.
+→ **Adopted.** quicken's scheme applies to `/tmp/speedrunner-$UID/`, on the daemon side as on the Rust client side. We also check `SO_PEERCRED` on both sides: the client checks that the daemon has our UID.
 
-### 7. Course au démarrage (quicken)
-quicken prend un verrou inter-processus pendant « connexion ou démarrage ». Sans verrou, 10 invocations à froid en parallèle, ou un `prewarm` zsh simultané à un `run`, lancent plusieurs démons sur le même socket.
-→ **À faire.** `flock` sur un fichier du dossier runtime pendant le démarrage du démon. Le test « 10 invocations en parallèle » doit partir d'un démon arrêté.
+### 7. Startup race (quicken)
+quicken takes an inter-process lock during "connect or start". Without a lock, 10 cold invocations in parallel, or a zsh `prewarm` at the same time as a `run`, start several daemons on the same socket.
+→ **To do.** `flock` on a file in the runtime directory while the daemon starts. The "10 invocations in parallel" test must start from a stopped daemon.
 
-### 8. Invalidation : crédits du processus
-quicken redémarre le démon si le gid ou les groupes du client changent (`newgrp`, ajout à un groupe). Un enfant forké hérite des crédits du *démon*, pas de ceux du client. Il refuse aussi de tourner si réel ≠ effectif ≠ saved uid/gid.
-→ **À ajouter à l'empreinte** : uid, gid, groupes supplémentaires et umask. quicken transmet l'umask avec la requête, ce qui manque à notre brief.
+### 8. Invalidation: process credentials
+quicken restarts the daemon if the client's gid or groups change (`newgrp`, added to a group). A forked child inherits the *daemon's* credentials, not the client's. It also refuses to run if real ≠ effective ≠ saved uid/gid.
+→ **To add to the fingerprint**: uid, gid, supplementary groups and umask. quicken passes the umask with the request, which our brief lacks.
 
-### 9. Client qui meurt
-quicken tue l'enfant (`SIGKILL`) quand la connexion du client se ferme. JumpTheGun ne fait rien. Le brief ne tranche pas.
-→ **Décision à prendre** : si le client Rust meurt (`kill -9`, terminal fermé), on peut envoyer `SIGHUP` à l'enfant, ce qui imite la fermeture du terminal, ou le laisser finir. Pour `aws s3 rm`, laisser finir est plus sûr que tuer à mi-chemin. Ce n'est pas une double exécution dans les deux cas.
+### 9. A client that dies
+quicken kills the child (`SIGKILL`) when the client's connection closes. JumpTheGun does nothing. The brief does not decide.
+→ **Decision to make**: if the Rust client dies (`kill -9`, terminal closed), we can send `SIGHUP` to the child, which mimics closing the terminal, or let it finish. For `aws s3 rm`, letting it finish is safer than killing it halfway. Neither is a double execution.
 
-### 10. Fork et threads / asyncio
-- quicken lance son serveur asyncio *après* avoir figé l'état importé, parce qu'asyncio n'est pas fork-safe (bpo-21998).
-- JumpTheGun ne vérifie pas les threads : sa doc dit seulement que ça casse.
+### 10. Fork and threads / asyncio
+- quicken starts its asyncio server *after* freezing the imported state, because asyncio is not fork-safe (bpo-21998).
+- JumpTheGun does not check threads: its docs only say that it breaks.
 
-→ Ça confirme le parent mono-thread et la vérification `threading.active_count() == 1` du brief. Il faut aussi vérifier, après l'import d'awscli, qu'aucun thread natif ne tourne (`/proc/self/task`), car `threading` ne voit pas les threads C.
+→ This confirms the brief's single-threaded parent and its `threading.active_count() == 1` check. After importing awscli, we must also check that no native thread is running (`/proc/self/task`), because `threading` does not see C threads.
 
-### 11. Ramassage des zombies
-JumpTheGun et python-preloaded ne font `waitpid(WNOHANG)` qu'à la connexion suivante : les zombies restent tant qu'aucun appel n'arrive.
-→ Sur `SIGCHLD` (self-pipe), boucler `waitpid(-1, WNOHANG)`.
+### 11. Reaping zombies
+JumpTheGun and python-preloaded only call `waitpid(WNOHANG)` at the next connection: zombies stay as long as no call arrives.
+→ On `SIGCHLD` (self-pipe), loop on `waitpid(-1, WNOHANG)`.
 
-## Bug apparent dans le client JumpTheGun 0.2.0 (lu, non exécuté)
+## Apparent bug in the JumpTheGun 0.2.0 client (read, not run)
 
-Dans `src/jumpthegun.sh` :
-- `[[ ! -f "$unique_paths_base.sock" ]]` : `-f` est faux pour un socket, donc on retombe toujours en natif ;
-- `exec 3<>"$unique_path_base.sock"` : il manque le `s` du nom de variable, et avec `set -u` ça plante. De toute façon, Bash ne sait pas ouvrir un socket Unix par son chemin.
+In `src/jumpthegun.sh`:
+- `[[ ! -f "$unique_paths_base.sock" ]]`: `-f` is false for a socket, so it always falls back to native;
+- `exec 3<>"$unique_path_base.sock"`: the `s` of the variable name is missing, and with `set -u` it crashes. In any case, Bash cannot open a Unix socket by its path.
 
-Si c'est confirmé, le chemin rapide de la 0.2.0 ne s'exécute jamais. Pour une comparaison chiffrée avec JumpTheGun, il faudra mesurer la 0.1.1 (TCP).
+If confirmed, the fast path of 0.2.0 never runs. For a measured comparison with JumpTheGun, 0.1.1 (TCP) will have to be measured.
 
-## Chiffres publiés (non vérifiés)
+## Published figures (not checked)
 
-- python-preloaded : `import tensorflow` passe de 8,3 s (NFS, cache chaud) à 262 ms.
-- quicken renvoie vers des benchs CI Azure. Le lien est probablement mort (projet inactif depuis 2019).
+- python-preloaded: `import tensorflow` goes from 8.3 s (NFS, warm cache) to 262 ms.
+- quicken points to Azure CI benches. The link is probably dead (project inactive since 2019).
 
-## Ce que ça change pour le brief
+## What this changes in the brief
 
-1. **§3 Démon** : remplacer « via `importlib.metadata.entry_points()` » par la résolution du script réel, plus `runpy` (voir plus haut). Pour `aws` v1, le mécanisme prévu ne marche pas.
-2. **§3 Enfant** : transmettre aussi l'**umask**, réappliquer le **diff d'env pris à l'import**, reconfigurer le **buffering** des flux.
-3. **§3 Invalidation** : ajouter uid/gid/groupes à l'empreinte.
-4. **§3 Sockets** : vérifier le dossier runtime par `fstat` sur fd (propriétaire, 0700) côté démon *et* côté client. Le client vérifie l'UID du démon.
-5. **§5 Matrice** : ajouter sémantique de `SystemExit` (`None`, `int`, `str`), entrelacement stdout/stderr sur TTY, prompt interactif et `/dev/tty`, démarrage concurrent à froid, client tué pendant l'exécution.
-6. **§7 Décision ouverte** : comportement de l'enfant quand le client meurt.
+1. **§3 Daemon**: replace "through `importlib.metadata.entry_points()`" with resolving the real script, plus `runpy` (see above). For `aws` v1, the planned mechanism does not work.
+2. **§3 Child**: also pass the **umask**, apply again the **env diff taken at import**, reconfigure the streams' **buffering**.
+3. **§3 Invalidation**: add uid/gid/groups to the fingerprint.
+4. **§3 Sockets**: check the runtime directory with `fstat` on an fd (owner, 0700) on the daemon side *and* on the client side. The client checks the daemon's UID.
+5. **§5 Matrix**: add `SystemExit` semantics (`None`, `int`, `str`), stdout/stderr interleaving on a TTY, interactive prompt and `/dev/tty`, concurrent cold start, client killed during the run.
+6. **§7 Open decision**: behaviour of the child when the client dies.

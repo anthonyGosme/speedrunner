@@ -283,7 +283,7 @@ distribution. Windows: not planned.
 
 Using it day to day: the [user guide](docs/GUIDE.md).
 
-How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
+How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## License
 
