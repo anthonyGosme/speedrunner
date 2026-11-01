@@ -4,19 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.3.2"
+  version "0.4.0"
   license any_of: ["MIT", "Apache-2.0"]
 
-  depends_on :linux
+  on_macos do
+    on_intel do
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "a19d8adff7cf7e77e368bc5760e2419dfa603d1bf7bf9e5b96969ec4c5034475"
+    end
+    on_arm do
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "a19d8adff7cf7e77e368bc5760e2419dfa603d1bf7bf9e5b96969ec4c5034475"
+    end
+  end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.3.2/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "4e53c4ba37f2e89ab770968bed7d13d5ff9900088748f6295b2499efc543271f"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "48fb0bdc9b1373cd9cedd6d25f475400dc1fa51f4d0592687e86a5a503490336"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.3.2/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "2a2dc4ec7aaa1da287f026f4d00d78eb508b29c03d4c8014392e0ed8b6109c37"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.0/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "19ea13ad37d2aacc00bde909424a7965f19b0126f0f89142e1b0a7b8c35f8c4d"
     end
   end
 
