@@ -1,0 +1,2 @@
+{"command": "phptest argv x", "same_output": true, "native": {"median_ms": 123.0, "min_ms": 113.5, "max_ms": 134.6}, "served": {"median_ms": 21.5, "min_ms": 17.4, "max_ms": 22.5}, "gain": 5.7}
+{"command": "composer --version", "same_output": true, "native": {"median_ms": 178.3, "min_ms": 154.5, "max_ms": 198.6}, "served": {"median_ms": 76.8, "min_ms": 60.5, "max_ms": 92.0}, "gain": 2.3}

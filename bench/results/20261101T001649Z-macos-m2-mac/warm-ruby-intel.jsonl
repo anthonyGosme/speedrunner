@@ -1,0 +1,5 @@
+{"command": "rubocop --version", "same_output": true, "native": {"median_ms": 1082.7, "min_ms": 1036.4, "max_ms": 1550.8}, "served": {"median_ms": 221.3, "min_ms": 210.7, "max_ms": 454.7}, "gain": 4.9}
+{"command": "rubocop /tmp/srr-sample.rb", "same_output": true, "native": {"median_ms": 2210.8, "min_ms": 2100.7, "max_ms": 2642.4}, "served": {"median_ms": 449.1, "min_ms": 432.3, "max_ms": 758.0}, "gain": 4.9}
+{"command": "rake --version", "same_output": true, "native": {"median_ms": 231.7, "min_ms": 222.8, "max_ms": 318.2}, "served": {"median_ms": 27.3, "min_ms": 26.1, "max_ms": 36.9}, "gain": 8.5}
+{"command": "gem --version", "same_output": true, "native": {"median_ms": 148.3, "min_ms": 137.8, "max_ms": 172.2}, "served": {"median_ms": 18.5, "min_ms": 17.1, "max_ms": 20.2}, "gain": 8.0}
+{"command": "bundle --version", "same_output": true, "native": {"median_ms": 261.3, "min_ms": 249.7, "max_ms": 444.7}, "served": {"median_ms": 30.9, "min_ms": 27.2, "max_ms": 61.6}, "gain": 8.5}
