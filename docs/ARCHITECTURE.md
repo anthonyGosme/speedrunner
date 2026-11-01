@@ -425,7 +425,7 @@ Elles ne relèvent pas d'un bug de mise en œuvre, mais de ce que le fork depuis
 - pour un lanceur, `prewarm` exécute le préambule sans argument : sans effet pour az et gcloud, mais un lanceur qui ferait autre chose que préparer son exec le ferait aussi à chaque préchauffage.
 - hook git de pre-commit : servi seulement sous `speedrunner exec` ou `activate` (git lancé hors d'eux ne voit pas le lien `bash`), et si pre-commit est sur le `PATH` ou nommé. Sous eux, tout `bash` appelé par son nom passe par le client (un démarrage de plus, +4 ms mesurés dans Docker Desktop), et `$BASH` y nomme le lien, qui mène au même bash. Le démon du hook (`python -mpre_commit`) est distinct de celui du script `pre-commit` : `speedrunner status pre-commit` et `stop pre-commit` visent le second, le premier s'arrête après 4 h sans appel.
 - macOS : lanceurs en natif ; l'empreinte kqueue ne voit pas un simple changement d'attributs (`touch`, `chmod`) d'un fichier de module ; un outil qui utilise CoreFoundation en se chargeant (détection de proxy, boucle d'exécution) voit ce module rechargé à chaque appel ; le hook bash demande bash ≥ 4.2, celui du système est 3.2 (zsh, le shell par défaut, n'a pas cette limite) ; le Ruby 2.6 du système n'est pas servi (le démon demande Ruby ≥ 3.0).
-- macOS, Node : l'apprentissage est plus lent (un i7 met ~4 s pour les 221 modules d'eslint) ; avec le Node 22 du runner `macos-15-intel`, une frame du chargeur porte un autre nom servie qu'en native dans la pile d'une erreur non rattrapée (ouvert, voir `bench/results/…-macos-m3-mac/ANALYSE.md`).
+- macOS, Node : l'apprentissage est plus lent (un i7 met ~4 s pour les 221 modules d'eslint) ; un Node construit sans le cache de code de ses modules internes (le `node@22` de Homebrew) n'est pas servi : avec `--no-lazy`, il nomme autrement une frame du chargeur dans la pile d'une erreur (`Object..js` pour `Module._extensions..js`), et relancé sans, il laissait les appels au terminal bloqués sur le runner Intel (pas compris : ce Mac a un Node avec cache).
 - PHP ≥ 8.5 n'est pas servi : sa CLI enregistre `argv` quoi qu'il arrive, et `getopt()` lirait les arguments du démon (§11).
 
 ## 13. État et suite
@@ -468,7 +468,7 @@ Décidé : nom **speedrunner**, avec `srr` comme commande courte ; double licenc
 Suite :
 
 - publier le paquet AUR et le tap Homebrew (prêts dans `packaging/`) ;
-- macOS : le démon Python et le client sont portés (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Ruby et PHP aussi (M2, `bench/results/…-macos-m2-mac/ANALYSE.md`). Node aussi (M3, `bench/results/…-macos-m3-mac/ANALYSE.md`). Restent servir PHP 8.5, l'écart de Node 22 sur le runner Intel, et la distribution (binaire universel, formule Homebrew pour macOS), à décider ;
+- macOS : le démon Python et le client sont portés (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Ruby et PHP aussi (M2, `bench/results/…-macos-m2-mac/ANALYSE.md`). Node aussi (M3, `bench/results/…-macos-m3-mac/ANALYSE.md`). Restent servir PHP 8.5 et un Node sans cache de code, et la distribution (binaire universel, formule Homebrew pour macOS), à décider ;
 - la JVM, par des caches ou CRIU : voir [multi-runtime.md](multi-runtime.md) ;
 - traduire ce document en anglais.
 
