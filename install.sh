@@ -3,8 +3,8 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/anthonyGosme/speedrunner/main/install.sh | sh
 #
-# Downloads the static Linux binary of the latest release for this machine,
-# checks its SHA-256 sum, installs it as speedrunner with the `srr` link next
+# Downloads the binary of the latest release for this machine (static on
+# Linux, universal on macOS), checks its SHA-256 sum, installs it as speedrunner with the `srr` link next
 # to it. Needs no root, and no step after it: as root it installs in
 # /usr/local/bin; otherwise in ~/.local/bin or ~/bin when one is on PATH, else
 # in ~/.local/bin, added to PATH in ~/.profile, ~/.bashrc and ~/.zshrc.
@@ -41,15 +41,18 @@ say() { printf 'speedrunner: %s\n' "$*"; }
 die() { say "$*" >&2; exit 1; }
 
 case $(uname -s) in
-    Linux) ;;
-    *) die "$(uname -s) is not supported yet: Linux only for now" ;;
+    Linux)
+        case $(uname -m) in
+            x86_64 | amd64) arch=x86_64 ;;
+            aarch64 | arm64) arch=aarch64 ;;
+            *) die "no build for $(uname -m): x86_64 and aarch64 only" ;;
+        esac
+        name=speedrunner-$arch-unknown-linux-musl
+        ;;
+    Darwin) name=speedrunner-universal-apple-darwin ;;  # Intel and Apple Silicon
+    *) die "$(uname -s) is not supported: Linux and macOS only" ;;
 esac
-case $(uname -m) in
-    x86_64 | amd64) arch=x86_64 ;;
-    aarch64 | arm64) arch=aarch64 ;;
-    *) die "no build for $(uname -m): x86_64 and aarch64 only" ;;
-esac
-asset=speedrunner-$arch-unknown-linux-musl.tar.gz
+asset=$name.tar.gz
 
 if [ -n "${SPEEDRUNNER_BASE_URL:-}" ]; then
     base=$SPEEDRUNNER_BASE_URL
@@ -90,7 +93,7 @@ tar xzf "$tmp/$asset" -C "$tmp"
 mkdir -p "$bin_dir"
 # Through a temporary name in the same directory: a running speedrunner
 # keeps its file, and the new one appears whole.
-cp "$tmp/speedrunner-$arch-unknown-linux-musl/speedrunner" "$bin_dir/.speedrunner.new"
+cp "$tmp/$name/speedrunner" "$bin_dir/.speedrunner.new"
 chmod 755 "$bin_dir/.speedrunner.new"
 mv -f "$bin_dir/.speedrunner.new" "$bin_dir/speedrunner"
 ln -sf speedrunner "$bin_dir/srr"
