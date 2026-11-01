@@ -273,8 +273,10 @@ mypy on a changed file, 1.11 s → 0.31 s per commit, same output
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
 learn what a tool loads.
 
-**macOS, Windows?** Not yet: Linux, x86_64 or aarch64, any distribution. macOS is next: its go/no-go is
-done, on Intel and Apple Silicon ([analysis](bench/results/20261031T194600Z-macos-m0-mac/ANALYSE.md), in French).
+**macOS, Windows?** macOS 11 or later, Intel and Apple Silicon: one universal binary, which `install.sh`
+picks. Python, Ruby, PHP up to 8.4 and Node are served; on macOS, launchers (az, gcloud) run natively, and the bash
+hook needs bash 4.2 or later (zsh, the default shell, has no such limit). Linux: x86_64 or aarch64, any
+distribution. Windows: not planned.
 
 How it works, and the pitfalls met on the way: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (in French).
 
