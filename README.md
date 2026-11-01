@@ -7,9 +7,11 @@
       |_|                                                     
 ```
 
-Run Python, Ruby, PHP and Node command-line tools from a preloaded, forked daemon:
-the interpreter start, the imports and the configuration are done once, and
-each call starts with them already done.
+aws, az, gcloud, ansible, black, pytest, rubocop, rspec, composer, artisan, eslint, npm:
+hundreds of everyday command-line tools are written in Python, Ruby, PHP or Node, and spend
+most of each call starting the interpreter and loading their code before doing any work.
+speedrunner does that once, in a daemon, and forks it for every call: often 3 to 10 times
+faster, with nothing to set up.
 
 - **A real script.** The bash script below runs a small shop's nightly checks: black, pytest, poetry,
   rubocop, rspec, phpunit, artisan, aws and ansible, dozens of calls doing real work. 24.0 s natively,
