@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.4.2"
+  version "0.4.3"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.2/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "2d5943f92a427185476316bf180a927c1933c5bf9f0a9dcda1d41951d204e018"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "7cb9f91f8344ed7d485e0625492019e2b4d12e11f62013a3301db14a6944dbe9"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.2/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "2d5943f92a427185476316bf180a927c1933c5bf9f0a9dcda1d41951d204e018"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "7cb9f91f8344ed7d485e0625492019e2b4d12e11f62013a3301db14a6944dbe9"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.2/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "e9f8ffd7e7431e7f1d8079551057f2ab2c39e7d54927f5f2d1145cfe7bd7a4e0"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "6c2f2141cb0e98a1058ed64e049d7dc87e0fbe351f637b3495f40e9fe41ec418"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.2/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "ba2bc6e3621e27b87bce3c4820a6c4606f9b2c53e7d2985d99ec95b612927268"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "539a365e49c4bfe19fe8b932e973082ac95d7f22f8c5f8e59d154383b8d8d61f"
     end
   end
 

@@ -1,7 +1,7 @@
 # Maintainer: speedrunner contributors <39555936+anthonyGosme@users.noreply.github.com>
 # The release's static binary, as packaging/update.sh sets version and sums.
 pkgname=speedrunner-bin
-pkgver=0.4.2
+pkgver=0.4.3
 pkgrel=1
 pkgdesc="Python, Ruby, PHP and Node command-line tools, preloaded: each tool stays loaded in a daemon that forks it on every call"
 arch=('x86_64' 'aarch64')
@@ -12,8 +12,8 @@ conflicts=('speedrunner')
 options=('!strip' '!debug')
 source_x86_64=("$url/releases/download/v$pkgver/speedrunner-x86_64-unknown-linux-musl.tar.gz")
 source_aarch64=("$url/releases/download/v$pkgver/speedrunner-aarch64-unknown-linux-musl.tar.gz")
-sha256sums_x86_64=('e9f8ffd7e7431e7f1d8079551057f2ab2c39e7d54927f5f2d1145cfe7bd7a4e0')
-sha256sums_aarch64=('ba2bc6e3621e27b87bce3c4820a6c4606f9b2c53e7d2985d99ec95b612927268')
+sha256sums_x86_64=('6c2f2141cb0e98a1058ed64e049d7dc87e0fbe351f637b3495f40e9fe41ec418')
+sha256sums_aarch64=('539a365e49c4bfe19fe8b932e973082ac95d7f22f8c5f8e59d154383b8d8d61f')
 
 package() {
   cd "speedrunner-$CARCH-unknown-linux-musl"

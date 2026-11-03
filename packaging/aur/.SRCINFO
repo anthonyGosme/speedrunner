@@ -1,6 +1,6 @@
 pkgbase = speedrunner-bin
 	pkgdesc = Python, Ruby, PHP and Node command-line tools, preloaded: each tool stays loaded in a daemon that forks it on every call
-	pkgver = 0.4.2
+	pkgver = 0.4.3
 	pkgrel = 1
 	url = https://github.com/anthonyGosme/speedrunner
 	arch = x86_64
@@ -10,9 +10,9 @@ pkgbase = speedrunner-bin
 	conflicts = speedrunner
 	options = !strip
 	options = !debug
-	source_x86_64 = https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.2/speedrunner-x86_64-unknown-linux-musl.tar.gz
-	sha256sums_x86_64 = e9f8ffd7e7431e7f1d8079551057f2ab2c39e7d54927f5f2d1145cfe7bd7a4e0
-	source_aarch64 = https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.2/speedrunner-aarch64-unknown-linux-musl.tar.gz
-	sha256sums_aarch64 = ba2bc6e3621e27b87bce3c4820a6c4606f9b2c53e7d2985d99ec95b612927268
+	source_x86_64 = https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-x86_64-unknown-linux-musl.tar.gz
+	sha256sums_x86_64 = 6c2f2141cb0e98a1058ed64e049d7dc87e0fbe351f637b3495f40e9fe41ec418
+	source_aarch64 = https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-aarch64-unknown-linux-musl.tar.gz
+	sha256sums_aarch64 = 539a365e49c4bfe19fe8b932e973082ac95d7f22f8c5f8e59d154383b8d8d61f
 
 pkgname = speedrunner-bin
