@@ -385,7 +385,7 @@ To switch every tool to the new daemons at once, [stop them all](#stopping-every
 Tested with the whole regression suite on Debian 12, Ubuntu 22.04 and 24.04,
 Alpine 3.20 and Fedora 42, as root and as an unprivileged user.
 
-**macOS** 11 or later, Intel and Apple Silicon: one universal binary. Python, Ruby,
+**macOS** 11 or later, Intel and Apple Silicon: one universal binary, tested on macOS 15 (Intel) and macOS 26 (Apple Silicon) on every release. Python, Ruby,
 PHP and Node tools are served, and launchers are followed. What differs:
 
 - a tool module that uses CoreFoundation as it loads (proxy detection, a run

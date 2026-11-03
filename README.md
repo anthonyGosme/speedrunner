@@ -11,11 +11,13 @@ aws, az, gcloud, ansible, black, pytest, rubocop, rspec, composer, artisan, esli
 hundreds of everyday command-line tools are written in Python, Ruby, PHP or Node, and spend
 most of each call starting the interpreter and loading their code before doing any work.
 speedrunner does that once, in a daemon, and forks it for every call: often 3 to 10 times
-faster, with nothing to set up.
+faster, with no per-tool setup.
 
-- **A real script.** The bash script below runs a small shop's nightly checks: black, pytest, poetry,
-  rubocop, rspec, phpunit, artisan, aws and ansible, dozens of calls doing real work. 24.0 s natively,
-  5.3 s with `speedrunner exec`, its daemons warm: x4.5, same output (2-vCPU VPS).
+- **A checks script.** The bash script below, built for this demo and replayable
+  ([bench/demo](bench/demo)), runs a small shop's checks: black, pytest, poetry, rubocop, rspec,
+  phpunit, artisan, aws and ansible, dozens of calls doing real work. 24.0 s natively, 5.3 s with
+  `speedrunner exec`, its daemons warm: x4.5, same output (2-vCPU VPS). On a first run, its daemons
+  stopped, about x3 ([runs](bench/results/20261103T144000Z-demo-cold-vps/ANALYSE.md)).
 - **An editor's save.** eslint on one file: 328 → 43 ms; mypy: 213 → 50 ms. Faster than the tools'
   own daemons, eslint_d and dmypy ([below](#against-the-tools-own-daemons)).
 - **A commit.** pre-commit with black, isort, flake8 and mypy on a changed file: 1.11 → 0.31 s with
@@ -42,7 +44,7 @@ uninstall: the [user guide](docs/GUIDE.md).
 
 ## Install
 
-Linux, x86_64 or aarch64, any distribution: one static binary, no root.
+Linux (x86_64 or aarch64, any distribution) and macOS 11 or later (Intel or Apple Silicon): one binary, no root.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/anthonyGosme/speedrunner/main/install.sh | sh
@@ -53,7 +55,7 @@ link where your shell finds them: `/usr/local/bin` as root, otherwise
 `~/.local/bin` (added to your PATH in `~/.profile`, `~/.bashrc` and `~/.zshrc`
 if it is not there yet; `SPEEDRUNNER_NO_MODIFY_PATH=1` to leave them alone). Rather not pipe to `sh`? Take the archive and its
 `.sha256` from the [releases](https://github.com/anthonyGosme/speedrunner/releases).
-Or with a package manager. Homebrew, on Linux and, from the release after 0.3.2, macOS:
+Or with a package manager. Homebrew, on macOS and Linux:
 
 ```bash
 brew install anthonyGosme/speedrunner/speedrunner
@@ -84,7 +86,8 @@ they load; otherwise they gain less, or simply run natively).
 
 Tested, with the whole regression suite, on Debian 12, Ubuntu 22.04 and 24.04,
 Alpine 3.20 and Fedora 42, with Python 3.9 to 3.14, Ruby 3.0 to 3.4, PHP 8.1
-to 8.4 and Node 22 and 24, as root and as an unprivileged user (`docker/test-all.sh`).
+to 8.5 and Node 22 and 24, as root and as an unprivileged user (`docker/test-all.sh`); and on
+macOS 15 (Intel) and macOS 26 (Apple Silicon), on every release.
 
 Then see what it gains on your machine, with the tools you have:
 
@@ -96,6 +99,8 @@ speedrunner demo
 
 <!-- panel:start -->
 **96 commands served (46 Python, 18 Ruby, 19 PHP, 13 Node), 96 with an output identical to the native run. Speedup: geometric mean x5.6, median x4.9; 77 at x3 or more, 21 at x10 or more.**
+
+69 of them only print a version or a help text, which measures start-up alone. The 27 that do real work (lint or format a file, run tests, list a project) gain x4.0 median, 22 of them x3 or more.
 
 Measured on a 2-vCPU Debian 12 VPS, or, for the commands marked ¹, on a laptop (Intel i7-9750H), in a Debian 12 container (Python 3.11.2, Ruby 3.1.2, PHP 8.2.35, Node 24.22.2). Warm daemon, no tool-specific setup: each command is simply run as `srr <command>`. Each time is the median of 20 runs, native and speedrunner interleaved; the speedup is the ratio of the medians, with its 95% confidence interval (bootstrap). Every output (exit code, stdout, stderr) is compared with the native run's. Mean, standard deviation, min, max, the daemons' memory and every run: [20261030T212139Z-panel-vps](bench/results/20261030T212139Z-panel-vps/summary.md); [20261030T210248Z-candidates-docker](bench/results/20261030T210248Z-candidates-docker/summary.md); [20261031T005026Z-node-panel-docker](bench/results/20261031T005026Z-node-panel-docker/summary.md).
 
@@ -276,7 +281,7 @@ mypy on a changed file, 1.11 s → 0.31 s per commit, same output
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
 learn what a tool loads.
 
-**macOS, Windows?** macOS 11 or later, Intel and Apple Silicon, from the release after 0.3.2: one universal
+**macOS, Windows?** macOS 11 or later, Intel and Apple Silicon, since 0.4.0: one universal
 binary, which `install.sh` picks. Python, Ruby, PHP and Node are served, launchers (az, gcloud) followed; the bash
 hook needs bash 4.2 or later (zsh, the default shell, has no such limit). Linux: x86_64 or aarch64, any
 distribution. Windows: not planned.

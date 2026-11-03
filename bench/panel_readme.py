@@ -64,6 +64,10 @@ def row(r, mark):
     return f"| {name} | {r['native_ms']:.0f} ms | {r['fast_ms']:.0f} ms | **x{r['speedup']:.1f}**{ci} |"
 
 
+# A command that only prints a version or a help text: start-up alone.
+STARTUP_ONLY = re.compile(r"(^|\s)(--version|--help|version|help)(\s|$)")
+
+
 def tables(main_dir, other_dirs):
     rows, runs = [], set()
     for d in [main_dir, *other_dirs]:
@@ -72,6 +76,7 @@ def tables(main_dir, other_dirs):
         rows += [(r, "" if d == main_dir else " ¹") for r in data["results"]]
     served = [r for r, _ in rows if "speedup" in r]
     gains = [r["speedup"] for r in served]
+    work = [r["speedup"] for r in served if not STARTUP_ONLY.search(r["command"])]
     geo = math.exp(statistics.mean(math.log(g) for g in gains))
     per = ", ".join(f"{sum(r['runtime'] == k for r in served)} {name}" for k, name in RUNTIMES.items()
                     if any(r["runtime"] == k for r in served))
@@ -80,6 +85,9 @@ def tables(main_dir, other_dirs):
            f"identical to the native run. Speedup: geometric mean x{geo:.1f}, median "
            f"x{statistics.median(gains):.1f}; {sum(g >= 3 for g in gains)} at x3 or more, "
            f"{sum(g >= 10 for g in gains)} at x10 or more.**", "",
+           f"{len(gains) - len(work)} of them only print a version or a help text, which measures start-up "
+           f"alone. The {len(work)} that do real work (lint or format a file, run tests, list a project) gain "
+           f"x{statistics.median(work):.1f} median, {sum(g >= 3 for g in work)} of them x3 or more.", "",
            f"Measured on {MAIN}, or, for the commands marked ¹, on {OTHER} ({versions([main_dir, *other_dirs])}). "
            "Warm daemon, no tool-specific setup: each command is simply run as `srr <command>`. Each time is the "
            f"median of {'/'.join(map(str, sorted(runs)))} runs, native and speedrunner interleaved; the speedup is "
