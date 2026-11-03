@@ -1,3 +1,5 @@
+<img src="resources/speedrunner-icon.png" alt="speedrunner icon" width="96">
+
 ```text
  ____                      _                                  
 / ___| _ __   ___  ___  __| |_ __ _   _ _ __  _ __   ___ _ __ 
