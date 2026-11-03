@@ -164,6 +164,14 @@ module Rbtest
       p [Rbtest::LazyPlain::VALUE, Rbtest::LazyEnv::VALUE, Rbtest::LazyArgv::VALUE]
     end
 
+    def cmd_project(_args)
+      # As rspec: the project's directories on the load path, then its files
+      # by name (a spec_helper that configures the run).
+      $LOAD_PATH.unshift(Dir.pwd)
+      require "projmod"
+      p $projmods
+    end
+
     def cmd_proxies(_args)
       # CoreFoundation used at run time, in the child.
       require "rbtest/proxies"

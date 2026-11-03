@@ -214,6 +214,13 @@ def cmd_argv(args):
     print(repr(__import__("__main__").__file__))
 
 
+def cmd_project(args):
+    # As pytest: the project's directory on sys.path, then its modules by name.
+    sys.path.insert(0, os.getcwd())
+    import projmod
+    print(projmod.NAME)
+
+
 def cmd_signals(args):
     for name in ("SIGINT", "SIGPIPE", "SIGTERM", "SIGCHLD", "SIGHUP", "SIGQUIT", "SIGXFSZ"):
         handler = signal.getsignal(getattr(signal, name))

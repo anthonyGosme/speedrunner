@@ -304,6 +304,29 @@ class Preload(m.Matrix):
                 finally:
                     m.stop("rbtest", env)
 
+    def test_project_files_are_not_learned(self):
+        # As rspec in one project, then another: a file the tool requires
+        # from the project (a spec_helper) is the project's, never the
+        # tool's to preload.
+        env = self.daemon("1,2")
+        projects = []
+        for name in ("alpha", "beta"):
+            d = tempfile.mkdtemp(dir=m.ROOT)
+            with open(os.path.join(d, "projmod.rb"), "w") as f:
+                f.write(f"($projmods ||= []) << {name!r}\n")
+            projects.append((d, name))
+        try:
+            for _ in range(2):
+                run("hs", ["rbtest", "project"], cwd=projects[0][0], env=env)
+            self.learn(env, [["rbtest", "lazy"]])
+            for d, name in projects:
+                with self.subTest(project=name):
+                    _, out, _ = self.assertSame(["rbtest", "project"], cwd=d, env=env)
+                    self.assertEqual(out, b'["%s"]\n' % name.encode())
+            self.assertFalse([f for f in self.cache(env)["modules"] if f.endswith("/projmod.rb")])
+        finally:
+            m.stop("rbtest", env)
+
     def test_learned_requires_vetted(self):
         env = self.daemon("1,2")
         try:

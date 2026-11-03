@@ -1235,7 +1235,8 @@ def install_memo(state):
 
 def cache_file(state):
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
-    key = repr((state.script, sys.executable, sys.version, state.fingerprint))
+    # 2: from 0.4.3, nothing of a project; an earlier cache may hold some.
+    key = repr((2, state.script, sys.executable, sys.version, state.fingerprint))
     return os.path.join(base, "speedrunner",
                         f"{state.tool}-{hashlib.sha256(key.encode()).hexdigest()[:16]}.json")
 
@@ -1436,6 +1437,7 @@ def apply_request(state, req, fds):
             sys.path.insert(0, os.getcwd())
     CHILD["argv0"] = args[0]
     CHILD["base_path"] = list(sys.path)
+    CHILD["roots"] = learn_roots(sys.path, os.getcwd() if state.cwd_first else None)
     if isinstance(sys.argv, list):
         sys.argv[:] = args  # in place: see ArgvProbe
     else:
@@ -1457,7 +1459,7 @@ def interpreter_options():
 ORIG_ARGV0, INTERP_FLAGS = interpreter_options()
 EXIT = {"code": None, "signal": None}
 CHILD = {"conn": None, "ctl": None, "base_modules": None, "base_finders": (), "import_order": [],
-         "memo": None, "base_path": None}
+         "memo": None, "base_path": None, "roots": []}
 # Loaders a fresh interpreter has: a module another one loaded (a finder the
 # run installed, as pytest's assertion rewriting) must not be preloaded.
 STANDARD_LOADER_MODULES = {"importlib._bootstrap", "importlib._bootstrap_external",
@@ -1518,6 +1520,42 @@ def standard_loader(module):
     return any(loader is f or kind is type(f) for f in CHILD["base_finders"])
 
 
+def learn_roots(path, cwd):
+    """Where the tool's own modules live: the sys.path it was preloaded with
+    (its script's directory, the interpreter's, its site-packages). Never
+    the client's cwd, which `python -m` puts first, nor / or the home
+    directory, which would take in every project."""
+    skip = {os.sep, os.path.realpath(os.path.expanduser("~"))}
+    if cwd:
+        skip.add(os.path.realpath(cwd))
+    roots = []
+    for p in path:
+        if isinstance(p, str) and os.path.isabs(p) and os.path.isdir(p):
+            root = os.path.realpath(p)
+            if root not in skip:
+                roots.append(root)
+    return roots
+
+
+def in_roots(path, roots):
+    real = os.path.realpath(path)
+    return any(real == root or real.startswith(root.rstrip(os.sep) + os.sep) for root in roots)
+
+
+def tool_module(module, roots):
+    """A module of the tool's own installation, not of the project it runs
+    on: pytest puts each project's directory on sys.path and imports its
+    modules by name, and a preloaded `app` from one project would be every
+    project's."""
+    path = getattr(module, "__file__", None)
+    if isinstance(path, str):
+        return in_roots(path, roots)
+    locations = getattr(module, "__path__", None)  # a namespace package
+    if locations is not None:
+        return all(isinstance(p, str) and in_roots(p, roots) for p in list(locations))
+    return True  # built in
+
+
 def send_learned():
     """Tell the parent what this run imported or loaded beyond the preloaded state."""
     base, seen, modules = CHILD["base_modules"] or (), set(), []
@@ -1526,12 +1564,13 @@ def send_learned():
     for name in CHILD["import_order"]:
         if name not in base and name not in seen and name in sys.modules:
             seen.add(name)
-            if standard_loader(sys.modules[name]):
+            if standard_loader(sys.modules[name]) and tool_module(sys.modules[name], CHILD["roots"]):
                 modules.append(name)
     files = CHILD["memo"].loaded if CHILD["memo"] is not None else []
     # Entries the tool put on sys.path itself (gcloud): its modules are found there.
     base = CHILD["base_path"] or []
-    paths = [p for p in sys.path if isinstance(p, str) and os.path.isabs(p) and p not in base]
+    paths = [p for p in sys.path if isinstance(p, str) and os.path.isabs(p) and p not in base
+             and in_roots(p, CHILD["roots"])]
     origins = {name: file_of(name) for name in modules if file_of(name)}
     if modules or files:
         data = {"modules": modules, "files": files, "paths": paths, "origins": origins}
