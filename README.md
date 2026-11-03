@@ -5,10 +5,10 @@
 / ___| _ __   ___  ___  __| |_ __ _   _ _ __  _ __   ___ _ __ 
 \___ \| '_ \ / _ \/ _ \/ _` | '__| | | | '_ \| '_ \ / _ \ '__|
  ___) | |_) |  __/  __/ (_| | |  | |_| | | | | | | |  __/ |   
-|____/| .__/ \___|\___|\__,_|_|   \__,_|_| |_|_| |_|\___|_|   
+|____/| .__/ \___|\___|\__,_|_|   \__,_|_| |_|_| |_|\___|_| Speed up CLIs
       |_|                                                     
 ```
-Speed up CLIs
+
 
 aws, az, gcloud, ansible, black, pytest, rubocop, rspec, composer, artisan, eslint, npm:
 hundreds of everyday command-line tools are written in Python, Ruby, PHP or Node, and spend
