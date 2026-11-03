@@ -1,0 +1,61 @@
+name: Bug report
+description: A command that behaves differently with speedrunner, fails, or is not faster
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A question rather than a bug? Ask it in [Discussions](https://github.com/anthonyGosme/speedrunner/discussions).
+  - type: input
+    id: command
+    attributes:
+      label: Command
+      description: The exact command, as you ran it.
+      placeholder: srr aws s3 ls
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: A different output or exit code than the tool run natively, an error, no speedup...
+    validations:
+      required: true
+  - type: textarea
+    id: debug
+    attributes:
+      label: Output with SPEEDRUNNER_DEBUG=1
+      description: "Run the command again with `SPEEDRUNNER_DEBUG=1` in front: it prints why a call ran natively."
+      render: text
+  - type: textarea
+    id: native
+    attributes:
+      label: Output of the same command run natively
+      description: Without `srr` or `speedrunner`, when the outputs differ.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: speedrunner version
+      description: "`speedrunner --version`"
+      placeholder: speedrunner 0.4.2
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS and architecture
+      placeholder: Ubuntu 24.04 x86_64, macOS 26 Apple Silicon...
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: The tool, its version and its interpreter
+      placeholder: aws-cli 1.46.2, Python 3.12 in a venv
+  - type: textarea
+    id: log
+    attributes:
+      label: Daemon log, if relevant
+      description: "Each daemon writes `<tool>-<hash>.log` in `$XDG_RUNTIME_DIR/speedrunner/`, else `/tmp/speedrunner-<uid>/` (see docs/GUIDE.md)."
+      render: text
