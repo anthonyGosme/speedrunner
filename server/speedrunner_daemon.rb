@@ -750,7 +750,8 @@ module Speedrunner
 
   def self.cache_file(state)
     base = ENV["XDG_CACHE_HOME"].to_s.empty? ? File.join(Dir.home, ".cache") : ENV["XDG_CACHE_HOME"]
-    key = Digest::SHA256.hexdigest([state.script, RbConfig.ruby, RUBY_VERSION, state.fingerprint].inspect)
+    # 2: from 0.4.3, nothing of a project; an earlier cache may hold some.
+    key = Digest::SHA256.hexdigest([2, state.script, RbConfig.ruby, RUBY_VERSION, state.fingerprint].inspect)
     File.join(base, "speedrunner", "#{state.tool}-#{key[0, 16]}.json")
   end
 
@@ -862,6 +863,7 @@ module Speedrunner
   # $LOADED_FEATURES has them in the order they finished, and replaying
   # that breaks circular requires), and the gems this run activated.
   def self.start_learning
+    roots = learn_roots
     base_features = $LOADED_FEATURES.to_h { |f| [f, true] }
     base_gems = Gem.loaded_specs.keys
     order = []
@@ -874,9 +876,33 @@ module Speedrunner
       loaded = $LOADED_FEATURES.reject { |f| base_features.key?(f) }
       ordered = order.select { |f| loaded.include?(f) }.uniq
       files = ordered + (loaded - ordered) # native extensions compile nothing
+      files = files.select { |f| in_roots?(f, roots) }
       gems = (Gem.loaded_specs.keys - base_gems).map { |n| [n, Gem.loaded_specs[n].version.to_s] }
       { "modules" => files, "gems" => gems }
     end
+  end
+
+  # Where the tool's own files live: the load path it was preloaded with and
+  # the gem directories. Never / or the home directory, which would take in
+  # every project: rspec puts a project's directories on the load path and
+  # requires its spec_helper, which must not configure every later run.
+  def self.learn_roots
+    skip = ["/", (File.realpath(Dir.home) rescue Dir.home)]
+    dirs = $LOAD_PATH.map(&:to_s) + Gem.path
+    dirs.filter_map do |d|
+      next unless d.start_with?("/") && File.directory?(d)
+      root = File.realpath(d)
+      root unless skip.include?(root)
+    rescue SystemCallError
+      nil
+    end.uniq
+  end
+
+  def self.in_roots?(path, roots)
+    real = File.realpath(path)
+    roots.any? { |r| real == r || real.start_with?(r.end_with?("/") ? r : "#{r}/") }
+  rescue SystemCallError
+    false
   end
 
   def self.send_learned

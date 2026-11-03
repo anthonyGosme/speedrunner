@@ -931,6 +931,29 @@ class Preload(Matrix):
         finally:
             stop(path, env)
 
+    def test_project_modules_are_not_learned(self):
+        # As pytest in one project, then another: a module the tool imports
+        # from the project, by a name every project may use, is the
+        # project's, never the tool's to preload.
+        env = self.daemon("hstest", "1,2")
+        projects = []
+        for name in ("alpha", "beta"):
+            d = tempfile.mkdtemp(dir=ROOT)
+            with open(os.path.join(d, "projmod.py"), "w") as f:
+                f.write(f"NAME = {name!r}\n")
+            projects.append((d, name))
+        try:
+            for _ in range(2):
+                run("hs", ["hstest", "project"], cwd=projects[0][0], env=env)
+            self.learn("hstest", env, [["hstest", "lazy"]])
+            for d, name in projects:
+                with self.subTest(project=name):
+                    _, out, _ = self.assertSame(["hstest", "project"], cwd=d, env=env)
+                    self.assertEqual(out, name.encode() + b"\n")
+            self.assertNotIn("projmod", self.cache(env, "hstest")["modules"])
+        finally:
+            stop("hstest", env)
+
     def test_learned_set_survives_restart(self):
         env = self.daemon("hstest", "1,2")
         try:
