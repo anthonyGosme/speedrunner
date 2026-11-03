@@ -230,6 +230,23 @@ No gain: `vite --version` is slower served: its bundler starts threads as it loa
 
 <!-- panel:end -->
 
+### aws, with real requests
+
+The panel's aws rows only print a version or the configuration. These five send requests to S3,
+here to a local S3 server (moto) on the same VPS, so that the network takes next to no time:
+
+| Command | Native | speedrunner | Saved per call | Speedup (95% CI) |
+|---|---:|---:|---:|---:|
+| `aws s3 ls` | 316 ms | 71 ms | 245 ms | **x4.5** (4.2–4.7) |
+| `aws s3 ls s3://bucket/` | 323 ms | 74 ms | 250 ms | **x4.4** (4.2–4.6) |
+| `aws s3 cp`, a small file | 324 ms | 87 ms | 237 ms | **x3.7** (3.6–4.0) |
+| `aws s3api head-object` | 294 ms | 77 ms | 217 ms | **x3.8** (3.7–4.0) |
+| `aws sts get-caller-identity` | 277 ms | 71 ms | 206 ms | **x3.9** (3.8–4.1) |
+
+Outputs identical to native. Against AWS itself, your latency adds the same time to both columns:
+the 0.2 s saved per call stays, the ratio drops (`aws s3 ls` with 100 ms of round trips: about
+0.42 → 0.17 s). [Protocol and every run](bench/results/20261103T180000Z-s3-vps/ANALYSE.md).
+
 ### Against the tools' own daemons
 
 Some tools ship a daemon of their own because they start too slowly. The case
