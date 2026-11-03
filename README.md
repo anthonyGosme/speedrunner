@@ -8,6 +8,7 @@
 |____/| .__/ \___|\___|\__,_|_|   \__,_|_| |_|_| |_|\___|_|   
       |_|                                                     
 ```
+Speed up CLIs
 
 aws, az, gcloud, ansible, black, pytest, rubocop, rspec, composer, artisan, eslint, npm:
 hundreds of everyday command-line tools are written in Python, Ruby, PHP or Node, and spend
