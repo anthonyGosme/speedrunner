@@ -234,7 +234,8 @@ ready pid=53935 preload_ms=369 modules=345 levels=1,2,3 learned=1 blacklisted=0 
 modules it holds; `levels`, the [preload levels](#environment-variables) in use;
 `learned`, the modules it added after watching calls; `blacklisted`, those it
 refused (they print, start a thread, take a file lock, change the environment,
-or fail as they load); `memo`, data files kept parsed (botocore); `gen`, how many times the
+leave an object with a finalizer, or fail as they load); `memo`, data files kept
+parsed (botocore); `gen`, how many times the
 preload grew; `tty_read`, which of fds 0 to 2 the tool asked "is this a terminal?"
 as it loaded. `learning=N`, when present, means modules are still being vetted.
 
@@ -493,11 +494,15 @@ and none runs a command twice.
   commands of that tool. Only code that inspects the list of loaded modules can
   tell. For Node, a module that patches Node's globals as it loads (`graceful-fs`,
   `signal-exit`) has that effect on every command.
-- **Teardown happens after you get your prompt back.** The client returns as soon
-  as the tool's output is flushed and its exit code known; the interpreter's
-  teardown goes on unseen. What it would still print (`Exception ignored in …`
-  from a `__del__`) is lost; a file a `__del__` writes appears after the client
-  has returned; a `flock` the tool holds is released at the very end.
+- **Teardown can happen after you get your prompt back.** The client returns as
+  soon as the tool's output is flushed and its exit code known; the interpreter's
+  teardown goes on unseen, and a `flock` the tool holds is released at the very
+  end. For a Python tool, this only holds when teardown has no code of the tool's
+  to run: with a live object that has a `__del__`, or a suspended generator, the
+  client waits for the end of teardown, as natively. Not looked for, and so not
+  waited for: a weakref callback, and what a C extension does as it frees its
+  objects. Not run at all: a generator suspended since the tool loaded, and any
+  `__del__` after an uncaught Ctrl-C.
 - **What a tool does as it loads happens once, in the daemon.** Writing to a file
   there, or keeping the process id or the time, is not done again for each call,
   and nothing detects it. A file lock is the exception, in Python and Ruby: a module
