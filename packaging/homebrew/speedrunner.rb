@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.4.3"
+  version "0.4.4"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "7cb9f91f8344ed7d485e0625492019e2b4d12e11f62013a3301db14a6944dbe9"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.4/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "03dec5552624c5efc0e1264635f7212a322ac3ac11bfd4fc06f729e7fc773f11"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "7cb9f91f8344ed7d485e0625492019e2b4d12e11f62013a3301db14a6944dbe9"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.4/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "03dec5552624c5efc0e1264635f7212a322ac3ac11bfd4fc06f729e7fc773f11"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "6c2f2141cb0e98a1058ed64e049d7dc87e0fbe351f637b3495f40e9fe41ec418"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.4/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "fe7e758f9f2fb23d872aa1a311662da7ff96856180d6b44eb22d913561c8da10"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.3/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "539a365e49c4bfe19fe8b932e973082ac95d7f22f8c5f8e59d154383b8d8d61f"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.4/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "91a365179f9ff729376853c04ceda33562bfa18b452ca6d046f515df22bb04d8"
     end
   end
 
