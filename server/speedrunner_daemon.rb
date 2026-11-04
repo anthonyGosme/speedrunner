@@ -203,6 +203,8 @@ module Speedrunner
   class State
     attr_accessor :tool, :script, :sock_path, :lock_fd, :origin, :disabled, :start_env,
                   :pre_import_env, :import_env_changed, :import_env_deleted, :import_env_read,
+                  :start_cwd, :start_cwd_id, :runtime_dir, :pending_reads, :import_cwd_read,
+                  :import_cwd_files, :import_dirs,
                   :import_output, :fingerprint_paths, :fingerprint, :fingerprint_set, :watch,
                   :preload_s, :bound_ino, :levels, :gem_binstub, :learned, :learned_gems,
                   :blacklist, :pending, :pending_gems, :gen, :cache_path, :restart, :tty,
@@ -216,6 +218,9 @@ module Speedrunner
       @import_env_changed = {}
       @import_env_deleted = []
       @import_env_read = []
+      @import_cwd_read = false
+      @import_cwd_files = {} # relative path read as it loaded -> [as it was, there]
+      @import_dirs = [] # paths it only found to be directories
       @import_output = ["".b, "".b]
       @fingerprint_paths = []
       @fingerprint = []
@@ -279,6 +284,181 @@ module Speedrunner
     [yield, ArgvReads::READ[0]]
   ensure
     ArgvReads::ON[0] = false
+  end
+
+  # What a file reads of the filesystem as it loads: it keeps what it found,
+  # in the daemon, for every client. See FileReads in speedrunner_daemon.py.
+  # Installed for the load only, so that no frame of ours is in a backtrace.
+  # Not rubygems' own reads: its layout is in the fingerprint already.
+  class FileReads
+    NOT_INPUTS = %r{\A/(proc|sys|dev)/}
+    COMPILED = /\.(so|bundle|dylib)\z/
+    RUBYGEMS = %r{/rubygems(/|\.rb)}
+    # Its entries change all the time, and no tool's output depends on them.
+    TEMP_ROOTS = ["/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp", ENV.fetch("TMPDIR", "/tmp").chomp("/")].freeze
+    # Adapter: rspec keeps the cwd it loaded in; each child sets it again.
+    CWD_NOT_KEPT = %r{/rspec/core/(filter_manager|backtrace_formatter)\.rb\z}
+    READERS = { IO => %i[read binread readlines foreach],
+                File => %i[read binread readlines foreach open new] }.freeze
+    LISTERS = { Dir => %i[entries children each_child foreach empty?] }.freeze
+    PROBES = { File => %i[exist? file? directory? size size? zero? empty? stat lstat mtime ctime atime
+                          readable? symlink? readlink realpath],
+               Dir => %i[exist?] }.freeze
+    attr_reader :files, :listed, :probed, :relative, :cwd_read
+
+    def initialize(start_cwd, runtime_dir)
+      @start_cwd = start_cwd
+      @runtime_dir = runtime_dir
+      @files = {}
+      @listed = {}
+      @probed = {}
+      @relative = {}
+      @cwd_read = false
+      @restore = []
+    end
+
+    def note(path, into)
+      path = path.to_path if path.respond_to?(:to_path)
+      return unless path.is_a?(String) && !path.match?(COMPILED)
+      return if reader.match?(RUBYGEMS)
+      return if into.equal?(@listed) && TEMP_ROOTS.include?(path.chomp("/"))
+
+      if !path.start_with?("/")
+        @relative[path] = true
+      elsif !path.match?(NOT_INPUTS)
+        into[path] = true
+      end
+    end
+
+    def note_cwd
+      from = reader
+      @cwd_read = true unless from.match?(RUBYGEMS) || from.match?(CWD_NOT_KEPT)
+    end
+
+    # The file that made the call, past the wrapper's frames. Ours are no reads.
+    def reader
+      from = caller_locations(2, 8).find { |l| l.path != DAEMON_FILE || !l.label.match?(/\b(wrap|start)\b/) }
+      from&.path == DAEMON_FILE ? "/rubygems/" : from&.path.to_s
+    end
+
+    def writes?(args, kwargs)
+      mode = kwargs[:mode] || kwargs[:flags] || args[1]
+      case mode
+      when Integer then mode.anybits?(File::WRONLY | File::TRUNC | File::EXCL)
+      when String then mode.start_with?("w", "a")
+      else false
+      end
+    end
+
+    def wrap(owner, name, &note)
+      singleton = owner.equal?(Kernel) ? Kernel : owner.singleton_class
+      own = singleton.instance_methods(false).include?(name) || singleton.private_instance_methods(false).include?(name)
+      original = singleton.instance_method(name)
+      visibility = singleton.private_method_defined?(name) ? :private : :public
+      singleton.send(:define_method, name) do |*args, **kwargs, &blk|
+        note.call(args, kwargs)
+        bound = original.bind(self)
+        kwargs.empty? ? bound.call(*args, &blk) : bound.call(*args, **kwargs, &blk)
+      end
+      singleton.send(visibility, name)
+      @restore << lambda do
+        singleton.send(:remove_method, name)
+        if own
+          singleton.send(:define_method, name, original)
+          singleton.send(visibility, name)
+        end
+      end
+    end
+
+    def start
+      READERS.each do |owner, names|
+        names.each do |name|
+          wrap(owner, name) { |args, kwargs| note(args[0], @files) unless writes?(args, kwargs) }
+        end
+      end
+      wrap(Kernel, :open) { |args, kwargs| note(args[0], @files) unless writes?(args, kwargs) }
+      LISTERS.each do |owner, names|
+        names.each { |name| wrap(owner, name) { |args, _| note(args[0], @listed) } }
+      end
+      PROBES.each do |owner, names|
+        names.each { |name| wrap(owner, name) { |args, _| note(args[0], @probed) } }
+      end
+      %i[pwd getwd].each { |name| wrap(Dir, name) { note_cwd } }
+      wrap(File, :expand_path) { |args, _| note_cwd if !args[1] && !args[0].to_s.start_with?("/", "~") }
+      %i[glob []].each do |name|
+        wrap(Dir, name) do |args, kwargs|
+          pattern = Array(args[0]).first.to_s
+          if kwargs[:base] then note(kwargs[:base], @listed)
+          elsif pattern.start_with?("/") then note(File.dirname(pattern[/\A[^*?\[{]*/] + "x"), @listed)
+          else note_cwd
+          end
+        end
+      end
+      Dir.chdir(@start_cwd) if @start_cwd
+    rescue SystemCallError
+      @start_cwd = nil
+    end
+
+    def finish
+      Speedrunner.chdir_to(@runtime_dir) if @start_cwd
+      @restore.reverse_each(&:call)
+    end
+  end
+
+  def self.reading_files(state)
+    reads = FileReads.new(state.start_cwd, state.runtime_dir)
+    reads.start
+    begin
+      yield
+    ensure
+      reads.finish
+      state.pending_reads = reads
+    end
+  end
+
+  # Cover what the load saw, as it is now. The cache's name does not depend
+  # on them: a config file that changed keeps what the daemon has learned.
+  def self.keep_file_reads(state)
+    reads = state.pending_reads
+    return unless reads
+
+    state.pending_reads = nil
+    state.import_cwd_read ||= reads.cwd_read
+    if state.start_cwd
+      reads.relative.each_key do |path|
+        state.import_cwd_files[path] ||= [cwd_file_key(File.join(state.start_cwd, path))]
+      end
+    end
+    candidates = reads.files.keys | reads.probed.keys
+    dirs = candidates.select { |p| File.directory?(p) }
+    extend_fingerprint(state, reads.listed.keys) # by stat: a watch would miss new entries
+    extend_fingerprint(state, candidates - dirs, watch: true)
+    state.import_dirs |= dirs & reads.probed.keys
+    extend_fingerprint(state, dirs - reads.probed.keys)
+  end
+
+  def self.cwd_file_key(path)
+    File.directory?(path) ? "dir" : stat_key(path)
+  end
+
+  # Whether what a file read through the cwd as it loaded would read otherwise
+  # in this client's. A change where the daemon started is a stale daemon; a
+  # client elsewhere runs natively and leaves it to the others. Runs in the
+  # child, which exits if it falls back.
+  def self.why_cwd_differs(state, cwd_io)
+    return nil unless state.import_cwd_read || state.import_cwd_files.any?
+
+    st = cwd_io.stat
+    same = state.start_cwd_id == [st.dev, st.ino]
+    return "import-time cwd differs" if state.import_cwd_read && !same
+
+    chdir_to(cwd_io)
+    state.import_cwd_files.each do |path, (key)|
+      next if cwd_file_key(File.join(Dir.pwd, path)) == key
+
+      return same ? "stale: #{path}, read at load, changed" : "import-time file differs: #{path}"
+    end
+    nil
   end
 
   def self.top_level_requires(path)
@@ -453,7 +633,8 @@ module Speedrunner
   end
 
   def self.stale?(state)
-    (state.watch&.fired? || false) || state.fingerprint_paths.map { |p| stat_key(p) } != state.fingerprint
+    (state.watch&.fired? || false) || state.fingerprint_paths.map { |p| stat_key(p) } != state.fingerprint ||
+      !state.import_dirs.all? { |p| File.directory?(p) }
   end
 
   def self.preload(state)
@@ -476,7 +657,7 @@ module Speedrunner
       skip = state.skip = load_skip(state)
       TtyReads::SEEN.clear
       TtyReads::ON[0] = true
-      state.import_output = capture_fds(state.tty) do
+      state.import_output = reading_files(state) { capture_fds(state.tty) do
         catch(:restart) do
           names.each do |name|
             (name.is_a?(Proc) ? name.call : [name]).each do |req|
@@ -499,7 +680,7 @@ module Speedrunner
             end
           end
         end
-      end
+      end }
     rescue Exception => e # rubocop:disable Lint/RescueException
       state.disabled = "preload failed: #{e.inspect}"
       log(state.disabled)
@@ -518,6 +699,7 @@ module Speedrunner
     extend_fingerprint(state, fingerprint_paths(state))
     extend_fingerprint(state, $LOADED_FEATURES.select { |f| f.start_with?("/") }, watch: true)
     state.cache_path = cache_file(state)
+    keep_file_reads(state)
     if state.levels.include?("2") && !state.disabled
       cached = load_cache(state)
       state.blacklist = (cached["blacklist"] || {}).select { |k, v| k.is_a?(String) && v.is_a?(String) }
@@ -557,7 +739,7 @@ module Speedrunner
           EnvReads::ON[0] = true
           TtyReads::SEEN.clear
           TtyReads::ON[0] = true
-          output, argv_read = reads_argv { capture_fds(state.tty) { require file } }
+          output, argv_read = reads_argv { reading_files(state) { capture_fds(state.tty) { require file } } }
         rescue Exception => e # rubocop:disable Lint/RescueException
           state.blacklist[file] = "load failed in the daemon: #{e.class}"
           next
@@ -566,6 +748,7 @@ module Speedrunner
           TtyReads::ON[0] = false
           TtyReads::SEEN.each { |fd, was| state.import_tty_read[fd] = was unless state.import_tty_read.key?(fd) }
         end
+        keep_file_reads(state)
         why = if output != ["".b, "".b] then "printed in the daemon"
               elsif argv_read then "read the command line in the daemon"
               elsif ENV.to_h != env_before then "changed the env in the daemon"
@@ -923,6 +1106,9 @@ module Speedrunner
       return "gem version chosen on the command line"
     end
     return "stale: installed files changed" if stale?(state)
+    why = why_cwd_differs(state, fds[3])
+    return why if why
+
     groups = peer_groups || req.groups
     if peer_gid != Process.gid || groups.uniq.sort != own_groups.uniq.sort
       return "credentials differ from the daemon's"
@@ -1007,6 +1193,12 @@ module Speedrunner
     fds[0, 4].each(&:close)
     bridge_tty(fds[4]) if fds.size > 4 # kept open, close-on-exec, for the run
     File.umask(req.umask)
+    # Adapter: rspec keeps the cwd it loaded in, to tell the project's files.
+    if defined?(RSpec::Core::FilterRules::PROJECT_DIR)
+      RSpec::Core::FilterRules.send(:remove_const, :PROJECT_DIR)
+      RSpec::Core::FilterRules.const_set(:PROJECT_DIR, File.expand_path("."))
+      RSpec.configuration.backtrace_formatter.send(:initialize)
+    end
     # Adapter: rspec reports its load time from a clock read when rspec/core
     # loads; for this run, that moment is now.
     $_rspec_core_load_started_at = Time.now if global_variables.include?(:$_rspec_core_load_started_at)
@@ -1310,7 +1502,14 @@ module Speedrunner
   end
 
   def self.serve(state)
-    dir = open_runtime_dir(File.dirname(state.sock_path))
+    begin
+      state.start_cwd = Dir.pwd
+      st = File.stat(state.start_cwd)
+      state.start_cwd_id = [st.dev, st.ino]
+    rescue SystemCallError # no longer there: loads stay in the runtime directory
+      state.start_cwd = nil
+    end
+    dir = state.runtime_dir = open_runtime_dir(File.dirname(state.sock_path))
     lock = acquire_lock(state)
     unless lock
       log("another daemon holds the lock; exiting")

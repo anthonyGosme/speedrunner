@@ -381,6 +381,40 @@ class Preload(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
+    LIB = "hsread_lib.rb"
+    LAZY = "hsread_lazy.rb"
+    SOURCES = {
+        "read": "VALUE = File.read(ENV['HS_CFG'])\ndef main = puts(VALUE)\n",
+        "read_if_there": "CFG = ENV['HS_CFG']\nVALUE = File.exist?(CFG) ? File.read(CFG) : 'none'\n"
+                         "def main = puts(VALUE)\n",
+        "size": "VALUE = File.size(ENV['HS_CFG'])\ndef main = puts(VALUE)\n",
+        "list": "VALUE = Dir.children(ENV['HS_DIR']).size\ndef main = puts(VALUE)\n",
+        "is_dir": "VALUE = File.directory?(ENV['HS_DIR']) ? 'yes' : 'no'\ndef main = puts(VALUE)\n",
+        "relative_if_there": "VALUE = File.exist?('local.cfg') ? File.read('local.cfg') : 'none'\n"
+                              "def main = puts(VALUE)\n",
+        "relative": "VALUE = File.read('local.cfg')\ndef main = puts(VALUE)\n",
+        "relative_exists": "VALUE = File.exist?('local.cfg') ? 'yes' : 'no'\ndef main = puts(VALUE)\n",
+        "cwd": "VALUE = Dir.pwd\ndef main = puts(VALUE)\n",
+        "lazy": "def main\n  require 'hsread_lazy'\n  puts HSREAD_LAZY\nend\n",
+        "lazy_module": "HSREAD_LAZY = File.read(ENV['HS_CFG'])\n",
+        "read_at_run": "def main = puts(File.read(ENV['HS_CFG']))\n",
+        "write": "File.open(ENV['HS_CFG'], 'a') {}\ndef main = puts('ok')\n",
+    }
+
+    def tool(self, kind):
+        root, env = super().tool(kind)
+        # On the load path the daemon starts with: what it may learn from.
+        env["RUBYLIB"] = os.path.join(root, "bin")
+        return root, env
+
+    def script(self):
+        return ("#!/usr/bin/env ruby\n"
+                "require_relative 'hsread_lib'\n"
+                "main\n")
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class Failures(m.Matrix):
     def start_hold(self, env, marker, seconds="1"):
         cmd = [HS_BIN, "run", "rbtest", "--", "hold", seconds, marker]

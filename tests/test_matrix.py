@@ -28,6 +28,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zipfile
 
 HS_BIN = os.environ.get("HS_BIN")
 MACOS = sys.platform == "darwin"
@@ -1164,6 +1165,379 @@ class Failures(Matrix):
             self.assertEqual(run("hs", ["hsedit"], env=env).stdout, b"v2\n")
         finally:
             stop("hsedit", env)
+
+
+class ImportTimeReadChecks:
+    """What module-level code reads of the filesystem is frozen in the daemon:
+    a change, or a client elsewhere, must never be served from the old value.
+    For a runtime, a subclass gives the tool's module for each case."""
+    SHEBANG = None  # the tool's first line
+    LIB = "hsread_lib.py"
+    LAZY = "hsread_lazy.py"
+    TAUGHT_LAZILY = False  # teach() has already had a run load the lazy module
+    SOURCES = {}
+
+    def tool(self, kind):
+        """A private tool whose module is the runtime's source for `kind`."""
+        root = tempfile.mkdtemp(dir=ROOT)
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        script = os.path.join(bindir, "hsread")
+        with open(script, "w") as f:
+            f.write(self.script())
+        os.chmod(script, 0o755)
+        with open(os.path.join(bindir, self.LIB), "w") as f:
+            f.write(self.SOURCES[kind])
+        env = {"PATH": f"{bindir}:{BASE_ENV['PATH']}",
+               "XDG_RUNTIME_DIR": os.path.join(root, "run"),
+               "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(stop, "hsread", env)
+        return root, env
+
+    def script(self):
+        raise NotImplementedError
+
+    def teach(self, env, cwd):
+        """What the runtime needs before the daemon holds the module's reads."""
+
+    def start(self, env, cwd=None):
+        """A daemon started from cwd, as a client there would: served at once."""
+        subprocess.run([HS_BIN, "prewarm", "hsread"], env={**BASE_ENV, **env}, cwd=cwd, check=True)
+        wait_ready("hsread", env)
+        self.teach(env, cwd)
+        return int(status_field(status("hsread", env), "pid"))
+
+    def directory(self, root, name, config=None):
+        path = os.path.join(root, name)
+        os.makedirs(path)
+        if config is not None:
+            with open(os.path.join(path, "local.cfg"), "w") as f:
+                f.write(config)
+        return path
+
+    def check_refreshes(self, env, expected, daemon, cwd=None):
+        """The new value at once, never the old one; then a new daemon serves it."""
+        p = run("hs", ["hsread"], env=env, cwd=cwd, require_fast=False)
+        self.assertEqual(outcome(run("native", ["hsread"], env=env, cwd=cwd)), outcome(p))
+        self.assertEqual(p.stdout, expected)
+        p = run("hs", ["hsread"], env=env, cwd=cwd)
+        self.assertIn((p.returncode, p.stdout), [(EXIT_NOT_FAST, b""), (0, expected)])
+        deadline = time.monotonic() + 30
+        while True:
+            subprocess.run([HS_BIN, "prewarm", "hsread"], env={**BASE_ENV, **env}, cwd=cwd,
+                           capture_output=True)
+            text = status("hsread", env)
+            if text.startswith("ready") and int(status_field(text, "pid")) != daemon:
+                break
+            self.assertLess(time.monotonic(), deadline, text)
+            time.sleep(0.1)
+        self.teach(env, cwd)
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=cwd).stdout, expected)
+
+    def with_config(self, kind, content):
+        root, env = self.tool(kind)
+        env["HS_CFG"] = os.path.join(root, "app.cfg")
+        if content is not None:
+            with open(env["HS_CFG"], "w") as f:
+                f.write(content)
+        return root, env
+
+    def test_config_file_changed(self):
+        _, env = self.with_config("read", "one")
+        daemon = self.start(env)
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"one\n")
+        with open(env["HS_CFG"], "w") as f:
+            f.write("two")
+        self.check_refreshes(env, b"two\n", daemon)
+
+    def test_config_file_replaced(self):
+        # As an editor saves: a new file renamed over the old one.
+        _, env = self.with_config("read", "one")
+        daemon = self.start(env)
+        with open(env["HS_CFG"] + ".new", "w") as f:
+            f.write("two")
+        os.rename(env["HS_CFG"] + ".new", env["HS_CFG"])
+        self.check_refreshes(env, b"two\n", daemon)
+
+    def test_config_file_created(self):
+        _, env = self.with_config("read_if_there", None)
+        daemon = self.start(env)
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"none\n")
+        with open(env["HS_CFG"], "w") as f:
+            f.write("made")
+        self.check_refreshes(env, b"made\n", daemon)
+
+    def test_config_file_deleted(self):
+        _, env = self.with_config("read_if_there", "here")
+        daemon = self.start(env)
+        os.unlink(env["HS_CFG"])
+        self.check_refreshes(env, b"none\n", daemon)
+
+    def test_stat_read_at_import(self):
+        _, env = self.with_config("size", "one")
+        daemon = self.start(env)
+        with open(env["HS_CFG"], "w") as f:
+            f.write("longer")
+        self.check_refreshes(env, b"6\n", daemon)
+
+    def test_listing_changed(self):
+        root, env = self.tool("list")
+        env["HS_DIR"] = self.directory(root, "plugins")
+        daemon = self.start(env)
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"0\n")
+        with open(os.path.join(env["HS_DIR"], "new"), "w"):
+            pass
+        self.check_refreshes(env, b"1\n", daemon)
+
+    def test_probed_directory_is_only_a_directory(self):
+        # Its mtime moves with its entries; the module only asked what it is.
+        root, env = self.tool("is_dir")
+        env["HS_DIR"] = self.directory(root, "busy")
+        daemon = self.start(env)
+        entry = os.path.join(env["HS_DIR"], "entry")
+        with open(entry, "w"):
+            pass
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"yes\n")
+        self.assertEqual(int(status_field(status("hsread", env), "pid")), daemon)
+        os.unlink(entry)
+        os.rmdir(env["HS_DIR"])
+        self.check_refreshes(env, b"no\n", daemon)
+
+    def test_relative_file_elsewhere(self):
+        root, env = self.tool("relative_if_there")
+        here = self.directory(root, "here", "here")
+        daemon = self.start(env, here)
+        # Read from the client's directory, as natively, not the daemon's own.
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=here).stdout, b"here\n")
+        for cwd, value in ((self.directory(root, "other", "other"), b"other\n"),
+                           (self.directory(root, "bare"), b"none\n")):
+            native = run("native", ["hsread"], env=env, cwd=cwd)
+            self.assertEqual(native.stdout, value)
+            self.assertEqual(outcome(native),
+                             outcome(run("hs", ["hsread"], env=env, cwd=cwd, require_fast=False)))
+            self.assertEqual(run("hs", ["hsread"], env=env, cwd=cwd).returncode, EXIT_NOT_FAST)
+        # A client elsewhere does not cost the others their daemon.
+        self.assertEqual(int(status_field(status("hsread", env), "pid")), daemon)
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=here).stdout, b"here\n")
+
+    def test_relative_file_changed_in_place(self):
+        root, env = self.tool("relative")
+        here = self.directory(root, "here", "one")
+        daemon = self.start(env, here)
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=here).stdout, b"one\n")
+        with open(os.path.join(here, "local.cfg"), "w") as f:
+            f.write("two")
+        self.check_refreshes(env, b"two\n", daemon, cwd=here)
+
+    def test_relative_file_absent_everywhere_stays_served(self):
+        root, env = self.tool("relative_exists")
+        self.start(env, self.directory(root, "here"))
+        other = self.directory(root, "other")
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=other).stdout, b"no\n")
+
+    def test_cwd_read_at_import(self):
+        root, env = self.tool("cwd")
+        here = os.path.realpath(self.directory(root, "here"))
+        other = os.path.realpath(self.directory(root, "other"))
+        self.start(env, here)
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=here).stdout, f"{here}\n".encode())
+        self.assertEqual(outcome(run("native", ["hsread"], env=env, cwd=other)),
+                         outcome(run("hs", ["hsread"], env=env, cwd=other, require_fast=False)))
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=other).returncode, EXIT_NOT_FAST)
+
+    def test_file_read_by_a_learned_module(self):
+        # Loaded on first use: frozen only once a run has taught the daemon it.
+        root, env = self.with_config("lazy", "one")
+        with open(os.path.join(root, "bin", self.LAZY), "w") as f:
+            f.write(self.SOURCES["lazy_module"])
+        self.start(env)
+        gen = int(status_field(status("hsread", env), "gen"))
+        deadline = time.monotonic() + 30
+        while not self.TAUGHT_LAZILY and int(status_field(status("hsread", env), "gen") or -1) <= gen:
+            self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"one\n")
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.2)
+        daemon = int(status_field(wait_ready("hsread", env), "pid"))
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"one\n")
+        with open(env["HS_CFG"], "w") as f:
+            f.write("two")
+        self.check_refreshes(env, b"two\n", daemon)
+
+    def test_temp_directory_listed_keeps_the_daemon(self):
+        # Its entries change all the time, and no output depends on them.
+        root, env = self.tool("list")
+        env["HS_DIR"] = "/tmp"
+        daemon = self.start(env)
+        made = tempfile.mkdtemp(dir="/tmp", prefix="hs-busy-")
+        self.addCleanup(os.rmdir, made)
+        self.assertNotEqual(run("hs", ["hsread"], env=env).returncode, EXIT_NOT_FAST)
+        self.assertEqual(int(status_field(status("hsread", env), "pid")), daemon)
+
+    def test_file_read_at_run_keeps_the_daemon(self):
+        _, env = self.with_config("read_at_run", "one")
+        daemon = self.start(env)
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"one\n")
+        with open(env["HS_CFG"], "w") as f:
+            f.write("two")
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"two\n")
+        self.assertEqual(int(status_field(status("hsread", env), "pid")), daemon)
+
+    def test_file_only_written_at_import_keeps_the_daemon(self):
+        # A log the module appends to is no input of it.
+        _, env = self.with_config("write", None)
+        daemon = self.start(env)
+        with open(env["HS_CFG"], "a") as f:
+            f.write("more\n")
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"ok\n")
+        self.assertEqual(int(status_field(status("hsread", env), "pid")), daemon)
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class ImportTimeReads(ImportTimeReadChecks, Matrix):
+    SOURCES = {
+        "read": "import os\nVALUE = open(os.environ['HS_CFG']).read()\n"
+                "def main():\n    print(VALUE)\n",
+        "read_if_there": "import os\nCFG = os.environ['HS_CFG']\n"
+                         "VALUE = open(CFG).read() if os.path.exists(CFG) else 'none'\n"
+                         "def main():\n    print(VALUE)\n",
+        "size": "import os\nVALUE = os.path.getsize(os.environ['HS_CFG'])\n"
+                "def main():\n    print(VALUE)\n",
+        "list": "import os\nVALUE = len(os.listdir(os.environ['HS_DIR']))\n"
+                "def main():\n    print(VALUE)\n",
+        "is_dir": "import os\nVALUE = 'yes' if os.path.isdir(os.environ['HS_DIR']) else 'no'\n"
+                  "def main():\n    print(VALUE)\n",
+        "relative_if_there": "import os\nVALUE = open('local.cfg').read() if os.path.exists('local.cfg') else 'none'\n"
+                              "def main():\n    print(VALUE)\n",
+        "relative": "VALUE = open('local.cfg').read()\ndef main():\n    print(VALUE)\n",
+        "relative_exists": "import os\nVALUE = 'yes' if os.path.exists('local.cfg') else 'no'\n"
+                            "def main():\n    print(VALUE)\n",
+        "cwd": "import os\nVALUE = os.getcwd()\ndef main():\n    print(VALUE)\n",
+        "lazy": "def main():\n    import hsread_lazy\n    print(hsread_lazy.VALUE)\n",
+        "lazy_module": "import os\nVALUE = open(os.environ['HS_CFG']).read()\n",
+        "read_at_run": "import os\ndef main():\n    print(open(os.environ['HS_CFG']).read())\n",
+        "write": "import os\nopen(os.environ['HS_CFG'], 'a').close()\ndef main():\n    print('ok')\n",
+    }
+
+    def script(self):
+        python = os.path.join(os.path.dirname(shutil.which("hstest", path=BASE_ENV["PATH"])), "python3")
+        return f"#!{python}\nimport hsread_lib\nhsread_lib.main()\n"
+
+    def test_bound_stat_stays_harmless(self):
+        # `from os import stat` keeps what the module found while loading.
+        root, env = self.with_config("read", "one")
+        with open(os.path.join(root, "bin", self.LIB), "a") as f:
+            f.write("from os import getcwd, stat\n"
+                    "_main = main\n"
+                    "def main():\n"
+                    "    stat('/')\n"
+                    "    _main()\n")
+        self.start(env)
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"one\n")
+
+    def test_multiprocessing_keeps_no_daemon_cwd(self):
+        # The standard library's one read of the cwd as it loads (aws loads it):
+        # no reason to lose the fast path elsewhere, and set for each child.
+        root, env = self.tool("read")
+        with open(os.path.join(root, "bin", self.LIB), "w") as f:
+            f.write("import multiprocessing.process as p\n"
+                    "def main():\n    print(p.ORIGINAL_DIR)\n")
+        self.start(env, self.directory(root, "here"))
+        other = os.path.realpath(self.directory(root, "other"))
+        p = run("hs", ["hsread"], env=env, cwd=other)
+        self.assertEqual(p.stdout, f"{other}\n".encode())
+        self.assertEqual(outcome(run("native", ["hsread"], env=env, cwd=other)), outcome(p))
+
+    def test_rich_keeps_no_daemon_cwd(self):
+        root, env = self.tool("read")
+        with open(os.path.join(root, "bin", "rich.py"), "w") as f:
+            f.write("import os\n_IMPORT_CWD = os.path.abspath(os.getcwd())\n")
+        with open(os.path.join(root, "bin", self.LIB), "w") as f:
+            f.write("import rich\ndef main():\n    print(rich._IMPORT_CWD)\n")
+        self.start(env, self.directory(root, "here"))
+        other = os.path.realpath(self.directory(root, "other"))
+        p = run("hs", ["hsread"], env=env, cwd=other)
+        self.assertEqual(p.stdout, f"{other}\n".encode())
+
+    def test_tempfile_at_import_stays_served(self):
+        root, env = self.tool("read")
+        with open(os.path.join(root, "bin", self.LIB), "w") as f:
+            f.write("import tempfile\nVALUE = tempfile.gettempdir()\n"
+                    "def main():\n    print(VALUE)\n")
+        self.start(env, self.directory(root, "here"))
+        other = self.directory(root, "other")
+        self.assertEqual(outcome(run("native", ["hsread"], env=env, cwd=other)),
+                         outcome(run("hs", ["hsread"], env=env, cwd=other)))
+
+    def test_version_bump_with_pip(self):
+        # A real upgrade, as `pip install -U` does it: never the old version,
+        # the same output as a plain run, then served again by a new daemon.
+        root = tempfile.mkdtemp(dir=ROOT)
+        venv = os.path.join(root, "venv")
+        base = os.path.join(os.path.dirname(shutil.which("hstest", path=BASE_ENV["PATH"])), "python3")
+        if subprocess.run([base, "-m", "venv", venv], capture_output=True).returncode:
+            self.skipTest("no venv module")
+        python = os.path.join(venv, "bin", "python")
+        if subprocess.run([python, "-m", "pip", "--version"], capture_output=True).returncode:
+            self.skipTest("no pip in a new venv")
+
+        def wheel(version):
+            path = os.path.join(root, f"hsread-{version}-py3-none-any.whl")
+            info = f"hsread-{version}.dist-info"
+            files = {
+                "hsread_lib.py": f"def main():\n    print('{version}')\n",
+                f"{info}/METADATA": f"Metadata-Version: 2.1\nName: hsread\nVersion: {version}\n",
+                f"{info}/WHEEL": "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+                f"{info}/entry_points.txt": "[console_scripts]\nhsread = hsread_lib:main\n",
+            }
+            with zipfile.ZipFile(path, "w") as z:
+                for name, text in files.items():
+                    z.writestr(name, text)
+                z.writestr(f"{info}/RECORD", "".join(f"{n},,\n" for n in files) + f"{info}/RECORD,,\n")
+            return path
+
+        def install(version):
+            subprocess.run([python, "-m", "pip", "install", "-q", "--no-index", "--no-deps",
+                            "--disable-pip-version-check", wheel(version)], check=True, capture_output=True)
+
+        install("1.0")
+        env = {"PATH": f"{os.path.join(venv, 'bin')}:{BASE_ENV['PATH']}",
+               "XDG_RUNTIME_DIR": os.path.join(root, "run"),
+               "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(stop, "hsread", env)
+        daemon = self.start(env)
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"1.0\n")
+        install("2.0")
+        self.check_refreshes(env, b"2.0\n", daemon)
+
+    def test_environ_copy_at_import(self):
+        root, env = self.tool("read")
+        with open(os.path.join(root, "bin", self.LIB), "w") as f:
+            f.write("import os\nVALUE = os.environ.copy().get('HS_VALUE')\n"
+                    "def main():\n    print(VALUE)\n")
+        self.start({**env, "HS_VALUE": "one"})
+        changed = {**env, "HS_VALUE": "two"}
+        self.assertEqual(run("hs", ["hsread"], env=changed, require_fast=False).stdout, b"two\n")
+        self.assertEqual(run("hs", ["hsread"], env=changed).returncode, EXIT_NOT_FAST)
+
+    def test_thread_holding_a_lock_at_import_never_hangs(self):
+        # A fork copies the calling thread only: a lock another thread held
+        # would stay locked forever in the child.
+        root, env = self.tool("read")
+        with open(os.path.join(root, "bin", self.LIB), "w") as f:
+            f.write("import threading, time\n"
+                    "LOCK = threading.Lock()\n"
+                    "def hold():\n"
+                    "    while True:\n"
+                    "        with LOCK:\n"
+                    "            time.sleep(0.01)\n"
+                    "threading.Thread(target=hold, daemon=True).start()\n"
+                    "def main():\n"
+                    "    print(LOCK.acquire(timeout=5))\n")
+        self.start(env)
+        for _ in range(10):
+            self.assertEqual(run("hs", ["hsread"], env=env, require_fast=False).stdout, b"True\n")
 
 
 def daemon_socket(env):

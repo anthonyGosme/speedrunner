@@ -281,6 +281,50 @@ class FailOpen(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class ImportTimeReads(m.Matrix):
+    """The PHP daemon runs nothing of the tool: what it reads as it loads is
+    read in each child, in the client's directory."""
+
+    def tool(self):
+        root = tempfile.mkdtemp(dir=m.ROOT)
+        bindir = os.path.join(root, "bin")
+        os.makedirs(bindir)
+        script = os.path.join(bindir, "hsread")
+        with open(script, "w") as f:
+            f.write("#!/usr/bin/env php\n<?php\n"
+                    "echo file_get_contents(getenv('HS_CFG')), \"\\n\";\n"
+                    "echo is_file('local.cfg') ? file_get_contents('local.cfg') : 'none', \"\\n\";\n"
+                    "echo getcwd(), \"\\n\";\n")
+        os.chmod(script, 0o755)
+        env = {"PATH": f"{bindir}:{m.BASE_ENV['PATH']}", "HS_CFG": os.path.join(root, "app.cfg"),
+               "XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        with open(env["HS_CFG"], "w") as f:
+            f.write("one")
+        self.addCleanup(m.stop, "hsread", env)
+        m.wait_ready("hsread", env)
+        return root, env
+
+    def test_config_file_changed(self):
+        root, env = self.tool()
+        with open(env["HS_CFG"], "w") as f:
+            f.write("two")
+        self.assertEqual(outcome(run("native", ["hsread"], env=env, cwd=root)),
+                         outcome(run("hs", ["hsread"], env=env, cwd=root)))
+
+    def test_read_in_the_clients_directory(self):
+        root, env = self.tool()
+        for name, config in (("one", "first"), ("two", None)):
+            cwd = os.path.join(root, name)
+            os.makedirs(cwd)
+            if config:
+                with open(os.path.join(cwd, "local.cfg"), "w") as f:
+                    f.write(config)
+            self.assertEqual(outcome(run("native", ["hsread"], env=env, cwd=cwd)),
+                             outcome(run("hs", ["hsread"], env=env, cwd=cwd)))
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class Freshness(m.Matrix):
     def test_edited_source_is_reread(self):
         # A copy of the fixture whose class file is edited between runs: OPcache
