@@ -353,7 +353,7 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
             run("hs", ["hsread"], env=env, cwd=cwd, require_fast=False)
             self.assertLess(time.monotonic(), deadline)
             time.sleep(0.2)
-        m.wait_ready("hsread", env)
+        m.wait_ready("hsread", env, cwd=cwd)
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
