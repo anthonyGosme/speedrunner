@@ -1,0 +1,35 @@
+Python 3.11.2
+ruby 3.1.2p2
+python mkdtemp+atexit       plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=15 preload_ms=33 modules=111 levels=1,2,3 learned=3 blacklisted=0 memo
+python TemporaryDirectory   plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=47 preload_ms=33 modules=111 levels=1,2,3 learned=3 blacklisted=0 memo
+python mkstemp+atexit       plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['GONE', 'GONE', 'GONE', 'GONE'] left while running 0, after stop 0
+       stderr served: {"Exception ignored in atexit callback: <built-in function unlink>\nFileNotFoundError: [Errno 2] No such file or directory: '<home>/tmp/tmp_unosi4e'"} | plain: 
+       ready pid=79 preload_ms=33 modules=111 levels=1,2,3 learned=3 blacklisted=0 memo
+python NamedTemporaryFile   plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 0, after stop 0
+       ready pid=114 preload_ms=22 modules=110 levels=1,2,3 learned=18 blacklisted=1 me
+python own dir+atexit       plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['GONE', 'GONE', 'GONE', 'GONE'] left while running 0, after stop 0
+       ready pid=145 preload_ms=27 modules=105 levels=1,2,3 learned=4 blacklisted=0 mem
+ruby   mktmpdir+at_exit     plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['GONE', 'GONE', 'GONE', 'GONE'] left while running 0, after stop 0
+       ready pid=177 preload_ms=19 modules=82 levels=1,2 learned=0 blacklisted=0 memo=0
+ruby   Tempfile             plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=206 preload_ms=21 modules=84 levels=1,2 learned=0 blacklisted=0 memo=0
+ruby   own dir+at_exit      plain ['exists', 'exists', 'exists'] left 0
+       served rc [124, 0, 124, 0] ['', 'exists', '', 'exists'] left while running 0, after stop 0
+       stderr served: {'speedrunner: fast path unavailable: stale: installed files changed', 'speedrunner: fast path unavailable: connect: No such file or directory (os error 2)'} | plain: 
+       stale: installed files changed
+v24.22.2
+node   mkdtemp+on exit      plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['GONE', 'GONE', 'GONE', 'GONE'] left while running 1, after stop 1
+       ready pid=31 preload_ms=18 modules=4 levels=2 learned=4 blacklisted=0 memo=0 gen
+node   own dir+on exit      plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['GONE', 'GONE', 'GONE', 'GONE'] left while running 1, after stop 1
+       ready pid=97 preload_ms=16 modules=4 levels=2 learned=4 blacklisted=0 memo=0 gen

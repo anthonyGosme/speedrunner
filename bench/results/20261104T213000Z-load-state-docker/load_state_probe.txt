@@ -1,0 +1,33 @@
+Python 3.11.2
+ruby 3.1.2p20 (2022-04-12 revision 4491bb740a) [x86_64-linux-gnu]
+python mkdtemp+atexit       plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=14 preload_ms=31 modules=111 levels=1,2,3 learned=3 blacklisted=0 memo
+python TemporaryDirectory   plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=46 preload_ms=30 modules=111 levels=1,2,3 learned=3 blacklisted=0 memo
+python mkstemp+atexit       plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=78 preload_ms=36 modules=111 levels=1,2,3 learned=3 blacklisted=0 memo
+python NamedTemporaryFile   plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 0, after stop 0
+       ready pid=113 preload_ms=23 modules=110 levels=1,2,3 learned=18 blacklisted=1 me
+python own dir+atexit       plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=144 preload_ms=30 modules=105 levels=1,2,3 learned=4 blacklisted=0 mem
+ruby   mktmpdir+at_exit     plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=176 preload_ms=19 modules=82 levels=1,2 learned=0 blacklisted=0 memo=0
+ruby   Tempfile             plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=205 preload_ms=23 modules=84 levels=1,2 learned=0 blacklisted=0 memo=0
+ruby   own dir+at_exit      plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=234 preload_ms=14 modules=80 levels=1,2 learned=0 blacklisted=0 memo=0
+v24.22.2
+node   mkdtemp+on exit      plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=31 preload_ms=23 modules=4 levels=2 learned=4 blacklisted=0 memo=0 gen
+node   own dir+on exit      plain ['exists', 'exists', 'exists'] left 0
+       served rc [0, 0, 0, 0] ['exists', 'exists', 'exists', 'exists'] left while running 1, after stop 0
+       ready pid=97 preload_ms=14 modules=4 levels=2 learned=4 blacklisted=0 memo=0 gen

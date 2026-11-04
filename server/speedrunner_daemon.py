@@ -52,6 +52,7 @@ import io
 import itertools
 import json
 import os
+import posix
 import runpy
 import select
 import signal
@@ -885,9 +886,9 @@ class FileReads:
     active = None
     loading = False  # module-level code runs, here or in a probe
     lock_seen = False  # also when the module swallowed what the hook raised
-    temp_dirs = set()  # made by tempfile.mkdtemp as modules loaded: see keep_load_dirs
-    real_rmtree = None
-    rmtree_guard = None
+    # Made as modules loaded, see keep_load_state. path -> (kind, mode), in that order.
+    load_state = {}
+    guards = {}  # what keep_load_state replaced -> what it replaced it with
     LOCKS = {"fcntl.flock": lambda args: not args[1] & fcntl.LOCK_UN,
              "fcntl.lockf": lambda args: not args[1] & fcntl.LOCK_UN,
              "fcntl.fcntl": lambda args: args[1] in SET_LOCK}
@@ -919,8 +920,8 @@ class FileReads:
             # refuse every other run, and every child would share it.
             FileReads.lock_seen = True
             raise Refused(LOCK_AT_LOAD)
-        if FileReads.loading and event == "tempfile.mkdtemp" and os.path.isabs(args[0]):
-            FileReads.temp_dirs.add(os.fsdecode(args[0]))
+        if FileReads.loading and event in LOAD_STATE_EVENTS:
+            note_load_state(event, args)
         reads = FileReads.active
         if reads is None:
             return
@@ -964,6 +965,7 @@ class FileReads:
 
     def __enter__(self):
         self.modules_before = len(sys.modules)
+        self.state_before = set(FileReads.load_state)
         self.saved = {name: getattr(os, name) for name in ("stat", "lstat", "access", "getcwd", "getcwdb")}
         for name in ("stat", "lstat", "access"):
             setattr(os, name, self.stat_wrapper(self.saved[name]))
@@ -994,7 +996,53 @@ class FileReads:
             for key, value in list(namespace.items()) if isinstance(namespace, dict) else ():
                 if id(value) in ours:
                     namespace[key] = ours[id(value)]
-        guard_rmtree(new_modules)
+        # Gone again before this load ended. Not what an earlier load made, which
+        # a command may have removed by now, and the next call makes again.
+        for path in set(FileReads.load_state) - self.state_before:
+            if not os.path.lexists(path):
+                del FileReads.load_state[path]
+        guard_removals(new_modules)
+
+
+# What such state may be, and the audit events that make it.
+TEMP_DIR, TEMP_FILE, OWN_DIR = "temp dir", "temp file", "own dir"
+LOAD_STATE_EVENTS = ("tempfile.mkdtemp", "tempfile.mkstemp", "os.mkdir")
+
+
+def note_load_state(event, args):
+    path = args[0]
+    if event == "os.mkdir":
+        # Before the call: only one that is not there is made here.
+        if args[2] != -1 or not isinstance(path, (str, bytes, os.PathLike)):
+            return
+        try:
+            posix.lstat(path)
+            return
+        except OSError:
+            pass
+    path = os.fsdecode(path)
+    if not os.path.isabs(path):
+        return  # where each run would make it
+    if event == "tempfile.mkdtemp":
+        FileReads.load_state[path] = (TEMP_DIR, 0o700)
+    elif event == "tempfile.mkstemp":
+        FileReads.load_state[path] = (TEMP_FILE, 0o600)
+    else:
+        FileReads.load_state[path] = (OWN_DIR, args[1])
+
+
+def spared(path):
+    """In a child, whether this removal is the daemon's to do: a directory
+    tempfile made, always, since others may be using it; once atexit reached what
+    was registered as modules loaded, all that was made then and what is in it. A
+    command may remove the rest (`tool cache clear`)."""
+    if CHILD["conn"] is None or not isinstance(path, (str, os.PathLike)):
+        return False
+    path = os.path.abspath(os.fspath(path))
+    state = FileReads.load_state
+    if state.get(path, (None,))[0] == TEMP_DIR:
+        return True
+    return CHILD.get("load_exit", False) and (path in state or any(path.startswith(f"{p}/") for p in state))
 
 
 def only_in_the_daemon(func, *args, **kwargs):
@@ -1007,59 +1055,93 @@ ATEXIT_REGISTER = atexit.register
 
 def register_for_the_daemon(func, *args, **kwargs):
     """atexit.register while modules load: `atexit.register(shutil.rmtree, path)`
-    holds the function, out of reach of keep_load_dirs."""
-    if args and isinstance(args[0], (str, os.PathLike)) and os.fspath(args[0]) in FileReads.temp_dirs:
+    holds the function, out of reach of guard_removals."""
+    if (args and isinstance(args[0], (str, os.PathLike))
+            and os.path.abspath(os.fspath(args[0])) in FileReads.load_state):
         ATEXIT_REGISTER(only_in_the_daemon, func, *args, **kwargs)
     else:
         ATEXIT_REGISTER(func, *args, **kwargs)
     return func
 
 
-def keep_load_dirs():
-    """In a child: a temporary directory made as modules loaded is the daemon's,
-    which removes it as it exits. Natively each process has its own; here its path
-    is kept in the tool's state, so all children share it, and the first to
-    leave would take it away from the others. (ansible's DEFAULT_LOCAL_TMP.)"""
-    for path in FileReads.temp_dirs:
+def keep_load_state():
+    """In a child: a temporary directory or file, or a directory of the tool's
+    own, made as modules loaded is the daemon's, whose atexit handlers remove it as
+    it exits. Natively each process has its own; here its path is kept in the
+    tool's state, so all children share it, and the first to leave would take it
+    away from the others. (ansible's DEFAULT_LOCAL_TMP.) Made again if gone: a
+    temp cleaner, or a command."""
+    if not FileReads.load_state:
+        return
+    for path, (kind, mode) in FileReads.load_state.items():
         try:
-            os.makedirs(path, mode=0o700, exist_ok=True)  # gone: a temp cleaner
+            if kind == TEMP_FILE:
+                os.close(os.open(path, os.O_CREAT | os.O_WRONLY | os.O_CLOEXEC, mode))
+            else:
+                os.makedirs(path, mode=mode, exist_ok=True)
         except OSError:
             pass
+    # Runs after the handlers registered from now on, before those registered
+    # as modules loaded (LIFO).
+    ATEXIT_REGISTER(CHILD.__setitem__, "load_exit", True)
 
 
-def guard_rmtree(new_modules):
-    """Once a module has made such a directory: shutil.rmtree leaves it alone in a
-    child, under every name it goes by (tempfile's own `_rmtree` up to 3.11)."""
-    if not FileReads.temp_dirs:
+def guard_removals(new_modules):
+    """Once a module has made such state: shutil.rmtree, os.unlink, os.remove and
+    os.rmdir leave it alone in a child, under every name they go by (tempfile's own
+    `_rmtree` up to 3.11, a tool's `from shutil import rmtree`)."""
+    if not FileReads.load_state:
         return
-    if FileReads.real_rmtree is None:
-        shutil = sys.modules["shutil"]  # tempfile's, which made them
-        real = FileReads.real_rmtree = shutil.rmtree
+    if not FileReads.guards:
+        import shutil
 
-        def rmtree(path, *args, **kwargs):
-            if (CHILD["conn"] is None or not isinstance(path, (str, os.PathLike))
-                    or os.fspath(path) not in FileReads.temp_dirs):
-                return real(path, *args, **kwargs)
+        def guarded(real):
+            def guard(path, *args, **kwargs):
+                if kwargs.get("dir_fd") is not None or not spared(path):
+                    return real(path, *args, **kwargs)
+            guard.__name__ = real.__name__
+            guard.avoids_symlink_attacks = getattr(real, "avoids_symlink_attacks", False)
+            return guard
 
-        rmtree.avoids_symlink_attacks = getattr(real, "avoids_symlink_attacks", False)
-        FileReads.rmtree_guard = rmtree
+        for owner, name in ((shutil, "rmtree"), (os, "unlink"), (os, "remove"), (os, "rmdir")):
+            real = getattr(owner, name)
+            FileReads.guards[real] = guarded(real)
+            if real in os.supports_dir_fd:
+                os.supports_dir_fd.add(FileReads.guards[real])
         new_modules = list(sys.modules.values())
     for module in new_modules:
         namespace = getattr(module, "__dict__", None)
         for key, value in list(namespace.items()) if isinstance(namespace, dict) else ():
-            if value is FileReads.real_rmtree:
-                namespace[key] = FileReads.rmtree_guard
+            # Not everything in a namespace can be hashed.
+            if isinstance(value, (types.FunctionType, types.BuiltinFunctionType)) and value in FileReads.guards:
+                namespace[key] = FileReads.guards[value]
 
 
-def remove_load_dirs():
-    """In a probe, which leaves without running atexit handlers."""
-    for path in FileReads.temp_dirs:
-        sys.modules["shutil"].rmtree(path, ignore_errors=True)
+def remove_load_state():
+    """In a probe, which leaves without running atexit handlers. A name of the
+    tool's own may be in use by now: only if nothing was put in it."""
+    for path, (kind, _) in reversed(list(FileReads.load_state.items())):
+        try:
+            if kind == TEMP_DIR:
+                sys.modules["shutil"].rmtree(path, ignore_errors=True)
+            elif kind == TEMP_FILE:
+                os.unlink(path)
+            else:
+                os.rmdir(path)
+        except OSError:
+            pass
 
 
 def keep_file_reads(state, reads):
     """Cover what `reads` saw, as it is now. The cache's name does not depend
     on them: a config file that changed keeps what the daemon has learned."""
+    # Runs write in a temporary directory: nothing to compare. One of the tool's
+    # own may hold its config, and only its being there is the tool's doing.
+    temp = {p for p, (kind, _) in FileReads.load_state.items() if kind == TEMP_DIR}
+    if temp:
+        for found in (reads.files, reads.probed, reads.listed):
+            found -= {p for p in found if p in temp or any(p.startswith(d + "/") for d in temp)}
+    reads.probed -= FileReads.load_state.keys()
     state.import_cwd_read |= reads.cwd_read
     if reads.cwd_asked and state.start_cwd not in (None, "/"):
         prefix = state.start_cwd + "/"
@@ -1377,7 +1459,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
             os.close(r)
             sys.path[:0] = [p for p in paths if p not in sys.path]
             sys.meta_path.insert(0, RefuseImports(set(refused)))
-            FileReads.temp_dirs = set()  # those made so far are the daemon's
+            FileReads.load_state = {}  # what was made so far is the daemon's
             FileReads.loading = True
             verdict = {"ok": [], "bad": {}, "retry": []}
             freeze_heap()
@@ -1419,7 +1501,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
                 verdict = {"ok": [], "bad": {}, "retry": names, "cf": True}
             write_all(w, json.dumps(verdict).encode())
         finally:
-            remove_load_dirs()
+            remove_load_state()
             os._exit(0)
     os.close(w)
     chunks = []
@@ -1681,12 +1763,12 @@ def apply_request(state, req, fds):
         os.dup2(fd, target)
     rebind_std_streams()
     os.fchdir(cwd)
-    keep_load_dirs()
     for fd in fds[:4]:
         os.close(fd)
     if len(fds) > 4:
         bridge_tty(fds[4])  # kept open, close-on-exec, for the whole run
     os.umask(req.umask)
+    keep_load_state()
 
     # In place: botocore and others keep references to os.environ, and
     # clear()/update() also call unsetenv()/putenv() for C code and children.
@@ -1971,7 +2053,16 @@ def script_traceback(tb, state):
     t = tb
     while t is not None and not first(t.tb_frame.f_code):
         t = t.tb_next
-    return t if t is not None else tb
+    t = t if t is not None else tb
+    # And that of a guard (guard_removals) on the way.
+    guards = {g.__code__ for g in FileReads.guards.values()}
+    at = t
+    while guards and at is not None and at.tb_next is not None:
+        if at.tb_next.tb_frame.f_code in guards:
+            at.tb_next = at.tb_next.tb_next
+        else:
+            at = at.tb_next
+    return t
 
 
 def system_exit_code(exc):

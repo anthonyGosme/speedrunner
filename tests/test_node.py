@@ -316,13 +316,48 @@ class Freshness(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
-class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
+class ImportTimeReads(m.ImportTimeReadChecks, m.LoadDirChecks, m.Matrix):
     LIB = "hsread_lib.js"
     LAZY = "hsread_lazy.js"
     TAUGHT_LAZILY = True
     FS = "const fs = require('node:fs');\n"
     MAIN = "exports.main = () => console.log(String(VALUE));\n"
+    DIR_HEAD = "const fs = require('node:fs'), path = require('node:path');\n"
+    DIR_TEMP = "const DIR = fs.mkdtempSync(path.join(process.env.HS_DIR, 'hs-'));\n"
+    DIR_OWN = ("const DIR = path.join(process.env.HS_DIR, 'own-' + process.pid);\n"
+               "fs.mkdirSync(DIR, { recursive: true });\n")
+    DIR_RM = "process.on('exit', () => fs.rmSync(DIR, { recursive: true, force: true }));\n"
+    DIR_HOLD = "  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.HS_HOLD ?? 0) * 1000);\n"
+    DIR_MAIN = ("exports.main = () => {\n" + DIR_HOLD +
+                "  if (process.env.HS_CLEAR) {\n    fs.rmSync(DIR, { recursive: true });\n"
+                "    console.log('cleared');\n    return;\n  }\n"
+                "  const file = path.join(DIR, 'f' + process.pid);\n"
+                "  fs.writeFileSync(file, '');\n  fs.unlinkSync(file);\n  console.log('ok');\n};\n")
+    LAZY_DIR = DIR_HEAD + DIR_TEMP + DIR_RM + "exports.VALUE = 'ok';\n"
     SOURCES = {
+        "dir_temp": DIR_HEAD + DIR_TEMP + DIR_RM + DIR_MAIN,
+        "dir_own": DIR_HEAD + DIR_OWN + DIR_RM + DIR_MAIN,
+        "dir_data": DIR_HEAD + DIR_TEMP + "fs.writeFileSync(path.join(DIR, 'data'), '');\n" + DIR_RM +
+                    "exports.main = () => {\n" + DIR_HOLD +
+                    "  console.log(fs.existsSync(path.join(DIR, 'data')) ? 'ok' : 'GONE');\n};\n",
+        "dir_gone": DIR_HEAD + DIR_TEMP + "fs.rmSync(DIR, { recursive: true });\n"
+                    "exports.main = () => console.log('ok');\n",
+        "dir_at_run": DIR_HEAD + "exports.main = () => {\n"
+                      "  const dir = fs.mkdtempSync(path.join(process.env.HS_DIR, 'hs-'));\n"
+                      "  process.on('exit', () => fs.rmSync(dir, { recursive: true }));\n"
+                      "  console.log('ok');\n};\n",
+        "temp_destructured": "const { mkdtempSync, rmSync, ...fs } = require('node:fs'), path = require('node:path');\n"
+                              "const DIR = mkdtempSync(path.join(process.env.HS_DIR, 'hs-'));\n"
+                              "process.on('exit', () => rmSync(DIR, { recursive: true }));\n" + DIR_MAIN,
+        "temp_by_hand": DIR_HEAD + DIR_TEMP +
+                        "process.on('exit', () => {\n"
+                        "  for (const e of fs.readdirSync(DIR)) fs.unlinkSync(path.join(DIR, e));\n"
+                        "  fs.rmdirSync(DIR);\n});\n" + DIR_MAIN,
+        "temp_process_exit": DIR_HEAD + DIR_TEMP + DIR_RM +
+                             DIR_MAIN.replace("console.log('ok');", "console.log('ok');\n  process.exit(0);"),
+        "own_chain": DIR_HEAD + "const TOP = path.join(process.env.HS_DIR, 'own-' + process.pid), DIR = path.join(TOP, 'a', 'b');\n"
+                     "fs.mkdirSync(DIR, { recursive: true });\n"
+                     "process.on('exit', () => fs.rmSync(TOP, { recursive: true, force: true }));\n" + DIR_MAIN,
         "read": FS + "const VALUE = fs.readFileSync(process.env.HS_CFG, 'utf8');\n" + MAIN,
         "read_if_there": FS + "const CFG = process.env.HS_CFG;\n"
                               "const VALUE = fs.existsSync(CFG) ? fs.readFileSync(CFG, 'utf8') : 'none';\n" + MAIN,
@@ -341,6 +376,18 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
 
     def script(self):
         return "#!/usr/bin/env node\nrequire('./hsread_lib.js').main();\n"
+
+    def test_load_dir_removed_by_a_destructured_function(self):
+        self.check_load_dir("temp_destructured")
+
+    def test_load_dir_removed_by_hand(self):
+        self.check_load_dir("temp_by_hand")
+
+    def test_load_dir_removed_after_process_exit(self):
+        self.check_load_dir("temp_process_exit")
+
+    def test_own_load_dir_with_parents(self):
+        self.check_load_dir("own_chain")
 
     def teach(self, env, cwd):
         # Node preloads what it learned only: the module once a run has loaded it.

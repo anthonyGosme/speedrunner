@@ -43,6 +43,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const Module = require("node:module");
+const SELF = fileURLToPath(import.meta.url);
 // A Node built without the code cache of its internals (Homebrew's node@22,
 // Fedora's) compiles them from source, and --no-lazy, which the client gives
 // us, then names some of their functions otherwise: a stack's
@@ -77,6 +78,56 @@ process.reallyExit = function (code) {
   if (serving && !serving.dying) finish(Number(code ?? process.exitCode ?? 0) | 0);
   return nodeReallyExit.call(this, code);
 };
+
+// A directory made as modules load: natively each process has its own; here
+// its path is kept in the tool's state, so all children share it, and the
+// first to leave would take it away from the others. Each child makes it again
+// if it is gone (a temp cleaner), and leaves its removal to the daemon, which
+// runs the "exit" listeners as it leaves.
+//
+// path -> { temp: made by mkdtempSync, mode }
+const loadDirs = new Map();
+const realRemovers = { rmSync: fs.rmSync, rmdirSync: fs.rmdirSync, unlinkSync: fs.unlinkSync };
+
+function asPath(file) {
+  if (file instanceof URL) return fileURLToPath(file);
+  return Buffer.isBuffer(file) ? file.toString() : file;
+}
+
+function inLoadDir(file) {
+  return loadDirs.has(file) || [...loadDirs.keys()].some((dir) => file.startsWith(`${dir}/`));
+}
+
+// Once "exit" was emitted, nothing in such a directory goes. A command may
+// remove what is there (`tool cache clear`, in a directory of the tool's own),
+// except the one mkdtempSync made itself, which others may be using.
+function spared(file, aDirectory) {
+  if (!serving || loadDirs.size === 0) return false;
+  file = asPath(file);
+  if (typeof file !== "string") return false;
+  file = path.resolve(file);
+  if (aDirectory && loadDirs.get(file)?.temp) return true;
+  return process._exiting === true && inLoadDir(file);
+}
+
+// An error passed on is rid of our frame.
+function withoutOurFrame(real, self, args) {
+  try {
+    return real.apply(self, args);
+  } catch (e) {
+    if (typeof e?.stack === "string") e.stack = e.stack.split("\n").filter((l) => !l.includes(SELF)).join("\n");
+    throw e;
+  }
+}
+
+// Under fs's names from the start, so that every module takes these, whether
+// it copies them (graceful-fs) or not. Asynchronous ones cannot run at exit.
+for (const [name, real] of Object.entries(realRemovers)) {
+  fs[name] = { [name](file, ...rest) {
+    if (!spared(file, name !== "unlinkSync")) return withoutOurFrame(real, this, [file, ...rest]);
+  } }[name];
+}
+syncBuiltinESMExports();
 
 const MAGIC = Buffer.from("HS1");
 const HANDSHAKE_TIMEOUT_MS = 5000;
@@ -272,7 +323,6 @@ const WRAPPED = { readFileSync: "files", openSync: "files", readdirSync: "listed
                   existsSync: "probed", statSync: "probed", lstatSync: "probed", accessSync: "probed" };
 const realFs = Object.fromEntries(Object.keys(WRAPPED).map((name) => [name, fs[name]]));
 const realCwd = process.cwd;
-const SELF = fileURLToPath(import.meta.url);
 
 function noteRead(file, into) {
   if (file instanceof URL) file = fileURLToPath(file);
@@ -294,30 +344,65 @@ const fsWrappers = Object.fromEntries(Object.entries(WRAPPED).map(([name, into])
   const wrapper = {
     [name](file, ...rest) {
       if (tracking && !((name === "openSync" || name === "readFileSync") && writes(rest[0]))) noteRead(file, into);
-      try {
-        return real.call(this, file, ...rest);
-      } catch (e) {
-        if (typeof e?.stack === "string") e.stack = e.stack.split("\n").filter((l) => !l.includes(SELF)).join("\n");
-        throw e;
-      }
+      return withoutOurFrame(real, this, [file, ...rest]);
     },
   }[name];
   return [name, wrapper];
 }));
+
+const realMkdtemp = fs.mkdtempSync;
+const realMkdir = fs.mkdirSync;
+
+const loadMakers = {
+  mkdtempSync(...args) {
+    const dir = withoutOurFrame(realMkdtemp, this, args);
+    if (tracking) loadDirs.set(path.resolve(String(dir)), { temp: true, mode: 0o700 });
+    return dir;
+  },
+  // Only what it made: what was there raises, or is left out of what it returns.
+  mkdirSync(file, options, ...rest) {
+    const first = withoutOurFrame(realMkdir, this, [file, options, ...rest]);
+    const recursive = typeof options === "object" && options?.recursive;
+    file = asPath(file);
+    if (tracking && typeof file === "string" && (first !== undefined || !recursive) && file.startsWith("/")) {
+      const mode = (typeof options === "object" ? options?.mode : options) ?? 0o777;
+      const target = path.resolve(file);
+      const top = recursive ? path.resolve(first) : target;
+      const made = [target]; // from the top down: removeLoadDirs goes the other way
+      for (let dir = target; dir.startsWith(`${top}/`); dir = path.dirname(dir)) made.unshift(path.dirname(dir));
+      for (const dir of made) loadDirs.set(dir, { temp: false, mode });
+    }
+    return first;
+  },
+};
+
+// In a probe, which leaves without emitting "exit". A name of the tool's own
+// may be in use by now: only if nothing was put in it.
+function removeLoadDirs() {
+  for (const [dir, { temp }] of [...loadDirs].reverse()) {
+    try {
+      if (temp) realRemovers.rmSync(dir, { recursive: true, force: true });
+      else realRemovers.rmdirSync(dir);
+    } catch {}
+  }
+}
 
 function trackedCwd() {
   if (tracking) fileReads.cwd = true;
   return realCwd.call(process);
 }
 
+let dirsBefore = new Set();
+
 function startTracking() {
   tracking = true;
+  dirsBefore = new Set(loadDirs.keys());
   process.env = envProxy;
   // Imports see the command line of a bare run of the tool.
   realArgv.splice(0, realArgv.length, process.execPath, state.script);
   process.argv = argvProxy;
   tty.isatty = trackedIsatty;
-  Object.assign(fs, fsWrappers);
+  Object.assign(fs, fsWrappers, loadMakers);
   process.cwd = trackedCwd;
   syncBuiltinESMExports();
   // Natively modules load in the client's directory.
@@ -333,10 +418,13 @@ function stopTracking() {
   process.env = realEnv;
   process.argv = realArgv;
   tty.isatty = realIsatty;
-  Object.assign(fs, realFs);
+  Object.assign(fs, realFs, { mkdtempSync: realMkdtemp, mkdirSync: realMkdir });
   process.cwd = realCwd;
   syncBuiltinESMExports();
   if (state.startCwd) process.chdir(state.runtimeDir);
+  // Gone again before this load ended. Not what an earlier load made, which a
+  // command may have removed by now, and the next call makes again.
+  for (const dir of loadDirs.keys()) if (!dirsBefore.has(dir) && !realFs.existsSync(dir)) loadDirs.delete(dir);
 }
 
 function cwdFileKey(file) {
@@ -356,6 +444,13 @@ function keepFileReads() {
     }
   }
   state.cwdRead ||= fileReads.cwd;
+  // Runs write in a temporary directory: nothing to compare. One of the tool's
+  // own may hold its config, and only its being there is the tool's doing.
+  const temp = [...loadDirs].filter(([, how]) => how.temp).map(([dir]) => dir);
+  for (const set of [fileReads.files, fileReads.listed, fileReads.probed]) {
+    for (const p of set) if (temp.some((dir) => p === dir || p.startsWith(`${dir}/`))) set.delete(p);
+  }
+  for (const dir of loadDirs.keys()) fileReads.probed.delete(dir);
   const isDir = (p) => cwdFileKey(p) === "dir";
   for (const dir of fileReads.listed) addStatFile(dir);
   for (const p of [...fileReads.files, ...fileReads.probed]) {
@@ -625,6 +720,11 @@ function applyRequest(req, fds, script) {
   process.chdir("."); // Node caches its cwd: drop the daemon's
   for (const fd of fds) sys.close(fd); // the tty too: no bridge to /dev/tty yet
   process.umask(req.umask);
+  for (const [dir, { mode }] of loadDirs) {
+    try {
+      realMkdir(dir, { recursive: true, mode });
+    } catch {}
+  }
   // In place: modules hold references to both.
   for (const key of Object.keys(realEnv)) if (!(key in req.env)) delete realEnv[key];
   Object.assign(realEnv, req.env);
@@ -869,6 +969,7 @@ function probe(candidates) {
     sys.close(rd);
     sys.dup2(in1, 1);
     sys.dup2(in2, 2);
+    loadDirs.clear(); // those made so far are the daemon's
     (async () => {
       startTracking();
       for (const entry of candidates) {
@@ -876,8 +977,12 @@ function probe(candidates) {
         writeAll(wr, Buffer.from(JSON.stringify(why === null ? { ok: entry[0] } : { refused: entry[0], why }) + "\n"));
         if (why !== null) break;
       }
+      removeLoadDirs();
       sys.exit(0);
-    })().catch(() => sys.exit(1));
+    })().catch(() => {
+      removeLoadDirs();
+      sys.exit(1);
+    });
     return null;
   }
   for (const fd of [wr, in1, in2, out1, out2]) sys.close(fd);
@@ -1268,5 +1373,15 @@ async function main() {
 }
 
 const code = await main();
-// The parent and the probes end here; a served child returned to run the tool.
-if (code !== null) sys.exit(code);
+// The parent ends here; a probe or a served child returned to run on. What the
+// tool registered as it loaded runs here too, as in the other daemons: it
+// removes what the tool made then, which children left to it.
+if (code !== null) {
+  process._exiting = true; // a listener's process.exit() goes straight to its end
+  try {
+    process.emit("exit", code);
+  } catch (e) {
+    log(`an exit listener failed: ${e?.message ?? e}`);
+  }
+  sys.exit(code);
+}
