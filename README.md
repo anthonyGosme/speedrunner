@@ -101,11 +101,11 @@ speedrunner demo
 ## Results
 
 <!-- panel:start -->
-**96 commands served (46 Python, 18 Ruby, 19 PHP, 13 Node), 96 with an output identical to the native run. Speedup: geometric mean x5.6, median x4.9; 77 at x3 or more, 21 at x10 or more.**
+**96 commands served (46 Python, 18 Ruby, 19 PHP, 13 Node), 96 with an output identical to the native run. Speedup: geometric mean x5.5, median x4.8; 74 at x3 or more, 22 at x10 or more.**
 
-69 of them only print a version or a help text, which measures start-up alone. The 27 that do real work (lint or format a file, run tests, list a project) gain x4.0 median, 22 of them x3 or more.
+69 of them only print a version or a help text, which measures start-up alone. The 27 that do real work (lint or format a file, run tests, list a project) gain x4.0 median, 20 of them x3 or more.
 
-Measured on a 2-vCPU Debian 12 VPS, or, for the commands marked ¹, on a laptop (Intel i7-9750H), in a Debian 12 container (Python 3.11.2, Ruby 3.1.2, PHP 8.2.35, Node 24.22.2). Warm daemon, no tool-specific setup: each command is simply run as `srr <command>`. Each time is the median of 20 runs, native and speedrunner interleaved; the speedup is the ratio of the medians, with its 95% confidence interval (bootstrap). Every output (exit code, stdout, stderr) is compared with the native run's. Mean, standard deviation, min, max, the daemons' memory and every run: [20261030T212139Z-panel-vps](bench/results/20261030T212139Z-panel-vps/summary.md); [20261030T210248Z-candidates-docker](bench/results/20261030T210248Z-candidates-docker/summary.md); [20261031T005026Z-node-panel-docker](bench/results/20261031T005026Z-node-panel-docker/summary.md).
+Measured on a 2-vCPU Debian 12 VPS, or, for the commands marked ¹, on a laptop (Intel i7-9750H), in a Debian 12 container, on an earlier version (Python 3.11.2, Ruby 3.1.2, PHP 8.2.35, Node 24.22.2). Warm daemon, no tool-specific setup: each command is simply run as `srr <command>`. Each time is the median of 20 runs, native and speedrunner interleaved; the speedup is the ratio of the medians, with its 95% confidence interval (bootstrap). Every output (exit code, stdout, stderr) is compared with the native run's. Mean, standard deviation, min, max, the daemons' memory and every run: [20261104T170700Z-panel-vps](bench/results/20261104T170700Z-panel-vps/summary.md); [20261030T210248Z-candidates-docker](bench/results/20261030T210248Z-candidates-docker/summary.md); [20261031T005026Z-node-panel-docker](bench/results/20261031T005026Z-node-panel-docker/summary.md).
 
 **Python**
 
@@ -117,66 +117,66 @@ Measured on a 2-vCPU Debian 12 VPS, or, for the commands marked ¹, on a laptop 
 | `openstack --version` ¹ | 1055 ms | 42 ms | **x24.9** (23.8–26.6) |
 | `airflow version` ¹ | 2254 ms | 98 ms | **x23.1** (22.8–23.4) |
 | `pgcli --version` ¹ | 428 ms | 19 ms | **x22.2** (21.8–23.3) |
-| `poetry --version` | 287 ms | 13 ms | **x21.7** (20.9–22.8) |
 | `cookiecutter --version` ¹ | 386 ms | 20 ms | **x18.9** (16.4–22.6) |
+| `poetry --version` | 287 ms | 16 ms | **x18.2** (17.3–19.1) |
 | `litecli --version` ¹ | 307 ms | 18 ms | **x17.4** (17.3–17.7) |
 | `pipenv --version` ¹ | 537 ms | 33 ms | **x16.4** (16.1–16.8) |
-| `ansible --version` | 213 ms | 13 ms | **x15.9** (15.4–16.3) |
 | `bandit --version` ¹ | 317 ms | 22 ms | **x14.2** (12.1–15.2) |
+| `ansible --version` | 199 ms | 15 ms | **x13.4** (12.8–14.3) |
 | `checkov --version` ¹ | 3212 ms | 256 ms | **x12.6** (12.3–12.9) |
 | `pio --version` ¹ | 263 ms | 22 ms | **x12.2** (11.9–12.3) |
 | `pylint --version` ¹ | 170 ms | 14 ms | **x11.9** (11.7–12.0) |
 | `yt-dlp --version` ¹ | 235 ms | 22 ms | **x10.8** (10.4–11.0) |
 | `conan --version` ¹ | 367 ms | 34 ms | **x10.7** (10.6–11.0) |
 | `nox --version` ¹ | 213 ms | 22 ms | **x9.8** (9.5–10.1) |
-| `black --check sample.py` | 90 ms | 10 ms | **x9.3** (9.1–9.7) |
 | `mkdocs --version` ¹ | 141 ms | 16 ms | **x9.1** (8.9–9.2) |
 | `twine --version` ¹ | 300 ms | 35 ms | **x8.6** (7.3–11.7) |
 | `meson --version` ¹ | 367 ms | 43 ms | **x8.6** (8.4–8.8) |
 | `hatch --version` ¹ | 135 ms | 16 ms | **x8.4** (8.3–8.6) |
 | `sam --version` ¹ | 136 ms | 16 ms | **x8.3** (8.1–8.6) |
-| `pre-commit --version` | 82 ms | 10 ms | **x8.2** (8.0–8.5) |
-| `pip list` | 125 ms | 17 ms | **x7.4** (6.6–7.8) |
-| `aws --version` | 242 ms | 38 ms | **x6.3** (5.8–6.6) |
+| `black --check sample.py` | 92 ms | 12 ms | **x7.5** (7.2–7.9) |
+| `pre-commit --version` | 85 ms | 12 ms | **x7.0** (6.3–7.3) |
+| `pip list` | 127 ms | 19 ms | **x6.7** (6.4–6.8) |
 | `pdm --version` ¹ | 456 ms | 73 ms | **x6.3** (6.2–6.3) |
-| `ansible-doc ping` | 340 ms | 60 ms | **x5.6** (5.4–6.1) |
-| `aws configure list` | 238 ms | 43 ms | **x5.5** (5.2–5.7) |
-| `az vm --help` | 322 ms | 61 ms | **x5.3** (5.0–5.7) |
-| `yamllint sample.yaml` | 53 ms | 10 ms | **x5.2** (4.8–5.5) |
-| `gcloud --version` | 363 ms | 74 ms | **x4.9** (4.8–5.2) |
+| `ansible-doc ping` | 318 ms | 59 ms | **x5.3** (5.2–5.6) |
+| `aws --version` | 221 ms | 41 ms | **x5.3** (5.2–5.7) |
+| `az vm --help` | 314 ms | 64 ms | **x4.9** (4.7–5.3) |
+| `aws configure list` | 229 ms | 48 ms | **x4.8** (4.7–5.0) |
+| `yamllint sample.yaml` | 52 ms | 11 ms | **x4.8** (4.5–5.1) |
 | `sqlfluff lint sample.sql` (exits 1 natively) ¹ | 669 ms | 141 ms | **x4.8** (4.6–5.0) |
-| `flake8 sample.py` | 76 ms | 16 ms | **x4.7** (4.3–4.8) |
-| `gcloud config list` | 378 ms | 82 ms | **x4.6** (4.4–4.7) |
 | `command-not-found sl` (exits 127 natively) ¹ | 82 ms | 18 ms | **x4.4** (4.3–4.5) |
 | `codespell --version` ¹ | 118 ms | 28 ms | **x4.3** (3.8–4.6) |
-| `http --offline (httpie)` | 210 ms | 49 ms | **x4.3** (4.0–4.7) |
-| `az --help` | 88 ms | 22 ms | **x3.9** (3.8–4.4) |
-| `mypy sample.py` | 90 ms | 23 ms | **x3.9** (3.6–4.2) |
+| `gcloud --version` | 323 ms | 77 ms | **x4.2** (3.9–4.4) |
+| `gcloud config list` | 347 ms | 86 ms | **x4.0** (3.7–4.2) |
+| `http --offline (httpie)` | 212 ms | 53 ms | **x4.0** (3.7–4.4) |
+| `flake8 sample.py` | 73 ms | 18 ms | **x4.0** (3.6–4.2) |
+| `mypy sample.py` | 90 ms | 24 ms | **x3.8** (3.7–3.9) |
 | `cfn-lint template.yaml` ¹ | 1293 ms | 361 ms | **x3.6** (3.5–3.6) |
+| `az --help` | 80 ms | 23 ms | **x3.5** (3.4–3.8) |
 | `dbt ls` ¹ | 3858 ms | 1166 ms | **x3.3** (3.2–3.4) |
-| `pytest -q` | 187 ms | 62 ms | **x3.0** (3.0–3.2) |
 | `oci --version` ¹ | 702 ms | 233 ms | **x3.0** (2.9–3.1) |
+| `pytest -q` | 184 ms | 66 ms | **x2.8** (2.7–2.9) |
 | `pylint sample.py` (exits 16 natively) ¹ | 616 ms | 305 ms | **x2.0** (2.0–2.1) |
 
 **Ruby**
 
 | Command | Native | speedrunner | Speedup (95% CI) |
 |---|---:|---:|---:|
-| `rdoc --version` | 215 ms | 12 ms | **x17.7** (16.9–19.0) |
-| `bundle --version` | 94 ms | 6 ms | **x14.8** (13.5–15.4) |
-| `solargraph --version` | 769 ms | 62 ms | **x12.5** (11.6–13.2) |
-| `rspec sample_spec.rb` | 121 ms | 13 ms | **x9.2** (8.6–9.8) |
-| `pod --version` | 370 ms | 44 ms | **x8.4** (8.1–8.7) |
-| `rake --version` | 81 ms | 10 ms | **x8.0** (7.3–9.5) |
+| `rdoc --version` | 208 ms | 13 ms | **x16.3** (15.8–16.8) |
+| `bundle --version` | 96 ms | 8 ms | **x11.9** (11.1–12.3) |
+| `solargraph --version` | 732 ms | 63 ms | **x11.6** (11.2–12.1) |
+| `rspec sample_spec.rb` | 125 ms | 12 ms | **x10.4** (9.8–11.1) |
+| `rake --version` | 73 ms | 8 ms | **x9.6** (8.8–10.1) |
+| `pod --version` | 392 ms | 46 ms | **x8.6** (8.1–9.1) |
 | `brakeman --version` ¹ | 148 ms | 19 ms | **x7.7** (7.6–7.8) |
 | `cap --version` ¹ | 470 ms | 63 ms | **x7.5** (7.4–7.6) |
+| `rails --version` | 188 ms | 26 ms | **x7.2** (6.7–7.5) |
 | `jekyll --version` ¹ | 768 ms | 113 ms | **x6.8** (6.4–7.4) |
 | `asciidoctor sample.adoc` ¹ | 255 ms | 43 ms | **x5.9** (5.8–7.3) |
-| `rails --version` | 172 ms | 34 ms | **x5.1** (4.9–5.5) |
+| `gem list` | 195 ms | 41 ms | **x4.8** (4.5–5.2) |
 | `kamal version` ¹ | 628 ms | 131 ms | **x4.8** (4.3–4.9) |
-| `rubocop --version` | 424 ms | 97 ms | **x4.4** (4.2–4.5) |
-| `gem list` | 194 ms | 48 ms | **x4.0** (3.8–4.1) |
-| `rubocop sample.rb` | 714 ms | 196 ms | **x3.6** (3.5–3.9) |
+| `rubocop --version` | 414 ms | 97 ms | **x4.2** (4.0–4.4) |
+| `rubocop sample.rb` | 686 ms | 164 ms | **x4.2** (4.0–4.4) |
 | `fastlane --version` ¹ | 2521 ms | 711 ms | **x3.5** (3.4–3.7) |
 | `puppet --version` ¹ | 1466 ms | 491 ms | **x3.0** (2.9–3.1) |
 | `standardrb sample.rb` ¹ | 2402 ms | 951 ms | **x2.5** (2.5–2.7) |
@@ -185,25 +185,25 @@ Measured on a 2-vCPU Debian 12 VPS, or, for the commands marked ¹, on a laptop 
 
 | Command | Native | speedrunner | Speedup (95% CI) |
 |---|---:|---:|---:|
-| `php artisan --version` | 101 ms | 25 ms | **x4.0** (3.9–4.1) |
 | `php bin/console list` ¹ | 135 ms | 34 ms | **x4.0** (3.9–4.1) |
+| `php artisan --version` | 102 ms | 26 ms | **x4.0** (3.9–4.1) |
 | `php bin/console --version` ¹ | 116 ms | 29 ms | **x4.0** (3.8–4.0) |
-| `php artisan list` | 120 ms | 32 ms | **x3.8** (3.6–3.9) |
 | `pest --version` ¹ | 100 ms | 26 ms | **x3.8** (3.7–3.8) |
-| `psalm --version` | 27 ms | 8 ms | **x3.4** (3.3–3.5) |
+| `php artisan list` | 119 ms | 32 ms | **x3.7** (3.6–3.9) |
 | `infection --version` ¹ | 102 ms | 30 ms | **x3.4** (3.3–3.5) |
-| `phpunit --version` | 26 ms | 8 ms | **x3.3** (3.1–3.6) |
-| `phpcs Greeter.php` | 43 ms | 14 ms | **x3.0** (2.9–3.1) |
-| `phploc --version` | 23 ms | 8 ms | **x2.9** (2.5–3.1) |
-| `php-cs-fixer --version` | 101 ms | 37 ms | **x2.7** (2.6–2.9) |
+| `psalm --version` | 27 ms | 9 ms | **x3.1** (3.0–3.2) |
+| `phpunit --version` | 26 ms | 9 ms | **x3.0** (2.9–3.1) |
+| `phpcs Greeter.php` | 44 ms | 16 ms | **x2.8** (2.7–2.9) |
+| `phploc --version` | 23 ms | 8 ms | **x2.8** (2.6–2.9) |
+| `php-cs-fixer --version` | 105 ms | 38 ms | **x2.8** (2.6–2.8) |
 | `phpmd --version` ¹ | 93 ms | 34 ms | **x2.7** (2.4–3.1) |
 | `dep --version` ¹ | 96 ms | 36 ms | **x2.7** (2.6–2.7) |
-| `composer --version` | 36 ms | 15 ms | **x2.4** (2.3–2.6) |
+| `composer --version` | 34 ms | 15 ms | **x2.3** (2.3–2.4) |
 | `behat --version` ¹ | 226 ms | 108 ms | **x2.1** (2.1–2.1) |
-| `composer show` | 99 ms | 49 ms | **x2.0** (1.9–2.1) |
-| `rector --version` | 239 ms | 123 ms | **x1.9** (1.9–2.0) |
+| `composer show` | 96 ms | 48 ms | **x2.0** (2.0–2.1) |
+| `rector --version` | 234 ms | 120 ms | **x1.9** (1.9–2.0) |
 | `pint --version` ¹ | 355 ms | 193 ms | **x1.8** (1.5–2.4) |
-| `phpstan analyse` | 663 ms | 636 ms | **x1.0** (1.0–1.1) |
+| `phpstan analyse` | 688 ms | 681 ms | **x1.0** (1.0–1.1) |
 | `wp --version` ¹ | 183 ms | — | not served |
 | `drush --version` ¹ | 203 ms | — | not served |
 
