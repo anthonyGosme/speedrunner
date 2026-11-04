@@ -885,6 +885,9 @@ class FileReads:
     active = None
     loading = False  # module-level code runs, here or in a probe
     lock_seen = False  # also when the module swallowed what the hook raised
+    temp_dirs = set()  # made by tempfile.mkdtemp as modules loaded: see keep_load_dirs
+    real_rmtree = None
+    rmtree_guard = None
     LOCKS = {"fcntl.flock": lambda args: not args[1] & fcntl.LOCK_UN,
              "fcntl.lockf": lambda args: not args[1] & fcntl.LOCK_UN,
              "fcntl.fcntl": lambda args: args[1] in SET_LOCK}
@@ -916,6 +919,8 @@ class FileReads:
             # refuse every other run, and every child would share it.
             FileReads.lock_seen = True
             raise Refused(LOCK_AT_LOAD)
+        if FileReads.loading and event == "tempfile.mkdtemp" and os.path.isabs(args[0]):
+            FileReads.temp_dirs.add(os.fsdecode(args[0]))
         reads = FileReads.active
         if reads is None:
             return
@@ -964,6 +969,8 @@ class FileReads:
             setattr(os, name, self.stat_wrapper(self.saved[name]))
         for name in ("getcwd", "getcwdb"):
             setattr(os, name, self.getcwd_wrapper(self.saved[name]))
+        self.atexit_register = atexit.register
+        atexit.register = register_for_the_daemon
         FileReads.loading = True
         # Natively module-level code runs in the client's directory.
         if self.state.start_cwd_fd is not None:
@@ -974,17 +981,80 @@ class FileReads:
     def __exit__(self, *exc):
         FileReads.active = None
         FileReads.loading = False
+        atexit.register = self.atexit_register
         if self.state.start_cwd_fd is not None:
             os.fchdir(RUNTIME_DIR_FD)
         ours = {id(getattr(os, name)): original for name, original in self.saved.items()}
         for name, original in self.saved.items():
             setattr(os, name, original)
         # `from os import stat` took the wrapper: no frame of ours in a traceback.
-        for module in list(sys.modules.values())[self.modules_before:]:
+        new_modules = list(sys.modules.values())[self.modules_before:]
+        for module in new_modules:
             namespace = getattr(module, "__dict__", None)
             for key, value in list(namespace.items()) if isinstance(namespace, dict) else ():
                 if id(value) in ours:
                     namespace[key] = ours[id(value)]
+        guard_rmtree(new_modules)
+
+
+def only_in_the_daemon(func, *args, **kwargs):
+    if CHILD["conn"] is None:
+        func(*args, **kwargs)
+
+
+ATEXIT_REGISTER = atexit.register
+
+
+def register_for_the_daemon(func, *args, **kwargs):
+    """atexit.register while modules load: `atexit.register(shutil.rmtree, path)`
+    holds the function, out of reach of keep_load_dirs."""
+    if args and isinstance(args[0], (str, os.PathLike)) and os.fspath(args[0]) in FileReads.temp_dirs:
+        ATEXIT_REGISTER(only_in_the_daemon, func, *args, **kwargs)
+    else:
+        ATEXIT_REGISTER(func, *args, **kwargs)
+    return func
+
+
+def keep_load_dirs():
+    """In a child: a temporary directory made as modules loaded is the daemon's,
+    which removes it as it exits. Natively each process has its own; here its path
+    is kept in the tool's state, so all children share it, and the first to
+    leave would take it away from the others. (ansible's DEFAULT_LOCAL_TMP.)"""
+    for path in FileReads.temp_dirs:
+        try:
+            os.makedirs(path, mode=0o700, exist_ok=True)  # gone: a temp cleaner
+        except OSError:
+            pass
+
+
+def guard_rmtree(new_modules):
+    """Once a module has made such a directory: shutil.rmtree leaves it alone in a
+    child, under every name it goes by (tempfile's own `_rmtree` up to 3.11)."""
+    if not FileReads.temp_dirs:
+        return
+    if FileReads.real_rmtree is None:
+        shutil = sys.modules["shutil"]  # tempfile's, which made them
+        real = FileReads.real_rmtree = shutil.rmtree
+
+        def rmtree(path, *args, **kwargs):
+            if (CHILD["conn"] is None or not isinstance(path, (str, os.PathLike))
+                    or os.fspath(path) not in FileReads.temp_dirs):
+                return real(path, *args, **kwargs)
+
+        rmtree.avoids_symlink_attacks = getattr(real, "avoids_symlink_attacks", False)
+        FileReads.rmtree_guard = rmtree
+        new_modules = list(sys.modules.values())
+    for module in new_modules:
+        namespace = getattr(module, "__dict__", None)
+        for key, value in list(namespace.items()) if isinstance(namespace, dict) else ():
+            if value is FileReads.real_rmtree:
+                namespace[key] = FileReads.rmtree_guard
+
+
+def remove_load_dirs():
+    """In a probe, which leaves without running atexit handlers."""
+    for path in FileReads.temp_dirs:
+        sys.modules["shutil"].rmtree(path, ignore_errors=True)
 
 
 def keep_file_reads(state, reads):
@@ -1307,6 +1377,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
             os.close(r)
             sys.path[:0] = [p for p in paths if p not in sys.path]
             sys.meta_path.insert(0, RefuseImports(set(refused)))
+            FileReads.temp_dirs = set()  # those made so far are the daemon's
             FileReads.loading = True
             verdict = {"ok": [], "bad": {}, "retry": []}
             freeze_heap()
@@ -1348,6 +1419,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
                 verdict = {"ok": [], "bad": {}, "retry": names, "cf": True}
             write_all(w, json.dumps(verdict).encode())
         finally:
+            remove_load_dirs()
             os._exit(0)
     os.close(w)
     chunks = []
@@ -1609,6 +1681,7 @@ def apply_request(state, req, fds):
         os.dup2(fd, target)
     rebind_std_streams()
     os.fchdir(cwd)
+    keep_load_dirs()
     for fd in fds[:4]:
         os.close(fd)
     if len(fds) > 4:

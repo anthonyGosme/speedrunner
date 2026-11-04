@@ -1579,7 +1579,26 @@ class ImportTimeReads(ImportTimeReadChecks, LockAtLoadChecks, Matrix):
                  "    print('BUSY')\n"
                  "    sys.exit(3)\n")
     LOCK_MAIN = "def main():\n    time.sleep(float(os.environ.get('HS_HOLD', '0')))\n    print('held')\n"
+    TEMP_MAIN = ("def main():\n"
+                 "    time.sleep(float(os.environ.get('HS_HOLD', '0')))\n"
+                 "    fd, path = tempfile.mkstemp(dir=DIR)\n"
+                 "    os.close(fd)\n"
+                 "    os.unlink(path)\n"
+                 "    print('ok')\n")
+    TEMP_HEAD = "import atexit, os, shutil, tempfile, time\n"
+    TEMP_MADE = "DIR = tempfile.mkdtemp(prefix='hs-', dir=os.environ['HS_DIR'])\n"
     SOURCES = {
+        # Like ansible's config: removed at exit by a function of the tool's.
+        "temp_by_function": TEMP_HEAD + TEMP_MADE
+                            + "def clean(path):\n    shutil.rmtree(path)\n"
+                            + "atexit.register(clean, DIR)\n" + TEMP_MAIN,
+        "temp_bound": TEMP_HEAD + TEMP_MADE + "atexit.register(shutil.rmtree, DIR)\n" + TEMP_MAIN,
+        "temp_closure": TEMP_HEAD + TEMP_MADE
+                        + "@atexit.register\ndef clean():\n    shutil.rmtree(DIR)\n" + TEMP_MAIN,
+        "temp_from_import": TEMP_HEAD + TEMP_MADE + "from shutil import rmtree\n"
+                            + "def clean():\n    rmtree(DIR)\natexit.register(clean)\n" + TEMP_MAIN,
+        "temp_object": TEMP_HEAD + "HOLD = tempfile.TemporaryDirectory(prefix='hs-', dir=os.environ['HS_DIR'])\n"
+                       + "DIR = HOLD.name\n" + TEMP_MAIN,
         "flock": LOCK_BODY.format(take="fcntl.flock(LOCK_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)") + LOCK_MAIN,
         "lockf": LOCK_BODY.format(take="fcntl.lockf(LOCK_FILE, fcntl.LOCK_EX | fcntl.LOCK_NB)") + LOCK_MAIN,
         "flock_hidden": LOCK_BODY.format(take="""try:
@@ -1712,6 +1731,84 @@ class ImportTimeReads(ImportTimeReadChecks, LockAtLoadChecks, Matrix):
         changed = {**env, "HS_VALUE": "two"}
         self.assertEqual(run("hs", ["hsread"], env=changed, require_fast=False).stdout, b"two\n")
         self.assertEqual(run("hs", ["hsread"], env=changed).returncode, EXIT_NOT_FAST)
+
+    def check_load_tempdir(self, kind):
+        """A directory made as the tool loads, removed as it exits: the first
+        child must not take it away from the next calls."""
+        root, env = self.tool(kind)
+        env["HS_DIR"] = os.path.join(root, "dirs")
+        os.makedirs(env["HS_DIR"])
+        self.assertEqual(run("native", ["hsread"], env=env).stdout, b"ok\n")
+        self.assertEqual(os.listdir(env["HS_DIR"]), [])
+        self.start(env)
+        for _ in range(8):
+            p = run("hs", ["hsread"], env=env)
+            self.assertEqual((p.returncode, p.stdout, p.stderr), (0, b"ok\n", b""))
+        with concurrent.futures.ThreadPoolExecutor(6) as pool:
+            ran = list(pool.map(lambda i: run("hs", ["hsread"], env={**env, "HS_HOLD": str(0.1 * (i % 3))}), range(6)))
+        self.assertEqual([p.stdout for p in ran], [b"ok\n"] * 6, [p.stderr for p in ran])
+        # Removed from outside, as a temp cleaner would: still works.
+        for name in os.listdir(env["HS_DIR"]):
+            shutil.rmtree(os.path.join(env["HS_DIR"], name))
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"ok\n")
+        # And the daemon takes it with it when it leaves.
+        stop("hsread", env)
+        deadline = time.monotonic() + 5
+        while os.listdir(env["HS_DIR"]) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(os.listdir(env["HS_DIR"]), [])
+
+    def test_load_tempdir_removed_by_a_function(self):
+        self.check_load_tempdir("temp_by_function")
+
+    def test_load_tempdir_removed_by_a_bound_rmtree(self):
+        self.check_load_tempdir("temp_bound")
+
+    def test_load_tempdir_removed_by_a_closure(self):
+        self.check_load_tempdir("temp_closure")
+
+    def test_load_tempdir_removed_by_an_imported_rmtree(self):
+        self.check_load_tempdir("temp_from_import")
+
+    def test_load_tempdir_of_a_temporary_directory(self):
+        self.check_load_tempdir("temp_object")
+
+    def test_load_tempdir_of_a_learned_module_leaves_nothing_behind(self):
+        # Vetted in a throwaway probe, which leaves without its atexit handlers.
+        root, env = self.tool("lazy")
+        env["HS_DIR"] = os.path.join(root, "dirs")
+        os.makedirs(env["HS_DIR"])
+        with open(os.path.join(root, "bin", "hsread_lazy.py"), "w") as f:
+            f.write(self.TEMP_HEAD + self.TEMP_MADE + "atexit.register(shutil.rmtree, DIR)\nVALUE = 'ok'\n")
+        self.start(env)
+        deadline = time.monotonic() + 30
+        while not int(status_field(status("hsread", env), "learned") or 0):
+            self.assertEqual(run("hs", ["hsread"], env=env, require_fast=False).stdout, b"ok\n")
+            self.assertLess(time.monotonic(), deadline, status("hsread", env))
+            time.sleep(0.1)
+        wait_ready("hsread", env)
+        for _ in range(4):
+            self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"ok\n")
+        stop("hsread", env)
+        deadline = time.monotonic() + 5
+        while os.listdir(env["HS_DIR"]) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(os.listdir(env["HS_DIR"]), [])
+
+    def test_temp_dir_made_at_run_is_removed_by_the_child(self):
+        root, env = self.tool("read_at_run")
+        env["HS_DIR"] = os.path.join(root, "dirs")
+        os.makedirs(env["HS_DIR"])
+        with open(os.path.join(root, "bin", self.LIB), "w") as f:
+            f.write(self.TEMP_HEAD + "def main():\n"
+                    "    path = tempfile.mkdtemp(dir=os.environ['HS_DIR'])\n"
+                    "    atexit.register(shutil.rmtree, path)\n    print('ok')\n")
+        self.start(env)
+        self.assertEqual(run("hs", ["hsread"], env=env).stdout, b"ok\n")
+        deadline = time.monotonic() + 5
+        while os.listdir(env["HS_DIR"]) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertEqual(os.listdir(env["HS_DIR"]), [])
 
     def test_flock_at_load_stays_per_run(self):
         self.check_lock_stays_per_run("flock")
