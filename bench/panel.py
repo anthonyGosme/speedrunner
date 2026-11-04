@@ -110,12 +110,9 @@ PANEL = [
 ]
 
 
-def main():
-    sr, out = sys.argv[1], sys.argv[2]
-    runs = int(os.environ.get("RUNS", "20"))
-    only = set(filter(None, os.environ.get("PANEL_ONLY", "").split(",")))
-    os.makedirs(out, exist_ok=True)
-    scratch = tempfile.mkdtemp(prefix="sr-panel-")
+def make_setup(scratch):
+    """A working directory with the samples under `scratch`, and the env for it:
+    (work, env, cwds). Shared with bench/side_effects.py."""
     work = os.path.join(scratch, "work")
     os.makedirs(work)
     for name, text in SAMPLES.items():
@@ -141,6 +138,16 @@ def main():
     os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
     cwds = {None: work, "work": work, "laravel": LARAVEL,
             **{k: v.format(scratch=scratch, work=work) for k, v in CWDS.items()}}
+    return work, env, cwds
+
+
+def main():
+    sr, out = sys.argv[1], sys.argv[2]
+    runs = int(os.environ.get("RUNS", "20"))
+    only = set(filter(None, os.environ.get("PANEL_ONLY", "").split(",")))
+    os.makedirs(out, exist_ok=True)
+    scratch = tempfile.mkdtemp(prefix="sr-panel-")
+    work, env, cwds = make_setup(scratch)
 
     def run(argv, cwd, extra=None, capture=True):
         # No timeout on timed runs: subprocess then polls waitpid in steps of
