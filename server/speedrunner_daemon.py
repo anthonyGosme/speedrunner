@@ -2405,13 +2405,25 @@ class Parent:
             child.ctl = None
 
     def on_client_gone(self, child):
-        """The client sends nothing after its go: readable means end of file.
-        Killed (kill -9): the tool dies with it, as natively. An E already
-        sent means the client left normally."""
+        """The client sends nothing after its go: readable should mean end of
+        file. Killed (kill -9): the tool dies with it, as natively. An E already
+        sent means the client left normally. Anything else readable is not a
+        client that left: the tool goes on, and the log says so."""
         while child.ctl is not None and select.select([child.ctl], [], [], 0)[0]:
             self.on_ctl(child)
         if child.running:
-            child.running = False
+            try:
+                data = child.conn.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+            except BlockingIOError:
+                log(f"child {child.pid}: its client's connection looked readable; nothing there")
+                return
+            except OSError:
+                data = b""
+            child.running = False  # and no more watching: what is there stays readable
+            if data:
+                log(f"child {child.pid}: its client sent something after its go; left running")
+                return
+            log(f"child {child.pid}: client gone, SIGKILL")
             try:
                 os.kill(child.pid, signal.SIGKILL)
             except OSError:
@@ -2505,6 +2517,8 @@ class Parent:
             child = self.children.pop(pid, None)
             if child is None:
                 continue
+            if os.WIFSIGNALED(status):
+                log(f"child {pid}: died of signal {os.WTERMSIG(status)}")
             # What it sent before dying. Without waiting: a process it forked
             # may still hold its end.
             while child.ctl is not None and select.select([child.ctl], [], [], 0)[0]:

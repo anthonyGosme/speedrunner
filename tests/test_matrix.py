@@ -69,6 +69,19 @@ def command(mode, argv, require_fast=True):
     return [HS_BIN, "run", argv[0], "--", *argv[1:]], extra
 
 
+def report_sigkill(argv):
+    """A tool that rarely comes back as -9 (CI, macOS Intel): who did it? "client
+    gone, SIGKILL": its daemon. "died of signal 9" alone: something else killed
+    the child. Neither: the client itself was killed."""
+    lines = []
+    for path in glob.glob(os.path.join(ROOT, "**", "speedrunner", "*.log"), recursive=True):
+        with open(path, errors="replace") as f:
+            lines += [f"{os.path.basename(path)}: {line.rstrip()}" for line in f
+                      if "SIGKILL" in line or "died of signal" in line or "after its go" in line
+                      or "looked readable" in line]
+    sys.stderr.write(f"\n{argv}: -9. Daemon logs:\n  " + ("\n  ".join(lines[-12:]) or "(nothing)") + "\n")
+
+
 def run(mode, argv, input=b"", cwd=None, env=None, tty=False, umask=None,
         require_fast=True, preexec=None, pipe_to=None):
     cmd, extra = command(mode, argv, require_fast)
@@ -91,6 +104,8 @@ def run(mode, argv, input=b"", cwd=None, env=None, tty=False, umask=None,
                        env=full_env, preexec_fn=setup, timeout=60)
     if p.returncode == EXIT_NOT_FAST:
         sys.stderr.write(p.stderr.decode(errors="replace"))  # why: most tests only see its stdout
+    if mode == "hs" and p.returncode == -signal.SIGKILL:
+        report_sigkill(argv)
     if tty and MACOS:
         # BSD script(1) now and then turns a line's \r\n into \r\r\n on a
         # long output, natively as served (CI, aws's skeleton), and echoes
@@ -1313,8 +1328,19 @@ class Failures(Matrix):
         root, env = private_daemon("hstest")
         try:
             check_client_killed(self, "hstest", self.start_hold, root, env)
+            self.assertIn(b"client gone, SIGKILL", open_log(tool_socket("hstest", env)))
         finally:
             stop("hstest", env)
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_client_still_there_is_not_taken_for_gone(self):
+        # Readable, and not at end of file: the tool goes on.
+        mark = os.path.join(ROOT, "client-still-there")
+        sock, _ = ask_to_run("hstest", "hold", "0.3", mark)
+        with sock:
+            sock.sendall(b"Gx")
+            self.assertEqual(read_frame(sock), (b"X", struct.pack("<i", 0)))
+        self.assertEqual(read_lines(mark), ["start", "done"])
 
     def test_stale_after_module_edit(self):
         # A tool whose module is edited in place, as an upgrade or a
@@ -2221,7 +2247,7 @@ def check_daemon_refuses_bad_dir(test, tool):
 
 def open_log(sock):
     try:
-        with open(sock + ".log", "rb") as f:
+        with open(os.path.splitext(sock)[0] + ".log", "rb") as f:
             return f.read()
     except OSError:
         return b""
