@@ -1,0 +1,1981 @@
+{
+ "runs": 8,
+ "results": [
+  {
+   "runtime": "python",
+   "command": "aws --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 227.6,
+   "native_sd": 13.4,
+   "fast_ms": 37.8,
+   "fast_sd": 4.1,
+   "speedup": 6.02,
+   "speedup_ci95": [
+    5.55,
+    6.45
+   ],
+   "native": {
+    "n": 8,
+    "mean": 227.8,
+    "median": 227.6,
+    "sd": 13.4,
+    "min": 211.2,
+    "max": 244.5,
+    "samples": [
+     211.23,
+     235.21,
+     215.99,
+     244.52,
+     220.01,
+     215.37,
+     241.35,
+     238.33
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 38.9,
+    "median": 37.8,
+    "sd": 4.1,
+    "min": 35.3,
+    "max": 48.5,
+    "samples": [
+     37.44,
+     38.08,
+     36.39,
+     38.46,
+     35.34,
+     37.53,
+     48.48,
+     39.77
+    ]
+   },
+   "pss_mb": 71.0
+  },
+  {
+   "runtime": "python",
+   "command": "aws configure list",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 239.2,
+   "native_sd": 18.4,
+   "fast_ms": 44.1,
+   "fast_sd": 2.7,
+   "speedup": 5.42,
+   "speedup_ci95": [
+    5.0,
+    5.78
+   ],
+   "native": {
+    "n": 8,
+    "mean": 241.8,
+    "median": 239.2,
+    "sd": 18.4,
+    "min": 219.3,
+    "max": 279.0,
+    "samples": [
+     253.28,
+     226.88,
+     234.7,
+     243.72,
+     278.96,
+     219.3,
+     233.65,
+     243.78
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 44.7,
+    "median": 44.1,
+    "sd": 2.7,
+    "min": 41.6,
+    "max": 49.5,
+    "samples": [
+     44.62,
+     42.61,
+     44.71,
+     49.51,
+     47.78,
+     43.44,
+     43.67,
+     41.6
+    ]
+   },
+   "pss_mb": 73.0
+  },
+  {
+   "runtime": "python",
+   "command": "az --help",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 82.5,
+   "native_sd": 9.3,
+   "fast_ms": 21.1,
+   "fast_sd": 0.9,
+   "speedup": 3.92,
+   "speedup_ci95": [
+    3.57,
+    4.49
+   ],
+   "native": {
+    "n": 8,
+    "mean": 83.0,
+    "median": 82.5,
+    "sd": 9.3,
+    "min": 69.9,
+    "max": 96.6,
+    "samples": [
+     82.23,
+     82.8,
+     78.77,
+     95.47,
+     96.63,
+     74.54,
+     83.9,
+     69.93
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 21.0,
+    "median": 21.1,
+    "sd": 0.9,
+    "min": 19.6,
+    "max": 22.5,
+    "samples": [
+     21.68,
+     21.22,
+     22.45,
+     20.92,
+     21.26,
+     20.8,
+     19.81,
+     19.61
+    ]
+   },
+   "pss_mb": 26.0
+  },
+  {
+   "runtime": "python",
+   "command": "az vm --help",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 304.7,
+   "native_sd": 15.4,
+   "fast_ms": 59.8,
+   "fast_sd": 5.1,
+   "speedup": 5.1,
+   "speedup_ci95": [
+    4.86,
+    5.65
+   ],
+   "native": {
+    "n": 8,
+    "mean": 311.7,
+    "median": 304.7,
+    "sd": 15.4,
+    "min": 296.1,
+    "max": 332.1,
+    "samples": [
+     296.05,
+     300.56,
+     308.91,
+     324.86,
+     299.52,
+     299.79,
+     331.57,
+     332.1
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 60.7,
+    "median": 59.8,
+    "sd": 5.1,
+    "min": 56.6,
+    "max": 72.1,
+    "samples": [
+     56.59,
+     57.32,
+     58.94,
+     60.56,
+     72.13,
+     56.71,
+     61.62,
+     61.83
+    ]
+   },
+   "pss_mb": 86.4
+  },
+  {
+   "runtime": "python",
+   "command": "gcloud --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 321.1,
+   "native_sd": 8.3,
+   "fast_ms": 68.7,
+   "fast_sd": 7.0,
+   "speedup": 4.67,
+   "speedup_ci95": [
+    4.54,
+    4.86
+   ],
+   "native": {
+    "n": 8,
+    "mean": 323.0,
+    "median": 321.1,
+    "sd": 8.3,
+    "min": 311.9,
+    "max": 334.3,
+    "samples": [
+     317.11,
+     327.65,
+     334.26,
+     317.47,
+     333.64,
+     324.66,
+     311.95,
+     317.12
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 71.1,
+    "median": 68.7,
+    "sd": 7.0,
+    "min": 67.3,
+    "max": 88.3,
+    "samples": [
+     67.35,
+     88.28,
+     67.81,
+     69.22,
+     69.61,
+     70.12,
+     68.23,
+     67.79
+    ]
+   },
+   "pss_mb": 99.8
+  },
+  {
+   "runtime": "python",
+   "command": "gcloud config list",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 371.7,
+   "native_sd": 25.7,
+   "fast_ms": 82.2,
+   "fast_sd": 3.7,
+   "speedup": 4.52,
+   "speedup_ci95": [
+    4.16,
+    4.86
+   ],
+   "native": {
+    "n": 8,
+    "mean": 372.9,
+    "median": 371.7,
+    "sd": 25.7,
+    "min": 337.9,
+    "max": 417.2,
+    "samples": [
+     353.79,
+     370.97,
+     372.36,
+     352.63,
+     337.86,
+     396.47,
+     417.15,
+     382.05
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 82.7,
+    "median": 82.2,
+    "sd": 3.7,
+    "min": 78.3,
+    "max": 88.6,
+    "samples": [
+     78.34,
+     88.6,
+     85.13,
+     79.13,
+     80.87,
+     83.53,
+     85.96,
+     79.96
+    ]
+   },
+   "pss_mb": 105.0
+  },
+  {
+   "runtime": "python",
+   "command": "ansible --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 209.0,
+   "native_sd": 16.6,
+   "fast_ms": 13.9,
+   "fast_sd": 1.0,
+   "speedup": 15.07,
+   "speedup_ci95": [
+    14.29,
+    16.74
+   ],
+   "native": {
+    "n": 8,
+    "mean": 215.1,
+    "median": 209.0,
+    "sd": 16.6,
+    "min": 197.4,
+    "max": 245.9,
+    "samples": [
+     224.72,
+     201.57,
+     203.77,
+     245.9,
+     208.63,
+     197.45,
+     209.44,
+     229.15
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 13.9,
+    "median": 13.9,
+    "sd": 1.0,
+    "min": 12.4,
+    "max": 15.7,
+    "samples": [
+     15.72,
+     13.85,
+     12.43,
+     14.18,
+     12.97,
+     13.9,
+     13.44,
+     14.36
+    ]
+   },
+   "pss_mb": 70.2
+  },
+  {
+   "runtime": "python",
+   "command": "ansible-doc ping",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 326.5,
+   "native_sd": 19.0,
+   "fast_ms": 59.7,
+   "fast_sd": 2.5,
+   "speedup": 5.47,
+   "speedup_ci95": [
+    5.23,
+    5.98
+   ],
+   "native": {
+    "n": 8,
+    "mean": 333.9,
+    "median": 326.5,
+    "sd": 19.0,
+    "min": 313.5,
+    "max": 365.5,
+    "samples": [
+     313.54,
+     320.7,
+     343.26,
+     321.14,
+     355.89,
+     331.87,
+     365.47,
+     319.58
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 59.8,
+    "median": 59.7,
+    "sd": 2.5,
+    "min": 57.0,
+    "max": 64.1,
+    "samples": [
+     56.96,
+     60.26,
+     59.57,
+     64.08,
+     59.78,
+     62.49,
+     57.99,
+     57.01
+    ]
+   },
+   "pss_mb": 84.1
+  },
+  {
+   "runtime": "python",
+   "command": "black --check sample.py",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 91.9,
+   "native_sd": 4.6,
+   "fast_ms": 11.4,
+   "fast_sd": 1.4,
+   "speedup": 8.05,
+   "speedup_ci95": [
+    6.97,
+    9.12
+   ],
+   "native": {
+    "n": 8,
+    "mean": 92.2,
+    "median": 91.9,
+    "sd": 4.6,
+    "min": 85.5,
+    "max": 100.9,
+    "samples": [
+     90.2,
+     89.01,
+     94.58,
+     100.91,
+     94.09,
+     93.1,
+     90.61,
+     85.47
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 11.6,
+    "median": 11.4,
+    "sd": 1.4,
+    "min": 9.7,
+    "max": 13.5,
+    "samples": [
+     10.45,
+     12.38,
+     11.7,
+     13.48,
+     10.19,
+     13.44,
+     11.12,
+     9.7
+    ]
+   },
+   "pss_mb": 29.6
+  },
+  {
+   "runtime": "python",
+   "command": "poetry --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 280.4,
+   "native_sd": 22.5,
+   "fast_ms": 15.7,
+   "fast_sd": 1.9,
+   "speedup": 17.83,
+   "speedup_ci95": [
+    16.38,
+    19.29
+   ],
+   "native": {
+    "n": 8,
+    "mean": 285.2,
+    "median": 280.4,
+    "sd": 22.5,
+    "min": 263.8,
+    "max": 331.3,
+    "samples": [
+     263.83,
+     265.19,
+     285.23,
+     275.6,
+     331.34,
+     285.71,
+     302.22,
+     272.48
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 16.1,
+    "median": 15.7,
+    "sd": 1.9,
+    "min": 13.5,
+    "max": 20.0,
+    "samples": [
+     15.66,
+     13.46,
+     15.8,
+     15.58,
+     19.97,
+     15.22,
+     17.21,
+     15.81
+    ]
+   },
+   "pss_mb": 64.9
+  },
+  {
+   "runtime": "python",
+   "command": "http --offline (httpie)",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 206.4,
+   "native_sd": 11.4,
+   "fast_ms": 49.7,
+   "fast_sd": 7.0,
+   "speedup": 4.16,
+   "speedup_ci95": [
+    4.03,
+    4.42
+   ],
+   "native": {
+    "n": 8,
+    "mean": 209.0,
+    "median": 206.4,
+    "sd": 11.4,
+    "min": 191.6,
+    "max": 230.2,
+    "samples": [
+     204.15,
+     208.6,
+     191.58,
+     205.52,
+     230.21,
+     206.32,
+     219.17,
+     206.39
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 51.5,
+    "median": 49.7,
+    "sd": 7.0,
+    "min": 46.8,
+    "max": 68.4,
+    "samples": [
+     50.58,
+     46.78,
+     47.68,
+     48.73,
+     48.4,
+     50.87,
+     68.4,
+     50.95
+    ]
+   },
+   "pss_mb": 54.2
+  },
+  {
+   "runtime": "python",
+   "command": "pre-commit --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 79.5,
+   "native_sd": 3.3,
+   "fast_ms": 10.5,
+   "fast_sd": 0.5,
+   "speedup": 7.58,
+   "speedup_ci95": [
+    6.98,
+    7.84
+   ],
+   "native": {
+    "n": 8,
+    "mean": 79.2,
+    "median": 79.5,
+    "sd": 3.3,
+    "min": 75.0,
+    "max": 85.6,
+    "samples": [
+     79.78,
+     80.51,
+     85.56,
+     79.16,
+     75.51,
+     75.02,
+     80.16,
+     77.74
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 10.7,
+    "median": 10.5,
+    "sd": 0.5,
+    "min": 10.1,
+    "max": 11.5,
+    "samples": [
+     10.51,
+     11.47,
+     10.46,
+     10.08,
+     10.25,
+     11.29,
+     10.17,
+     11.05
+    ]
+   },
+   "pss_mb": 27.7
+  },
+  {
+   "runtime": "python",
+   "command": "mypy sample.py",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 94.3,
+   "native_sd": 14.7,
+   "fast_ms": 29.1,
+   "fast_sd": 4.4,
+   "speedup": 3.24,
+   "speedup_ci95": [
+    3.0,
+    4.29
+   ],
+   "native": {
+    "n": 8,
+    "mean": 100.7,
+    "median": 94.3,
+    "sd": 14.7,
+    "min": 80.4,
+    "max": 121.2,
+    "samples": [
+     93.49,
+     120.15,
+     121.18,
+     110.4,
+     95.06,
+     80.4,
+     93.4,
+     91.88
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 28.8,
+    "median": 29.1,
+    "sd": 4.4,
+    "min": 22.4,
+    "max": 36.7,
+    "samples": [
+     24.48,
+     36.66,
+     30.25,
+     27.93,
+     30.78,
+     26.85,
+     31.1,
+     22.35
+    ]
+   },
+   "pss_mb": 43.7
+  },
+  {
+   "runtime": "python",
+   "command": "pytest -q",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 188.1,
+   "native_sd": 17.1,
+   "fast_ms": 65.7,
+   "fast_sd": 5.3,
+   "speedup": 2.86,
+   "speedup_ci95": [
+    2.69,
+    3.37
+   ],
+   "native": {
+    "n": 8,
+    "mean": 193.6,
+    "median": 188.1,
+    "sd": 17.1,
+    "min": 174.1,
+    "max": 222.5,
+    "samples": [
+     174.1,
+     178.2,
+     222.46,
+     185.47,
+     188.13,
+     197.08,
+     215.05,
+     188.05
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 64.3,
+    "median": 65.7,
+    "sd": 5.3,
+    "min": 57.3,
+    "max": 71.8,
+    "samples": [
+     57.33,
+     71.85,
+     66.66,
+     59.89,
+     66.86,
+     64.66,
+     69.17,
+     58.32
+    ]
+   },
+   "pss_mb": 35.0
+  },
+  {
+   "runtime": "python",
+   "command": "flake8 sample.py",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 75.3,
+   "native_sd": 4.3,
+   "fast_ms": 18.2,
+   "fast_sd": 1.3,
+   "speedup": 4.14,
+   "speedup_ci95": [
+    3.82,
+    4.44
+   ],
+   "native": {
+    "n": 8,
+    "mean": 75.0,
+    "median": 75.3,
+    "sd": 4.3,
+    "min": 68.2,
+    "max": 80.6,
+    "samples": [
+     73.35,
+     80.59,
+     78.71,
+     75.55,
+     75.07,
+     78.65,
+     70.26,
+     68.22
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 18.3,
+    "median": 18.2,
+    "sd": 1.3,
+    "min": 16.7,
+    "max": 20.7,
+    "samples": [
+     18.37,
+     20.71,
+     19.37,
+     18.04,
+     18.38,
+     17.37,
+     16.66,
+     17.7
+    ]
+   },
+   "pss_mb": 25.5
+  },
+  {
+   "runtime": "python",
+   "command": "yamllint sample.yaml",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 54.3,
+   "native_sd": 2.0,
+   "fast_ms": 10.2,
+   "fast_sd": 0.6,
+   "speedup": 5.31,
+   "speedup_ci95": [
+    4.9,
+    5.54
+   ],
+   "native": {
+    "n": 8,
+    "mean": 53.7,
+    "median": 54.3,
+    "sd": 2.0,
+    "min": 50.6,
+    "max": 55.9,
+    "samples": [
+     55.9,
+     51.21,
+     52.41,
+     54.05,
+     55.05,
+     55.57,
+     50.6,
+     54.57
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 10.3,
+    "median": 10.2,
+    "sd": 0.6,
+    "min": 9.6,
+    "max": 11.3,
+    "samples": [
+     10.11,
+     9.58,
+     11.31,
+     10.24,
+     10.69,
+     9.76,
+     10.2,
+     10.84
+    ]
+   },
+   "pss_mb": 21.2
+  },
+  {
+   "runtime": "python",
+   "command": "pip list",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 135.9,
+   "native_sd": 8.3,
+   "fast_ms": 18.5,
+   "fast_sd": 1.9,
+   "speedup": 7.33,
+   "speedup_ci95": [
+    6.15,
+    7.64
+   ],
+   "native": {
+    "n": 8,
+    "mean": 134.9,
+    "median": 135.9,
+    "sd": 8.3,
+    "min": 123.8,
+    "max": 147.7,
+    "samples": [
+     137.35,
+     134.55,
+     123.75,
+     147.69,
+     127.17,
+     127.93,
+     137.25,
+     143.67
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 19.5,
+    "median": 18.5,
+    "sd": 1.9,
+    "min": 17.9,
+    "max": 22.9,
+    "samples": [
+     22.1,
+     17.91,
+     18.42,
+     18.55,
+     18.33,
+     22.93,
+     19.55,
+     18.52
+    ]
+   },
+   "pss_mb": 50.5
+  },
+  {
+   "runtime": "ruby",
+   "command": "rubocop --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 432.7,
+   "native_sd": 22.6,
+   "fast_ms": 105.7,
+   "fast_sd": 8.9,
+   "speedup": 4.1,
+   "speedup_ci95": [
+    3.65,
+    4.38
+   ],
+   "native": {
+    "n": 8,
+    "mean": 432.1,
+    "median": 432.7,
+    "sd": 22.6,
+    "min": 394.3,
+    "max": 468.5,
+    "samples": [
+     448.91,
+     415.26,
+     432.58,
+     443.26,
+     432.92,
+     468.5,
+     421.34,
+     394.27
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 107.5,
+    "median": 105.7,
+    "sd": 8.9,
+    "min": 95.7,
+    "max": 121.1,
+    "samples": [
+     102.55,
+     99.7,
+     95.75,
+     121.14,
+     104.75,
+     106.58,
+     110.43,
+     119.02
+    ]
+   },
+   "pss_mb": 41.4
+  },
+  {
+   "runtime": "ruby",
+   "command": "rubocop sample.rb",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 715.1,
+   "native_sd": 37.0,
+   "fast_ms": 174.9,
+   "fast_sd": 25.0,
+   "speedup": 4.09,
+   "speedup_ci95": [
+    3.67,
+    4.64
+   ],
+   "native": {
+    "n": 8,
+    "mean": 709.3,
+    "median": 715.1,
+    "sd": 37.0,
+    "min": 641.0,
+    "max": 757.4,
+    "samples": [
+     749.88,
+     691.55,
+     716.36,
+     757.42,
+     713.88,
+     686.72,
+     717.76,
+     641.04
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 176.8,
+    "median": 174.9,
+    "sd": 25.0,
+    "min": 151.3,
+    "max": 226.2,
+    "samples": [
+     182.78,
+     193.65,
+     170.07,
+     179.7,
+     158.2,
+     226.17,
+     151.26,
+     152.94
+    ]
+   },
+   "pss_mb": 57.6
+  },
+  {
+   "runtime": "ruby",
+   "command": "rake --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 80.5,
+   "native_sd": 6.5,
+   "fast_ms": 10.6,
+   "fast_sd": 1.0,
+   "speedup": 7.59,
+   "speedup_ci95": [
+    6.98,
+    8.97
+   ],
+   "native": {
+    "n": 8,
+    "mean": 82.0,
+    "median": 80.5,
+    "sd": 6.5,
+    "min": 74.1,
+    "max": 92.0,
+    "samples": [
+     92.01,
+     83.75,
+     77.1,
+     74.08,
+     78.66,
+     77.47,
+     82.44,
+     90.71
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 10.4,
+    "median": 10.6,
+    "sd": 1.0,
+    "min": 9.2,
+    "max": 12.0,
+    "samples": [
+     10.48,
+     9.22,
+     11.37,
+     10.75,
+     9.43,
+     9.25,
+     11.99,
+     11.0
+    ]
+   },
+   "pss_mb": 18.1
+  },
+  {
+   "runtime": "ruby",
+   "command": "bundle --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 91.1,
+   "native_sd": 6.8,
+   "fast_ms": 7.6,
+   "fast_sd": 1.1,
+   "speedup": 11.99,
+   "speedup_ci95": [
+    11.65,
+    13.07
+   ],
+   "native": {
+    "n": 8,
+    "mean": 93.2,
+    "median": 91.1,
+    "sd": 6.8,
+    "min": 85.3,
+    "max": 108.0,
+    "samples": [
+     93.09,
+     108.03,
+     85.33,
+     96.73,
+     91.0,
+     89.08,
+     91.19,
+     90.85
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 7.7,
+    "median": 7.6,
+    "sd": 1.1,
+    "min": 6.5,
+    "max": 10.2,
+    "samples": [
+     7.59,
+     7.6,
+     10.17,
+     7.72,
+     7.7,
+     7.21,
+     7.25,
+     6.48
+    ]
+   },
+   "pss_mb": 20.5
+  },
+  {
+   "runtime": "ruby",
+   "command": "gem list",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 197.6,
+   "native_sd": 10.5,
+   "fast_ms": 37.7,
+   "fast_sd": 7.2,
+   "speedup": 5.24,
+   "speedup_ci95": [
+    4.05,
+    5.61
+   ],
+   "native": {
+    "n": 8,
+    "mean": 196.5,
+    "median": 197.6,
+    "sd": 10.5,
+    "min": 179.0,
+    "max": 210.4,
+    "samples": [
+     202.54,
+     194.94,
+     206.4,
+     210.43,
+     200.32,
+     186.13,
+     179.03,
+     192.51
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 41.4,
+    "median": 37.7,
+    "sd": 7.2,
+    "min": 35.9,
+    "max": 54.6,
+    "samples": [
+     35.88,
+     36.84,
+     38.54,
+     54.62,
+     35.92,
+     44.05,
+     36.02,
+     49.44
+    ]
+   },
+   "pss_mb": 26.3
+  },
+  {
+   "runtime": "ruby",
+   "command": "rails --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 186.0,
+   "native_sd": 10.8,
+   "fast_ms": 34.1,
+   "fast_sd": 1.2,
+   "speedup": 5.45,
+   "speedup_ci95": [
+    5.1,
+    5.81
+   ],
+   "native": {
+    "n": 8,
+    "mean": 187.3,
+    "median": 186.0,
+    "sd": 10.8,
+    "min": 174.2,
+    "max": 204.8,
+    "samples": [
+     198.62,
+     191.75,
+     189.22,
+     204.81,
+     175.91,
+     182.8,
+     174.19,
+     181.15
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 34.4,
+    "median": 34.1,
+    "sd": 1.2,
+    "min": 32.9,
+    "max": 36.2,
+    "samples": [
+     33.27,
+     36.2,
+     34.69,
+     35.87,
+     33.71,
+     32.95,
+     33.74,
+     34.49
+    ]
+   },
+   "pss_mb": 21.6
+  },
+  {
+   "runtime": "ruby",
+   "command": "rspec sample_spec.rb",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 135.5,
+   "native_sd": 4.9,
+   "fast_ms": 16.1,
+   "fast_sd": 1.3,
+   "speedup": 8.43,
+   "speedup_ci95": [
+    7.84,
+    9.24
+   ],
+   "native": {
+    "n": 8,
+    "mean": 136.3,
+    "median": 135.5,
+    "sd": 4.9,
+    "min": 130.8,
+    "max": 145.5,
+    "samples": [
+     132.25,
+     138.29,
+     145.47,
+     139.63,
+     132.61,
+     137.54,
+     130.82,
+     133.56
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 15.9,
+    "median": 16.1,
+    "sd": 1.3,
+    "min": 13.8,
+    "max": 17.7,
+    "samples": [
+     15.9,
+     17.5,
+     16.28,
+     17.69,
+     15.37,
+     16.33,
+     14.56,
+     13.79
+    ]
+   },
+   "pss_mb": 21.7
+  },
+  {
+   "runtime": "ruby",
+   "command": "pod --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 386.1,
+   "native_sd": 17.0,
+   "fast_ms": 47.7,
+   "fast_sd": 4.0,
+   "speedup": 8.09,
+   "speedup_ci95": [
+    7.16,
+    8.4
+   ],
+   "native": {
+    "n": 8,
+    "mean": 385.3,
+    "median": 386.1,
+    "sd": 17.0,
+    "min": 365.3,
+    "max": 412.1,
+    "samples": [
+     412.06,
+     369.43,
+     400.59,
+     384.87,
+     395.36,
+     387.37,
+     365.28,
+     367.54
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 49.6,
+    "median": 47.7,
+    "sd": 4.0,
+    "min": 45.5,
+    "max": 57.0,
+    "samples": [
+     47.68,
+     57.05,
+     45.49,
+     46.93,
+     50.25,
+     54.09,
+     47.73,
+     47.57
+    ]
+   },
+   "pss_mb": 36.4
+  },
+  {
+   "runtime": "ruby",
+   "command": "solargraph --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 741.2,
+   "native_sd": 25.9,
+   "fast_ms": 89.2,
+   "fast_sd": 7.9,
+   "speedup": 8.31,
+   "speedup_ci95": [
+    7.52,
+    8.57
+   ],
+   "native": {
+    "n": 8,
+    "mean": 737.3,
+    "median": 741.2,
+    "sd": 25.9,
+    "min": 685.3,
+    "max": 762.0,
+    "samples": [
+     719.95,
+     761.99,
+     732.3,
+     685.32,
+     755.56,
+     733.18,
+     749.13,
+     761.1
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 92.3,
+    "median": 89.2,
+    "sd": 7.9,
+    "min": 85.6,
+    "max": 109.4,
+    "samples": [
+     88.32,
+     89.03,
+     98.53,
+     87.22,
+     85.64,
+     89.29,
+     90.95,
+     109.42
+    ]
+   },
+   "pss_mb": 54.0
+  },
+  {
+   "runtime": "ruby",
+   "command": "rdoc --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 220.6,
+   "native_sd": 12.0,
+   "fast_ms": 14.7,
+   "fast_sd": 1.0,
+   "speedup": 15.0,
+   "speedup_ci95": [
+    14.42,
+    16.28
+   ],
+   "native": {
+    "n": 8,
+    "mean": 221.8,
+    "median": 220.6,
+    "sd": 12.0,
+    "min": 202.6,
+    "max": 240.1,
+    "samples": [
+     215.9,
+     215.12,
+     225.31,
+     233.83,
+     226.82,
+     240.06,
+     214.45,
+     202.65
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 14.6,
+    "median": 14.7,
+    "sd": 1.0,
+    "min": 13.1,
+    "max": 16.6,
+    "samples": [
+     14.73,
+     14.7,
+     13.1,
+     14.24,
+     15.05,
+     14.71,
+     16.58,
+     13.89
+    ]
+   },
+   "pss_mb": 29.0
+  },
+  {
+   "runtime": "php",
+   "command": "composer --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 33.6,
+   "native_sd": 0.6,
+   "fast_ms": 14.1,
+   "fast_sd": 0.3,
+   "speedup": 2.37,
+   "speedup_ci95": [
+    2.33,
+    2.42
+   ],
+   "native": {
+    "n": 8,
+    "mean": 33.7,
+    "median": 33.6,
+    "sd": 0.6,
+    "min": 32.7,
+    "max": 34.6,
+    "samples": [
+     33.39,
+     34.62,
+     33.49,
+     34.0,
+     32.65,
+     33.65,
+     33.33,
+     34.3
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 14.3,
+    "median": 14.1,
+    "sd": 0.3,
+    "min": 14.1,
+    "max": 14.9,
+    "samples": [
+     14.15,
+     14.07,
+     14.09,
+     14.15,
+     14.89,
+     14.35,
+     14.08,
+     14.37
+    ]
+   },
+   "pss_mb": 27.6
+  },
+  {
+   "runtime": "php",
+   "command": "composer show",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 98.5,
+   "native_sd": 6.8,
+   "fast_ms": 47.6,
+   "fast_sd": 1.9,
+   "speedup": 2.07,
+   "speedup_ci95": [
+    1.93,
+    2.15
+   ],
+   "native": {
+    "n": 8,
+    "mean": 99.2,
+    "median": 98.5,
+    "sd": 6.8,
+    "min": 92.2,
+    "max": 113.8,
+    "samples": [
+     101.03,
+     101.55,
+     97.81,
+     92.18,
+     113.81,
+     92.64,
+     95.75,
+     99.22
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 48.3,
+    "median": 47.6,
+    "sd": 1.9,
+    "min": 46.4,
+    "max": 51.7,
+    "samples": [
+     50.15,
+     51.67,
+     46.72,
+     46.41,
+     47.34,
+     47.16,
+     47.85,
+     49.32
+    ]
+   },
+   "pss_mb": 28.1
+  },
+  {
+   "runtime": "php",
+   "command": "php artisan --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 107.4,
+   "native_sd": 6.4,
+   "fast_ms": 26.8,
+   "fast_sd": 1.7,
+   "speedup": 4.01,
+   "speedup_ci95": [
+    3.65,
+    4.4
+   ],
+   "native": {
+    "n": 8,
+    "mean": 107.4,
+    "median": 107.4,
+    "sd": 6.4,
+    "min": 99.7,
+    "max": 116.6,
+    "samples": [
+     112.79,
+     100.01,
+     99.73,
+     105.22,
+     112.49,
+     116.6,
+     109.62,
+     102.41
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 26.9,
+    "median": 26.8,
+    "sd": 1.7,
+    "min": 24.8,
+    "max": 29.5,
+    "samples": [
+     25.55,
+     26.2,
+     24.78,
+     25.11,
+     27.36,
+     28.38,
+     28.01,
+     29.5
+    ]
+   },
+   "pss_mb": 32.0
+  },
+  {
+   "runtime": "php",
+   "command": "php artisan list",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 136.7,
+   "native_sd": 7.2,
+   "fast_ms": 33.0,
+   "fast_sd": 2.0,
+   "speedup": 4.14,
+   "speedup_ci95": [
+    3.68,
+    4.36
+   ],
+   "native": {
+    "n": 8,
+    "mean": 134.9,
+    "median": 136.7,
+    "sd": 7.2,
+    "min": 124.8,
+    "max": 144.0,
+    "samples": [
+     143.96,
+     137.08,
+     124.82,
+     143.14,
+     137.87,
+     126.16,
+     130.01,
+     136.29
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 33.5,
+    "median": 33.0,
+    "sd": 2.0,
+    "min": 30.7,
+    "max": 35.8,
+    "samples": [
+     35.48,
+     32.9,
+     31.27,
+     32.78,
+     33.12,
+     30.67,
+     35.83,
+     35.65
+    ]
+   },
+   "pss_mb": 29.4
+  },
+  {
+   "runtime": "php",
+   "command": "phpcs Greeter.php",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 44.7,
+   "native_sd": 5.9,
+   "fast_ms": 16.1,
+   "fast_sd": 1.5,
+   "speedup": 2.77,
+   "speedup_ci95": [
+    2.5,
+    3.29
+   ],
+   "native": {
+    "n": 8,
+    "mean": 47.2,
+    "median": 44.7,
+    "sd": 5.9,
+    "min": 42.1,
+    "max": 59.3,
+    "samples": [
+     59.35,
+     43.49,
+     44.68,
+     52.76,
+     46.78,
+     43.36,
+     42.1,
+     44.69
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 16.3,
+    "median": 16.1,
+    "sd": 1.5,
+    "min": 14.5,
+    "max": 18.9,
+    "samples": [
+     18.91,
+     16.89,
+     15.93,
+     17.86,
+     16.34,
+     14.52,
+     15.45,
+     14.68
+    ]
+   },
+   "pss_mb": 30.3
+  },
+  {
+   "runtime": "php",
+   "command": "phpunit --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 25.7,
+   "native_sd": 3.2,
+   "fast_ms": 8.3,
+   "fast_sd": 0.8,
+   "speedup": 3.11,
+   "speedup_ci95": [
+    2.69,
+    3.87
+   ],
+   "native": {
+    "n": 8,
+    "mean": 27.0,
+    "median": 25.7,
+    "sd": 3.2,
+    "min": 23.9,
+    "max": 31.5,
+    "samples": [
+     29.58,
+     31.53,
+     24.77,
+     26.72,
+     30.93,
+     24.07,
+     24.24,
+     23.95
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 8.4,
+    "median": 8.3,
+    "sd": 0.8,
+    "min": 7.4,
+    "max": 9.7,
+    "samples": [
+     8.97,
+     8.31,
+     9.75,
+     9.21,
+     8.25,
+     7.59,
+     7.39,
+     7.68
+    ]
+   },
+   "pss_mb": 27.2
+  },
+  {
+   "runtime": "php",
+   "command": "phploc --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 22.9,
+   "native_sd": 1.0,
+   "fast_ms": 7.5,
+   "fast_sd": 0.5,
+   "speedup": 3.05,
+   "speedup_ci95": [
+    2.82,
+    3.28
+   ],
+   "native": {
+    "n": 8,
+    "mean": 22.8,
+    "median": 22.9,
+    "sd": 1.0,
+    "min": 21.5,
+    "max": 24.0,
+    "samples": [
+     23.98,
+     21.51,
+     21.74,
+     23.61,
+     23.34,
+     22.54,
+     24.02,
+     21.9
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 7.6,
+    "median": 7.5,
+    "sd": 0.5,
+    "min": 7.0,
+    "max": 8.5,
+    "samples": [
+     7.05,
+     7.03,
+     7.32,
+     7.97,
+     8.46,
+     7.57,
+     7.58,
+     7.47
+    ]
+   },
+   "pss_mb": 28.4
+  },
+  {
+   "runtime": "php",
+   "command": "phpstan analyse",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 664.1,
+   "native_sd": 29.3,
+   "fast_ms": 639.0,
+   "fast_sd": 29.5,
+   "speedup": 1.04,
+   "speedup_ci95": [
+    0.98,
+    1.1
+   ],
+   "native": {
+    "n": 8,
+    "mean": 669.3,
+    "median": 664.1,
+    "sd": 29.3,
+    "min": 629.1,
+    "max": 715.4,
+    "samples": [
+     661.26,
+     715.35,
+     666.95,
+     683.31,
+     629.12,
+     641.67,
+     655.0,
+     701.72
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 645.0,
+    "median": 639.0,
+    "sd": 29.5,
+    "min": 612.7,
+    "max": 695.4,
+    "samples": [
+     655.76,
+     643.14,
+     612.66,
+     677.77,
+     622.73,
+     618.17,
+     634.78,
+     695.39
+    ]
+   },
+   "pss_mb": 27.2
+  },
+  {
+   "runtime": "php",
+   "command": "php-cs-fixer --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 106.1,
+   "native_sd": 8.9,
+   "fast_ms": 38.4,
+   "fast_sd": 7.8,
+   "speedup": 2.76,
+   "speedup_ci95": [
+    2.37,
+    3.16
+   ],
+   "native": {
+    "n": 8,
+    "mean": 109.8,
+    "median": 106.1,
+    "sd": 8.9,
+    "min": 99.8,
+    "max": 122.7,
+    "samples": [
+     117.91,
+     119.67,
+     102.45,
+     99.84,
+     105.37,
+     103.47,
+     106.87,
+     122.73
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 41.4,
+    "median": 38.4,
+    "sd": 7.8,
+    "min": 36.0,
+    "max": 59.5,
+    "samples": [
+     37.14,
+     45.17,
+     36.03,
+     38.91,
+     37.29,
+     39.13,
+     59.48,
+     37.86
+    ]
+   },
+   "pss_mb": 29.1
+  },
+  {
+   "runtime": "php",
+   "command": "psalm --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 27.3,
+   "native_sd": 2.2,
+   "fast_ms": 8.9,
+   "fast_sd": 0.6,
+   "speedup": 3.08,
+   "speedup_ci95": [
+    2.84,
+    3.39
+   ],
+   "native": {
+    "n": 8,
+    "mean": 27.7,
+    "median": 27.3,
+    "sd": 2.2,
+    "min": 25.3,
+    "max": 32.1,
+    "samples": [
+     32.14,
+     28.7,
+     28.26,
+     26.19,
+     25.34,
+     26.16,
+     26.32,
+     28.75
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 8.9,
+    "median": 8.9,
+    "sd": 0.6,
+    "min": 8.3,
+    "max": 10.0,
+    "samples": [
+     10.03,
+     9.3,
+     8.65,
+     8.3,
+     8.32,
+     8.5,
+     9.21,
+     9.07
+    ]
+   },
+   "pss_mb": 30.9
+  },
+  {
+   "runtime": "php",
+   "command": "rector --version",
+   "identical": true,
+   "native_rc": 0,
+   "native_ms": 238.2,
+   "native_sd": 9.3,
+   "fast_ms": 120.5,
+   "fast_sd": 7.4,
+   "speedup": 1.98,
+   "speedup_ci95": [
+    1.81,
+    2.06
+   ],
+   "native": {
+    "n": 8,
+    "mean": 239.2,
+    "median": 238.2,
+    "sd": 9.3,
+    "min": 225.9,
+    "max": 254.7,
+    "samples": [
+     236.05,
+     245.07,
+     230.98,
+     225.93,
+     254.66,
+     240.31,
+     234.31,
+     246.46
+    ]
+   },
+   "fast": {
+    "n": 8,
+    "mean": 123.4,
+    "median": 120.5,
+    "sd": 7.4,
+    "min": 117.1,
+    "max": 137.1,
+    "samples": [
+     121.46,
+     119.45,
+     121.53,
+     133.11,
+     137.09,
+     119.02,
+     118.53,
+     117.07
+    ]
+   },
+   "pss_mb": 28.7
+  }
+ ]
+}
