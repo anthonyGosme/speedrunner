@@ -15,7 +15,7 @@ import sys
 
 RUNTIMES = {"python": "Python", "ruby": "Ruby", "php": "PHP", "node": "Node"}
 MAIN = "a 2-vCPU Debian 12 VPS"
-OTHER = "a laptop (Intel i7-9750H), in a Debian 12 container"
+OTHER = "a laptop (Intel i7-9750H), in a Debian 12 container, on an earlier version"
 
 # Why a command gains nothing: shown under its table.
 NOTES = {
