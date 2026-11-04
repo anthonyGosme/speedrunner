@@ -123,14 +123,14 @@ def status_field(text, key):
     return m.group(1) if m else None
 
 
-def wait_ready(tool, env=None, timeout=30.0):
+def wait_ready(tool, env=None, timeout=30.0, cwd=None):
     deadline = time.monotonic() + timeout
     while True:
         text = status(tool, env)
         if text.startswith("ready"):
             return text
         if text == "down":
-            subprocess.run([HS_BIN, "prewarm", tool], env={**BASE_ENV, **(env or {})}, check=True)
+            subprocess.run([HS_BIN, "prewarm", tool], env={**BASE_ENV, **(env or {})}, cwd=cwd, check=True)
         if time.monotonic() > deadline:
             raise RuntimeError(f"{tool} daemon not ready: {text!r}")
         time.sleep(0.1)
@@ -1198,7 +1198,9 @@ class ImportTimeReadChecks:
     def start(self, env, cwd=None):
         """A daemon started from cwd, as a client there would: served at once."""
         subprocess.run([HS_BIN, "prewarm", "hsread"], env={**BASE_ENV, **env}, cwd=cwd, check=True)
-        wait_ready("hsread", env)
+        # From cwd too: a Node without code cache leaves its first daemon to note
+        # that, and the one that serves is the next one started.
+        wait_ready("hsread", env, cwd=cwd)
         self.teach(env, cwd)
         return int(status_field(status("hsread", env), "pid"))
 
