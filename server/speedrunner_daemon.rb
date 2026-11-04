@@ -1371,7 +1371,7 @@ module Speedrunner
   end
 
   # R: the tool runs, its client may only leave by dying. E: it may leave.
-  GC_ROOM_FRACTION = 8
+  GC_ROOM_FRACTION = 16
 
   # A child that finds this heap nearly full collects it itself, at each call
   # until the parent does: 3 to 8 ms for a small tool. Just after a fork: the

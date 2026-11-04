@@ -226,7 +226,7 @@ Control socket parent ↔ child: `R` ("the tool runs"), `E` ("I am about to send
 
 Persistence: `$XDG_CACHE_HOME/speedrunner/<tool>-<sha256 of the fingerprint>.json` = `{"modules", "paths", "blacklist", "files"}`, reloaded at startup. A modified installation changes the fingerprint, hence the cache file. `<tool>` is the script's file name, also for a tool called by its path (`srr ./bin/aws`): before 0.4.2, the client passed the path itself, and the file landed next to the script, in a directory the fingerprint covers, which made every daemon stale as soon as it had learned.
 
-Before each fork, `gc.freeze()`: the child's GC does not walk the inherited heap, and so does not copy its pages. Ruby has no such thing: just after each fork, the parent collects if it has allocated an eighth of what its last collection left free (`collect_for_next_fork`), so that the next child does not start by collecting for it (§11).
+Before each fork, `gc.freeze()`: the child's GC does not walk the inherited heap, and so does not copy its pages. Ruby has no such thing: just after each fork, the parent collects if it has allocated a sixteenth of what its last collection left free (`collect_for_next_fork`), so that the next child does not start by collecting for it (§11).
 
 ## 7. What the child checks and applies
 
