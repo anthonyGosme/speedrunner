@@ -1294,6 +1294,7 @@ module Speedrunner
              STDERR.write(error_text(err))
              1
            end
+    tell_parent("E") # before the client can leave
     begin
       send_msg(conn, "X", [code].pack("l<"))
     rescue IOError, SystemCallError
@@ -1314,6 +1315,13 @@ module Speedrunner
     track_files
     start_learning if state.levels.include?("2")
     load state.script # exceptions and exit go up to Ruby, as natively
+  end
+
+  # R: the tool runs, its client may only leave by dying. E: it may leave.
+  def self.tell_parent(kind)
+    send_msg(CHILD[:ctl], kind, "")
+  rescue IOError, SystemCallError
+    nil # the daemon is gone: the child goes on alone
   end
 
   def self.serve_child(state, conn)
@@ -1359,6 +1367,7 @@ module Speedrunner
       end
       send_msg(conn, "R", [Process.pid].pack("l<"))
       exit!(0) unless read_exact(conn, 1, deadline) == "G"
+      tell_parent("R")
       apply_request(state, req, fds)
     rescue Exception => e # rubocop:disable Lint/RescueException
       log("child setup failed: #{e.inspect}")
@@ -1465,7 +1474,7 @@ module Speedrunner
     conn.close
   end
 
-  Child = Struct.new(:pid, :ctl, :conn, :retired) do
+  Child = Struct.new(:pid, :ctl, :conn, :retired, :running) do
     def close
       [ctl, conn].each { |io| io&.close unless io&.closed? }
       self.ctl = self.conn = nil
@@ -1588,6 +1597,7 @@ module Speedrunner
           spare = nil
         end
         watch = [wake_r] + children.values.filter_map(&:ctl)
+        watch += children.values.select(&:running).filter_map(&:conn)
         watch << server if state.disabled
         watch << state.watch.io if state.watch&.io && !exiting # stays readable once stale
         timeout = [1.0, last_activity + IDLE_TIMEOUT_S - now].max
@@ -1615,6 +1625,7 @@ module Speedrunner
               state.pending_gems[g] = true if g.is_a?(Array) && g.size == 2
             end
           end
+          child.running = kind == "R" if %w[R E].include?(kind)
           if kind == "A" && !ios.empty?
             child.conn = ios.shift
             last_activity = now
@@ -1630,6 +1641,22 @@ module Speedrunner
           end
         end
         children.each_value { |c| on_ctl.call(c) if c.ctl && readable.include?(c.ctl) }
+        # The client sends nothing after its go: readable means end of file.
+        # Killed (kill -9): the tool dies with it, as natively. An E already
+        # sent means the client left normally.
+        children.each_value do |c|
+          next unless c.running && readable.include?(c.conn)
+
+          on_ctl.call(c) while c.ctl && IO.select([c.ctl], nil, nil, 0)
+          next unless c.running
+
+          c.running = false
+          begin
+            Process.kill("KILL", c.pid)
+          rescue SystemCallError
+            nil
+          end
+        end
         if readable.include?(wake_r)
           wake_r.read_nonblock(512, exception: false)
           loop do

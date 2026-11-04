@@ -92,7 +92,7 @@ quicken restarts the daemon if the client's gid or groups change (`newgrp`, adde
 
 ### 9. A client that dies
 quicken kills the child (`SIGKILL`) when the client's connection closes. JumpTheGun does nothing. The brief does not decide.
-→ **Decision to make**: if the Rust client dies (`kill -9`, terminal closed), we can send `SIGHUP` to the child, which mimics closing the terminal, or let it finish. For `aws s3 rm`, letting it finish is safer than killing it halfway. Neither is a double execution.
+→ **Decided**: if the Rust client is killed (`kill -9`), the tool gets SIGKILL too, as natively. A closed terminal sends SIGHUP, which the client relays.
 
 ### 10. Fork and threads / asyncio
 - quicken starts its asyncio server *after* freezing the imported state, because asyncio is not fork-safe (bpo-21998).
