@@ -272,6 +272,10 @@ class Teardown(m.Matrix):
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class FailOpen(m.Matrix):
+    @unittest.skipUnless(m.HS_BIN, "needs the speedrunner client")
+    def test_child_missing_its_go_says_so(self):
+        m.check_child_says_it_missed_its_go(self, "phptest")
+
     def test_startup_env_differs(self):
         argv = ["phptest", "argv"]
         env = {"PHP_INI_SCAN_DIR": "/nonexistent"}

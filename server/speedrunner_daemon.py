@@ -23,7 +23,8 @@ Protocol, little-endian, over the Unix socket:
                       kind R = run, P = ping, S = stop
     child  -> client  N(reason): run natively | R(pid): ready, waiting for go
                       | P(text): ping reply
-    client -> child   b"G": go. From here on the client never falls back.
+    client -> child   b"G": go. From here on the client only falls back on an
+                      N: the child failed before starting the tool.
     child  -> client  X(code): exit code, sent from the last atexit once
                       teardown has nothing visible left to do. The client
                       returns on it; the child tears down unseen.
@@ -2207,13 +2208,21 @@ def serve_child(state, conn):
             os._exit(0)
         send_msg(conn, b"R", struct.pack("<i", os.getpid()))
         if recv_exact(conn, 1) != b"G":
-            os._exit(0)
+            raise ValueError("no go from the client")
         tell_parent(b"R")
         conn.settimeout(None)
         apply_request(state, req, fds)
-    except BaseException as exc:  # nothing has run yet: let the client fall back
+    except KeyboardInterrupt:
+        # Relayed by a client that has our pid: natively, the tool would die of it.
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
+        os._exit(1)
+    except BaseException as exc:
+        # Nothing has run. Our exit would not do: past G, the client takes our
+        # wait status for the tool's, and a run that never started for a success.
         try:
             log(f"child setup failed: {exc!r}")
+            send_msg(conn, b"N", f"child setup failed: {type(exc).__name__}".encode())
         finally:
             os._exit(0)
     os.close(LOG_FD)

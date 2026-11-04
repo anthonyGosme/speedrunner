@@ -1540,12 +1540,24 @@ module Speedrunner
         exit!(0)
       end
       send_msg(conn, "R", [Process.pid].pack("l<"))
-      exit!(0) unless read_exact(conn, 1, deadline) == "G"
+      raise "no go from the client" unless read_exact(conn, 1, deadline) == "G"
       tell_parent("R")
       apply_request(state, req, fds)
+    rescue SignalException => e
+      # Relayed by a client that has our pid: natively, the tool would die of it.
+      trap(e.signo, "SYSTEM_DEFAULT")
+      Process.kill(e.signo, Process.pid)
+      sleep
     rescue Exception => e # rubocop:disable Lint/RescueException
       log("child setup failed: #{e.inspect}")
-      exit!(0) # nothing has run yet: let the client fall back
+      # Nothing has run. Our exit would not do: past G, the client takes our
+      # wait status for the tool's, and a run that never started for a success.
+      begin
+        send_msg(conn, "N", "child setup failed: #{e.class}")
+      rescue IOError, SystemCallError
+        nil # the client is gone
+      end
+      exit!(0)
     end
     LOG.close
     run_tool(state, conn)

@@ -2,8 +2,9 @@
 //! or execs the real tool when the fast path is unavailable.
 //!
 //! Safety rule: fall back to the native tool only before the daemon's child
-//! has been told to go (b"G"). After that, errors are reported, never retried,
-//! so a command can never run twice. Wire format: see server/speedrunner_daemon.py.
+//! has been told to go (b"G"), or when the child says it never started the tool
+//! (N). Other errors are reported, never retried, so a command can never run
+//! twice. Wire format: see server/speedrunner_daemon.py.
 
 mod launcher;
 mod platform;
@@ -596,7 +597,7 @@ fn serve(tool: &Tool, args: &[OsString], lazy: Option<&Path>) -> i32 {
     if let Err(e) = w.write_all(b"G") {
         fall_back(tool, args, &format!("go: {}", e));
     }
-    wait_for_child(&sock, tool, pid)
+    wait_for_child(&sock, tool, args, pid)
 }
 
 enum Refused {
@@ -640,11 +641,13 @@ fn handshake(sock: &UnixStream, tool: &Tool, args: &[OsString]) -> Result<i32, R
     }
 }
 
-fn wait_for_child(sock: &UnixStream, tool: &Tool, pid: i32) -> i32 {
+fn wait_for_child(sock: &UnixStream, tool: &Tool, args: &[OsString], pid: i32) -> i32 {
     let _ = sock.set_read_timeout(None);
     let mut in_teardown = None;
     loop {
         return match read_msg(sock) {
+            // The child failed before starting the tool: nothing can run twice.
+            Ok((b'N', reason)) => fall_back(tool, args, &String::from_utf8_lossy(&reason)),
             // Sent once nothing visible is left: the child tears down after we exit.
             Ok((b'X', p)) if p.len() == 4 => i32::from_le_bytes([p[0], p[1], p[2], p[3]]),
             // The tool's code still runs in its teardown: wait for it to end.

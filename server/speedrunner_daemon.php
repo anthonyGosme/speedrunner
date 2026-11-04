@@ -629,7 +629,7 @@ final class Daemon
             }
             self::sendMsg($conn, 'R', pack('l', getmypid()));
             if (self::readExact($conn, 1, $deadline) !== 'G') {
-                exit(0);
+                throw new \RuntimeException('no go from the client');
             }
             try {
                 self::sendMsg(self::$childCtl, 'R'); // its client may only leave by dying
@@ -639,7 +639,15 @@ final class Daemon
             self::applyRequest($req, $fds);
         } catch (\Throwable $e) {
             self::log('child setup failed: ' . $e->getMessage());
-            exit(0); // nothing has run yet: let the client fall back
+            // Nothing has run. Our exit would not do: past G, the client takes
+            // our wait status for the tool's, and a run that never started for
+            // a success.
+            try {
+                self::sendMsg($conn, 'N', 'child setup failed: ' . get_class($e));
+            } catch (\Throwable $e) {
+                // the client is gone
+            }
+            exit(0);
         }
         $c->close(self::$log);
         // The connection stays open, close-on-exec, until we exit: the parent
