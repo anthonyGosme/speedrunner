@@ -1,0 +1,790 @@
+{
+ "calls": 5,
+ "ok": true,
+ "results": [
+  {
+   "runtime": "python",
+   "command": "sefx-py-clean",
+   "misses": 0,
+   "status": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  },
+  {
+   "runtime": "python",
+   "command": "sefx-py-append-load",
+   "misses": 0,
+   "status": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "file-only-plain",
+     "path": "sefx-load.log",
+     "strength": "strong",
+     "plain": [
+      "grew",
+      "grew",
+      "grew",
+      "grew",
+      "grew"
+     ],
+     "plain_sizes": [
+      7,
+      7,
+      7,
+      7,
+      7
+     ],
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "sefx-load.log"
+    ],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "file-only-plain"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "python",
+   "command": "sefx-py-rewrite-load",
+   "misses": 0,
+   "status": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "file-only-plain",
+     "path": "sefx-rewrite",
+     "strength": "strong",
+     "plain": [
+      "touched",
+      "touched",
+      "touched",
+      "touched",
+      "touched"
+     ],
+     "plain_sizes": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "sefx-rewrite"
+    ],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "file-only-plain"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "python",
+   "command": "sefx-py-pid-load",
+   "misses": 0,
+   "status": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "frozen",
+     "stream": "stdout",
+     "line": 0,
+     "strength": "strong",
+     "plain": [
+      "2924805",
+      "2924806",
+      "2924861",
+      "2924872",
+      "2924873"
+     ],
+     "served": "2925126",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "pid 2924805\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "pid 2925126\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "frozen"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "python",
+   "command": "sefx-py-clock-load",
+   "misses": 0,
+   "status": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "frozen",
+     "stream": "stdout",
+     "line": 0,
+     "strength": "strong",
+     "plain": [
+      "1793814408.4095564",
+      "1793814409.5184405",
+      "1793814410.6277294",
+      "1793814411.7366107",
+      "1793814412.8455615"
+     ],
+     "served": "1793814429.605448",
+     "also_in_null": false
+    },
+    {
+     "kind": "frozen",
+     "stream": "stdout",
+     "line": 0,
+     "strength": "strong",
+     "plain": [
+      "17:46:48",
+      "17:46:49",
+      "17:46:50",
+      "17:46:51",
+      "17:46:52"
+     ],
+     "served": "17:47:09",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "clock 1793814408.4095564 17:46:48\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "clock 1793814429.605448 17:47:09\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "frozen"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "python",
+   "command": "sefx-py-append-run",
+   "misses": 0,
+   "status": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "sefx-run.log"
+    ],
+    "served": [
+     "sefx-run.log"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  },
+  {
+   "runtime": "python",
+   "command": "sefx-py-random-run",
+   "misses": 0,
+   "status": "ready modules=111 levels=1,2,3 learned=3 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=111 levels=1,2,3 learned=3 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "tmp/tmp_rbwrqca",
+     "tmp/tmpf_kdo7m3",
+     "tmp/tmpjjp4lbp0",
+     "tmp/tmpsssayndn",
+     "tmp/tmpt6dqwsqj"
+    ],
+    "served": [
+     "tmp/tmp8ifyu_d0",
+     "tmp/tmp_m89l6a9",
+     "tmp/tmp_xw1q3dj",
+     "tmp/tmpfyilp6cf",
+     "tmp/tmpm7f8r9qg"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "9e4cc5c637765bc8 2926491 1793814480.3624396\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "fa3f3a8e5b8d123e 2926935 1793814505.9870427\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  },
+  {
+   "runtime": "python",
+   "command": "sefx-py-first-run",
+   "misses": 0,
+   "status": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=97 levels=1,2,3 learned=4 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-clean",
+   "misses": 0,
+   "status": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [
+     "/tmp/runc-process3193684706",
+     "/tmp/runc-process33405709"
+    ],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-append-load",
+   "misses": 0,
+   "status": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "file-only-plain",
+     "path": "sefx-load.log",
+     "strength": "strong",
+     "plain": [
+      "grew",
+      "grew",
+      "grew",
+      "grew",
+      "grew"
+     ],
+     "plain_sizes": [
+      7,
+      7,
+      7,
+      7,
+      7
+     ],
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "sefx-load.log"
+    ],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "file-only-plain"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-rewrite-load",
+   "misses": 0,
+   "status": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "file-only-plain",
+     "path": "sefx-rewrite",
+     "strength": "strong",
+     "plain": [
+      "touched",
+      "touched",
+      "touched",
+      "touched",
+      "touched"
+     ],
+     "plain_sizes": [
+      0,
+      0,
+      0,
+      0,
+      0
+     ],
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "sefx-rewrite"
+    ],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "file-only-plain"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-pid-load",
+   "misses": 0,
+   "status": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [
+     "/root/.ansible/tmp/ansible-tmp-1793814668.0123458-2929711-115599697604025/.source.txt",
+     "/root/.ansible/tmp/ansible-tmp-1793814668.0123458-2929711-115599697604025/AnsiballZ_stat.py"
+    ],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "frozen",
+     "stream": "stdout",
+     "line": 0,
+     "strength": "strong",
+     "plain": [
+      "2929387",
+      "2929388",
+      "2929389",
+      "2929449",
+      "2929450"
+     ],
+     "served": "2930291",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "pid 2929387\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "pid 2930291\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "frozen"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-clock-load",
+   "misses": 0,
+   "status": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "frozen",
+     "stream": "stdout",
+     "line": 0,
+     "strength": "strong",
+     "plain": [
+      "1793814692.2194235",
+      "1793814693.3681393",
+      "1793814694.5074723",
+      "1793814695.645381",
+      "1793814696.7818604"
+     ],
+     "served": "1793814714.819575",
+     "also_in_null": false
+    },
+    {
+     "kind": "frozen",
+     "stream": "stdout",
+     "line": 0,
+     "strength": "strong",
+     "plain": [
+      "17:51:32",
+      "17:51:33",
+      "17:51:34",
+      "17:51:35",
+      "17:51:36"
+     ],
+     "served": "17:51:54",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "clock 1793814692.2194235 17:51:32\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "clock 1793814714.819575 17:51:54\n",
+     "stderr": ""
+    }
+   },
+   "expected": [
+    "frozen"
+   ],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-append-run",
+   "misses": 0,
+   "status": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "sefx-run.log"
+    ],
+    "served": [
+     "sefx-run.log"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-random-run",
+   "misses": 0,
+   "status": "ready modules=84 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=84 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "tmp/x20261104-2932937-pyvgpj",
+     "tmp/x20261104-2932938-rgqc9v",
+     "tmp/x20261104-2932993-9a2c2q",
+     "tmp/x20261104-2932994-vtnvgs",
+     "tmp/x20261104-2932995-p2ksn9"
+    ],
+    "served": [
+     "tmp/x20261104-2933325-obqk6p",
+     "tmp/x20261104-2933350-obqk6p",
+     "tmp/x20261104-2933407-obqk6p",
+     "tmp/x20261104-2933409-obqk6p",
+     "tmp/x20261104-2933411-obqk6p"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "deda906748e9bf5e 2932937 1793814762.3954601\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "217e1f5ca7cce6a2 2933325 1793814788.6792905\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  },
+  {
+   "runtime": "ruby",
+   "command": "sefx-ru-first-run",
+   "misses": 0,
+   "status": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=79 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "ok\n",
+     "stderr": ""
+    }
+   },
+   "expected": [],
+   "as_expected": true
+  }
+ ]
+}

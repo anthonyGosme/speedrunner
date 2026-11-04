@@ -1,0 +1,21 @@
+plain ping: exit codes 0 0 0
+plain copy: exit codes 0 0 0
+plain template: exit codes 0 0 0
+--- temp directories after the plain calls: 0
+--- daemon warm, its pid: 2957504. Temp directories:
+ansible-local-2957530cv_p801k
+ansible-local-2957532hxg9iq1y
+ansible-local-29575359h74smmw
+served ping: exit codes 0 0 0
+served copy: exit codes 2 2 2
+    "msg": "could not write content temp file: [Errno 2] No such file or directory: '<home>/.ansible/tmp/ansible-local-29575042ejjx37y/.5rjzgboc'"
+served template: exit codes 2 2 2
+    "msg": "Task failed: [Errno 2] No such file or directory: '<home>/.ansible/tmp/ansible-local-29575042ejjx37y/tmpmegsos8u'"
+--- temp directories after the served calls:
+ansible-local-2957530cv_p801k
+ansible-local-2957532hxg9iq1y
+ansible-local-29575359h74smmw
+--- after stopping the daemon:
+ansible-local-2957530cv_p801k
+ansible-local-2957532hxg9iq1y
+ansible-local-29575359h74smmw

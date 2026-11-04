@@ -1,0 +1,1057 @@
+{
+ "calls": 5,
+ "warm": 4,
+ "gap": 1.1,
+ "results": [
+  {
+   "runtime": "python",
+   "command": "aws --version",
+   "misses": 0,
+   "status": "ready modules=659 levels=1,2,3 learned=263 blacklisted=0 memo=2 gen=1 tty_read=-",
+   "status_after": "ready modules=659 levels=1,2,3 learned=263 blacklisted=0 memo=2 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "aws-cli/1.46.2 Python/3.11.2 Linux/6.1.0-50-amd64 botocore/1.43.62\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "aws-cli/1.46.2 Python/3.11.2 Linux/6.1.0-50-amd64 botocore/1.43.62\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 42
+  },
+  {
+   "runtime": "python",
+   "command": "aws configure list",
+   "misses": 0,
+   "status": "ready modules=659 levels=1,2,3 learned=263 blacklisted=0 memo=2 gen=1 tty_read=-",
+   "status_after": "ready modules=659 levels=1,2,3 learned=263 blacklisted=0 memo=2 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "-                    -----             ----    --------\n   profile                <not set>             None    None\naccess_key                <not set>             None    None\nsecret_key                <not set>             None    None\n    region                <not set>             None    None\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "-                    -----             ----    --------\n   profile                <not set>             None    None\naccess_key                <not set>             None    None\nsecret_key                <not set>             None    None\n    region                <not set>             None    None\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 40
+  },
+  {
+   "runtime": "python",
+   "command": "az --help",
+   "misses": 0,
+   "status": "ready modules=237 levels=1,2,3 learned=25 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=237 levels=1,2,3 learned=25 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "custom request.\n    survey                : Take Azure CLI survey.\n    upgrade     [Preview] : Upgrade Azure CLI and extensions.\n    version               : Show the versions of Azure CLI modules and extensions in JSON format by\n                            default or format configured by --output.\n\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "custom request.\n    survey                : Take Azure CLI survey.\n    upgrade     [Preview] : Upgrade Azure CLI and extensions.\n    version               : Show the versions of Azure CLI modules and extensions in JSON format by\n                            default or format configured by --output.\n\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 45
+  },
+  {
+   "runtime": "python",
+   "command": "az vm --help",
+   "misses": 0,
+   "status": "ready modules=1000 levels=1,2,3 learned=674 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=1000 levels=1,2,3 learned=674 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "azure/commands/2026-11-04.17-56-01.vm.2936081.log",
+     "azure/commands/2026-11-04.17-56-03.vm.2936082.log",
+     "azure/commands/2026-11-04.17-56-04.vm.2936084.log",
+     "azure/commands/2026-11-04.17-56-06.vm.2936085.log",
+     "azure/commands/2026-11-04.17-56-07.vm.2936194.log"
+    ],
+    "served": [
+     "azure/commands/2026-11-04.17-56-41.vm.2936708.log",
+     "azure/commands/2026-11-04.17-56-42.vm.2936712.log",
+     "azure/commands/2026-11-04.17-56-43.vm.2936768.log",
+     "azure/commands/2026-11-04.17-56-44.vm.2936771.log",
+     "azure/commands/2026-11-04.17-56-45.vm.2936775.log"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": " the eviction of a Spot VM.\n    start                   : Start a stopped VM.\n    stop                    : Power off (stop) a running VM.\n    update                  : Update the properties of a VM.\n    wait                    : Place the CLI in a waiting state until a condition of the VM is met.\n\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": " the eviction of a Spot VM.\n    start                   : Start a stopped VM.\n    stop                    : Power off (stop) a running VM.\n    update                  : Update the properties of a VM.\n    wait                    : Place the CLI in a waiting state until a condition of the VM is met.\n\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 52
+  },
+  {
+   "runtime": "python",
+   "command": "gcloud --version",
+   "misses": 0,
+   "status": "ready modules=801 levels=1,2,3 learned=627 blacklisted=130 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=801 levels=1,2,3 learned=627 blacklisted=130 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "gcloud/logs/2026.11.04/17.56.51.603784.log",
+     "gcloud/logs/2026.11.04/17.56.53.010847.log",
+     "gcloud/logs/2026.11.04/17.56.54.420844.log",
+     "gcloud/logs/2026.11.04/17.56.55.880020.log",
+     "gcloud/logs/2026.11.04/17.56.57.408673.log"
+    ],
+    "served": [
+     "gcloud/logs/2026.11.04/17.57.27.389487.log",
+     "gcloud/logs/2026.11.04/17.57.28.569670.log",
+     "gcloud/logs/2026.11.04/17.57.29.745992.log",
+     "gcloud/logs/2026.11.04/17.57.30.927612.log",
+     "gcloud/logs/2026.11.04/17.57.32.111130.log"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "Google Cloud SDK 591.0.0\nalpha 2026.10.26\nbeta 2026.10.26\nbq 2.1.41\nbundled-python3-unix 3.14.9\ncore 2026.10.26\ngcloud-crc32c 1.0.0\ngsutil 5.38\npreview 2026.10.26\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "Google Cloud SDK 591.0.0\nalpha 2026.10.26\nbeta 2026.10.26\nbq 2.1.41\nbundled-python3-unix 3.14.9\ncore 2026.10.26\ngcloud-crc32c 1.0.0\ngsutil 5.38\npreview 2026.10.26\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 46
+  },
+  {
+   "runtime": "python",
+   "command": "gcloud config list",
+   "misses": 0,
+   "status": "ready modules=814 levels=1,2,3 learned=640 blacklisted=139 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=814 levels=1,2,3 learned=640 blacklisted=139 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "gcloud/logs/2026.11.04/17.57.37.851404.log",
+     "gcloud/logs/2026.11.04/17.57.39.397429.log",
+     "gcloud/logs/2026.11.04/17.57.40.959791.log",
+     "gcloud/logs/2026.11.04/17.57.42.491967.log",
+     "gcloud/logs/2026.11.04/17.57.43.987872.log"
+    ],
+    "served": [
+     "gcloud/logs/2026.11.04/17.58.14.120186.log",
+     "gcloud/logs/2026.11.04/17.58.15.307539.log",
+     "gcloud/logs/2026.11.04/17.58.16.494290.log",
+     "gcloud/logs/2026.11.04/17.58.17.682244.log",
+     "gcloud/logs/2026.11.04/17.58.18.870690.log"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "[component_manager]\ndisable_update_check = true\n[core]\ndisable_usage_reporting = true\n",
+     "stderr": "\nYour active configuration is: [default]\n"
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "[component_manager]\ndisable_update_check = true\n[core]\ndisable_usage_reporting = true\n",
+     "stderr": "\nYour active configuration is: [default]\n"
+    }
+   },
+   "seconds": 47
+  },
+  {
+   "runtime": "python",
+   "command": "ansible --version",
+   "misses": 0,
+   "status": "ready modules=515 levels=1,2,3 learned=415 blacklisted=5 memo=0 gen=1 tty_read=1",
+   "status_after": "ready modules=515 levels=1,2,3 learned=415 blacklisted=5 memo=0 gen=1 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-29398037ro_9owo",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2939805boj2girh",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2939807by29ng33",
+     "strength": "strong",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": ">/.ansible/collections:/usr/share/ansible/collections\n  executable location = /root/speedrunner/venv-panel/bin/ansible\n  python version = 3.11.2 (main, Oct  7 2026, 12:35:07) [GCC 12.2.0] (/root/headstart/venv-panel/bin/python3)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": ">/.ansible/collections:/usr/share/ansible/collections\n  executable location = /root/speedrunner/venv-panel/bin/ansible\n  python version = 3.11.2 (main, Oct  7 2026, 12:35:07) [GCC 12.2.0] (/root/headstart/venv-panel/bin/python3)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 41
+  },
+  {
+   "runtime": "python",
+   "command": "ansible-doc ping",
+   "misses": 0,
+   "status": "ready modules=597 levels=1,2,3 learned=491 blacklisted=8 memo=0 gen=2 tty_read=1",
+   "status_after": "ready modules=597 levels=1,2,3 learned=491 blacklisted=8 memo=0 gen=2 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-29405365ln283zn",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-29405387w0x_j0s",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2940540jdnn6ur1",
+     "strength": "strong",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "\n\n- name: Example from an Ansible Playbook\n  ansible.builtin.ping:\n\n- name: Induce an exception to see what happens\n  ansible.builtin.ping:\n    data: crash\n\n\u001b[1mRETURN VALUES:\u001b[0m\n\n   ping    Value provided with the `data' parameter.\n        returned: success\n        sample: pong\n        type: str\n\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "\n\n- name: Example from an Ansible Playbook\n  ansible.builtin.ping:\n\n- name: Induce an exception to see what happens\n  ansible.builtin.ping:\n    data: crash\n\n\u001b[1mRETURN VALUES:\u001b[0m\n\n   ping    Value provided with the `data' parameter.\n        returned: success\n        sample: pong\n        type: str\n\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 47
+  },
+  {
+   "runtime": "python",
+   "command": "black --check sample.py",
+   "misses": 0,
+   "status": "ready modules=249 levels=1,2,3 learned=1 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=249 levels=1,2,3 learned=1 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "",
+     "stderr": "All done! \u2728 \ud83c\udf70 \u2728\n1 file would be left unchanged.\n"
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "",
+     "stderr": "All done! \u2728 \ud83c\udf70 \u2728\n1 file would be left unchanged.\n"
+    }
+   },
+   "seconds": 36
+  },
+  {
+   "runtime": "python",
+   "command": "poetry --version",
+   "misses": 0,
+   "status": "ready modules=863 levels=1,2,3 learned=516 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=863 levels=1,2,3 learned=516 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [
+     "/tmp/runc-process3178065959"
+    ],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "Poetry (version 2.5.1)\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "Poetry (version 2.5.1)\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 42
+  },
+  {
+   "runtime": "python",
+   "command": "http --offline (httpie)",
+   "misses": 0,
+   "status": "ready modules=447 levels=1,2,3 learned=299 blacklisted=0 memo=0 gen=1 tty_read=0,1,2",
+   "status_after": "ready modules=447 levels=1,2,3 learned=299 blacklisted=0 memo=0 gen=1 tty_read=0,1,2",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "POST / HTTP/1.1\r\nAccept-Encoding: gzip, deflate, zstd\r\nConnection: keep-alive\r\nContent-Length: 10\r\nUser-Agent: HTTPie/3.2.4\r\nAccept: application/json, */*;q=0.5\r\nContent-Type: application/json\r\nHost: example.org\r\n\r\n{\"a\": \"b\"}",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "POST / HTTP/1.1\r\nAccept-Encoding: gzip, deflate, zstd\r\nConnection: keep-alive\r\nContent-Length: 10\r\nUser-Agent: HTTPie/3.2.4\r\nAccept: application/json, */*;q=0.5\r\nContent-Type: application/json\r\nHost: example.org\r\n\r\n{\"a\": \"b\"}",
+     "stderr": ""
+    }
+   },
+   "seconds": 42
+  },
+  {
+   "runtime": "python",
+   "command": "pre-commit --version",
+   "misses": 0,
+   "status": "ready modules=291 levels=1,2,3 learned=1 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=291 levels=1,2,3 learned=1 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "pre-commit 4.7.0\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "pre-commit 4.7.0\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 36
+  },
+  {
+   "runtime": "python",
+   "command": "mypy sample.py",
+   "misses": 0,
+   "status": "ready modules=310 levels=1,2,3 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=310 levels=1,2,3 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [
+     "work/.mypy_cache/3.11/cache.3.db"
+    ],
+    "served": [
+     "work/.mypy_cache/3.11/cache.3.db"
+    ]
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "Success: no issues found in 1 source file\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "Success: no issues found in 1 source file\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 38
+  },
+  {
+   "runtime": "python",
+   "command": "pytest -q",
+   "misses": 0,
+   "status": "ready modules=359 levels=1,2,3 learned=116 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=359 levels=1,2,3 learned=116 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": ".                                                                        [100%]\n1 passed in 0.00s\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": ".                                                                        [100%]\n1 passed in 0.00s\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 39
+  },
+  {
+   "runtime": "python",
+   "command": "flake8 sample.py",
+   "misses": 0,
+   "status": "ready modules=223 levels=1,2,3 learned=8 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=223 levels=1,2,3 learned=8 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "",
+     "stderr": ""
+    }
+   },
+   "seconds": 36
+  },
+  {
+   "runtime": "python",
+   "command": "yamllint sample.yaml",
+   "misses": 0,
+   "status": "ready modules=214 levels=1,2,3 learned=8 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=214 levels=1,2,3 learned=8 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "",
+     "stderr": ""
+    }
+   },
+   "seconds": 35
+  },
+  {
+   "runtime": "python",
+   "command": "pip list",
+   "misses": 0,
+   "status": "ready modules=344 levels=1,2,3 learned=231 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=344 levels=1,2,3 learned=231 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "-------------- -----------\nawscli          1.46.2\ncolorama        0.4.6\ndocutils        0.19\njmespath        1.1.0\npip             26.2.2\npyasn1          0.6.5\npython-dateutil 2.9.0.post0\nPyYAML          6.0.3\nrsa             4.7.2\nsetuptools      66.1.1\nsix             1.17.0\nurllib3         2.8.0\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "-------------- -----------\nawscli          1.46.2\ncolorama        0.4.6\ndocutils        0.19\njmespath        1.1.0\npip             26.2.2\npyasn1          0.6.5\npython-dateutil 2.9.0.post0\nPyYAML          6.0.3\nrsa             4.7.2\nsetuptools      66.1.1\nsix             1.17.0\nurllib3         2.8.0\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 37
+  },
+  {
+   "runtime": "ruby",
+   "command": "rubocop --version",
+   "misses": 0,
+   "status": "ready modules=646 levels=1,2 learned=493 blacklisted=3 memo=0 gen=1 tty_read=1",
+   "status_after": "ready modules=646 levels=1,2 learned=493 blacklisted=3 memo=0 gen=1 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "1.92.1\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "1.92.1\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 47
+  },
+  {
+   "runtime": "ruby",
+   "command": "rubocop sample.rb",
+   "misses": 0,
+   "status": "ready modules=1123 levels=1,2 learned=968 blacklisted=3 memo=0 gen=1 tty_read=1",
+   "status_after": "ready modules=1123 levels=1,2 learned=968 blacklisted=3 memo=0 gen=1 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "Inspecting 1 file\n.\n\n1 file inspected, no offenses detected\n",
+     "stderr": "theses: # new in 1.58\n  Enabled: true\nStyle/SwapValues: # new in 1.1\n  Enabled: true\nStyle/TallyMethod: # new in 1.85\n  Enabled: true\nStyle/TimeNow: # new in 1.90\n  Enabled: true\nStyle/YAMLFileRead: # new in 1.53\n  Enabled: true\nFor more information: https://docs.rubocop.org/rubocop/versioning.html\n"
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "Inspecting 1 file\n.\n\n1 file inspected, no offenses detected\n",
+     "stderr": "theses: # new in 1.58\n  Enabled: true\nStyle/SwapValues: # new in 1.1\n  Enabled: true\nStyle/TallyMethod: # new in 1.85\n  Enabled: true\nStyle/TimeNow: # new in 1.90\n  Enabled: true\nStyle/YAMLFileRead: # new in 1.53\n  Enabled: true\nFor more information: https://docs.rubocop.org/rubocop/versioning.html\n"
+    }
+   },
+   "seconds": 56
+  },
+  {
+   "runtime": "ruby",
+   "command": "rake --version",
+   "misses": 0,
+   "status": "ready modules=182 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "status_after": "ready modules=182 levels=1,2 learned=0 blacklisted=0 memo=0 gen=0 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "rake, version 13.4.2\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "rake, version 13.4.2\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 36
+  },
+  {
+   "runtime": "ruby",
+   "command": "bundle --version",
+   "misses": 0,
+   "status": "ready modules=204 levels=1,2 learned=19 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=204 levels=1,2 learned=19 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [
+     "/tmp/runc-process136755146"
+    ],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "Bundler version 2.6.9\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "Bundler version 2.6.9\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 36
+  },
+  {
+   "runtime": "ruby",
+   "command": "gem list",
+   "misses": 0,
+   "status": "ready modules=211 levels=1,2 learned=108 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=211 levels=1,2 learned=108 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "0)\nunicode-emoji (4.3.0)\nuri (default: 0.11.0)\nuseragent (0.16.11)\nweakref (default: 0.1.1)\nwebsocket-driver (0.8.2)\nwebsocket-extensions (0.1.5)\nxcodeproj (1.28.1)\nyaml (default: 0.2.0)\nyard (0.9.45)\nyard-activesupport-concern (0.0.1)\nyard-solargraph (0.1.0)\nzeitwerk (2.6.18)\nzlib (default: 2.1.1)\n",
+     "stderr": "WARN: Unresolved or ambiguous specs during Gem::Specification.reset:\n      tsort (>= 0)\n      Available/installed versions of this gem:\n      - 0.2.0\n      - 0.1.0\nWARN: Clearing out unresolved specs. Try 'gem cleanup <gem>'\nPlease report a bug if this causes problems.\n"
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "0)\nunicode-emoji (4.3.0)\nuri (default: 0.11.0)\nuseragent (0.16.11)\nweakref (default: 0.1.1)\nwebsocket-driver (0.8.2)\nwebsocket-extensions (0.1.5)\nxcodeproj (1.28.1)\nyaml (default: 0.2.0)\nyard (0.9.45)\nyard-activesupport-concern (0.0.1)\nyard-solargraph (0.1.0)\nzeitwerk (2.6.18)\nzlib (default: 2.1.1)\n",
+     "stderr": "WARN: Unresolved or ambiguous specs during Gem::Specification.reset:\n      tsort (>= 0)\n      Available/installed versions of this gem:\n      - 0.2.0\n      - 0.1.0\nWARN: Clearing out unresolved specs. Try 'gem cleanup <gem>'\nPlease report a bug if this causes problems.\n"
+    }
+   },
+   "seconds": 39
+  },
+  {
+   "runtime": "ruby",
+   "command": "rails --version",
+   "misses": 0,
+   "status": "ready modules=285 levels=1,2 learned=144 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=285 levels=1,2 learned=144 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "Rails 7.2.4\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "Rails 7.2.4\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 39
+  },
+  {
+   "runtime": "ruby",
+   "command": "rspec sample_spec.rb",
+   "misses": 0,
+   "status": "ready modules=245 levels=1,2 learned=49 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=245 levels=1,2 learned=49 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": ".\n\nFinished in 0.0016 seconds (files took 0.05763 seconds to load)\n1 example, 0 failures\n\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": ".\n\nFinished in 0.00098 seconds (files took 4.37 seconds to load)\n1 example, 0 failures\n\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 37
+  },
+  {
+   "runtime": "ruby",
+   "command": "pod --version",
+   "misses": 0,
+   "status": "ready modules=745 levels=1,2 learned=73 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=745 levels=1,2 learned=73 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "1.17.0\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "1.17.0\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 44
+  },
+  {
+   "runtime": "ruby",
+   "command": "solargraph --version",
+   "misses": 0,
+   "status": "ready modules=794 levels=1,2 learned=641 blacklisted=54 memo=0 gen=1 tty_read=1",
+   "status_after": "ready modules=794 levels=1,2 learned=641 blacklisted=54 memo=0 gen=1 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "0.61.0\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "0.61.0\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 63
+  },
+  {
+   "runtime": "ruby",
+   "command": "rdoc --version",
+   "misses": 0,
+   "status": "ready modules=339 levels=1,2 learned=2 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "status_after": "ready modules=339 levels=1,2 learned=2 blacklisted=0 memo=0 gen=1 tty_read=-",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "7.2.0\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "7.2.0\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 40
+  },
+  {
+   "runtime": "python",
+   "command": "ansible -m copy",
+   "misses": 0,
+   "status": "ready modules=558 levels=1,2,3 learned=456 blacklisted=9 memo=0 gen=1 tty_read=1",
+   "status_after": "ready modules=558 levels=1,2,3 learned=456 blacklisted=9 memo=0 gen=1 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2955441w51al_dc",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-295544332dlvcc1",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2955445c6nib1ux",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "exit-code",
+     "strength": "strong",
+     "plain": [
+      0
+     ],
+     "served": [
+      2,
+      2,
+      2,
+      2,
+      2
+     ],
+     "also_in_null": false
+    },
+    {
+     "kind": "output",
+     "stream": "stdout",
+     "strength": "strong",
+     "plain": "14 lines",
+     "served": "[10] lines",
+     "plain_tail": "\",\n    \"path\": \"copied.txt\",\n    \"size\": 5,\n    \"state\": \"file\",\n    \"uid\": 0\n}\n",
+     "served_tail": " file or directory: '<root>/ansible/ansible-local-2955326bxebwmhe/.d3an5xvt'\"\n}\n",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "localhost | SUCCESS => {\n    \"changed\": false,\n    \"checksum\": \"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d\",\n    \"dest\": \"copied.txt\",\n    \"gid\": 0,\n    \"group\": \"root\",\n    \"mode\": \"0644\",\n    \"owner\": \"root\",\n    \"path\": \"copied.txt\",\n    \"size\": 5,\n    \"state\": \"file\",\n    \"uid\": 0\n}\n",
+     "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "served": {
+     "rc": 2,
+     "stdout": "ion': 'copy', 'args': {'content': 'hello', 'dest': 'copied.txt'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nlocalhost | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"could not write content temp file: [Errno 2] No such file or directory: '<root>/ansible/ansible-local-2955326bxebwmhe/.d3an5xvt'\"\n}\n",
+     "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    }
+   },
+   "seconds": 62
+  }
+ ]
+}

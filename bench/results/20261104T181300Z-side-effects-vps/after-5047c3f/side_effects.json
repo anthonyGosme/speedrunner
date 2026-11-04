@@ -1,0 +1,157 @@
+{
+ "calls": 5,
+ "warm": 4,
+ "gap": 1.1,
+ "results": [
+  {
+   "runtime": "python",
+   "command": "ansible --version",
+   "misses": 0,
+   "status": "ready modules=515 levels=1,2,3 learned=415 blacklisted=5 memo=0 gen=1 tty_read=1",
+   "status_after": "ready modules=515 levels=1,2,3 learned=415 blacklisted=5 memo=0 gen=1 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2978431bmsn130l",
+     "strength": "strong",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": ">/.ansible/collections:/usr/share/ansible/collections\n  executable location = /root/speedrunner/venv-panel/bin/ansible\n  python version = 3.11.2 (main, Oct  7 2026, 12:35:07) [GCC 12.2.0] (/root/headstart/venv-panel/bin/python3)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": ">/.ansible/collections:/usr/share/ansible/collections\n  executable location = /root/speedrunner/venv-panel/bin/ansible\n  python version = 3.11.2 (main, Oct  7 2026, 12:35:07) [GCC 12.2.0] (/root/headstart/venv-panel/bin/python3)\n  jinja version = 3.1.6\n  pyyaml version = 6.0.3 (with libyaml v0.2.5)\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 42
+  },
+  {
+   "runtime": "python",
+   "command": "ansible-doc ping",
+   "misses": 0,
+   "status": "ready modules=597 levels=1,2,3 learned=491 blacklisted=8 memo=0 gen=2 tty_read=1",
+   "status_after": "ready modules=597 levels=1,2,3 learned=491 blacklisted=8 memo=0 gen=2 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2979193co90u3zm",
+     "strength": "strong",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "\n\n- name: Example from an Ansible Playbook\n  ansible.builtin.ping:\n\n- name: Induce an exception to see what happens\n  ansible.builtin.ping:\n    data: crash\n\n\u001b[1mRETURN VALUES:\u001b[0m\n\n   ping    Value provided with the `data' parameter.\n        returned: success\n        sample: pong\n        type: str\n\n",
+     "stderr": ""
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "\n\n- name: Example from an Ansible Playbook\n  ansible.builtin.ping:\n\n- name: Induce an exception to see what happens\n  ansible.builtin.ping:\n    data: crash\n\n\u001b[1mRETURN VALUES:\u001b[0m\n\n   ping    Value provided with the `data' parameter.\n        returned: success\n        sample: pong\n        type: str\n\n",
+     "stderr": ""
+    }
+   },
+   "seconds": 48
+  },
+  {
+   "runtime": "python",
+   "command": "ansible -m copy",
+   "misses": 0,
+   "status": "ready modules=558 levels=1,2,3 learned=456 blacklisted=9 memo=0 gen=1 tty_read=1",
+   "status_after": "ready modules=558 levels=1,2,3 learned=456 blacklisted=9 memo=0 gen=1 tty_read=1",
+   "null_diffs": [],
+   "outside": {
+    "a": [],
+    "b": [],
+    "null": [],
+    "served": []
+   },
+   "diffs": [
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2981269k6gfd61m",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2981269k6gfd61m/ansiballz_cache",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2981269k6gfd61m/ansiballz_cache/ansible.modules.file-ZIP_DEFLATED-none",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2981269k6gfd61m/ansiballz_cache/ansible.modules.file-ZIP_DEFLATED-none.lock",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2981269k6gfd61m/ansiballz_cache/ansible.modules.stat-ZIP_DEFLATED-none",
+     "strength": "strong",
+     "also_in_null": false
+    },
+    {
+     "kind": "state-extra",
+     "path": "ansible/ansible-local-2981269k6gfd61m/ansiballz_cache/ansible.modules.stat-ZIP_DEFLATED-none.lock",
+     "strength": "strong",
+     "also_in_null": false
+    }
+   ],
+   "noise": [],
+   "changing_paths": {
+    "plain": [],
+    "served": []
+   },
+   "first_call": {
+    "plain": {
+     "rc": 0,
+     "stdout": "localhost | SUCCESS => {\n    \"changed\": false,\n    \"checksum\": \"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d\",\n    \"dest\": \"copied.txt\",\n    \"gid\": 0,\n    \"group\": \"root\",\n    \"mode\": \"0644\",\n    \"owner\": \"root\",\n    \"path\": \"copied.txt\",\n    \"size\": 5,\n    \"state\": \"file\",\n    \"uid\": 0\n}\n",
+     "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "served": {
+     "rc": 0,
+     "stdout": "localhost | SUCCESS => {\n    \"changed\": false,\n    \"checksum\": \"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d\",\n    \"dest\": \"copied.txt\",\n    \"gid\": 0,\n    \"group\": \"root\",\n    \"mode\": \"0644\",\n    \"owner\": \"root\",\n    \"path\": \"copied.txt\",\n    \"size\": 5,\n    \"state\": \"file\",\n    \"uid\": 0\n}\n",
+     "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    }
+   },
+   "seconds": 64
+  }
+ ]
+}

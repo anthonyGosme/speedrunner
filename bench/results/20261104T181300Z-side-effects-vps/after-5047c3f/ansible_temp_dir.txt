@@ -1,0 +1,12 @@
+plain ping: exit codes 0 0 0
+plain copy: exit codes 0 0 0
+plain template: exit codes 0 0 0
+--- temp directories after the plain calls: 0
+--- daemon warm, its pid: 2982705. Temp directories:
+ansible-local-2982705vm41ms2s
+served ping: exit codes 0 0 0
+served copy: exit codes 0 0 0
+served template: exit codes 0 0 0
+--- temp directories after the served calls:
+ansible-local-2982705vm41ms2s
+--- after stopping the daemon:
