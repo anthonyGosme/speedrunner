@@ -474,11 +474,17 @@ and none runs a command twice.
 - **`PYTHONHASHSEED`**: every call of a Python tool shares the daemon's hash seed,
   where native runs each draw one. The order of a `set` of strings is then the same
   from call to call. `random` and `uuid` stay random.
-- **Values frozen at load.** The daemon checks the environment variables a tool
-  reads as it loads, and whether it asks if its streams are terminals; a call that
-  would see something else runs natively. It cannot see reads through
-  `os.environ.copy()` or C's `getenv`, nor the terminal's size read at load. A
-  clock read at load is the daemon's (rspec's load time is corrected).
+- **Values frozen at load.** The daemon checks what a tool reads as it loads: the
+  environment variables, whether its streams are terminals, the files it opens or
+  looks for, the directories it lists, and the current directory. A call that
+  would see something else runs natively, and a file that changed gets the daemon
+  restarted. It cannot see reads made in C (`getenv`, a native extension opening a
+  file), nor the terminal's size read at load. A clock read at load is the
+  daemon's (rspec's load time is corrected).
+- **A tool that keeps the current directory it loaded in** (prettier, az, bundler)
+  is served only from the directory its daemon started in: anywhere else it runs
+  natively, at native speed, with the right result. ansible is served elsewhere,
+  unless that directory has its own `ansible.cfg`.
 - **Learned modules are shared.** A module one command loaded is preloaded for all
   commands of that tool. Only code that inspects the list of loaded modules can
   tell. For Node, a module that patches Node's globals as it loads (`graceful-fs`,

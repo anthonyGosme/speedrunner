@@ -316,6 +316,47 @@ class Freshness(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
+    LIB = "hsread_lib.js"
+    LAZY = "hsread_lazy.js"
+    TAUGHT_LAZILY = True
+    FS = "const fs = require('node:fs');\n"
+    MAIN = "exports.main = () => console.log(String(VALUE));\n"
+    SOURCES = {
+        "read": FS + "const VALUE = fs.readFileSync(process.env.HS_CFG, 'utf8');\n" + MAIN,
+        "read_if_there": FS + "const CFG = process.env.HS_CFG;\n"
+                              "const VALUE = fs.existsSync(CFG) ? fs.readFileSync(CFG, 'utf8') : 'none';\n" + MAIN,
+        "size": FS + "const VALUE = fs.statSync(process.env.HS_CFG).size;\n" + MAIN,
+        "list": FS + "const VALUE = fs.readdirSync(process.env.HS_DIR).length;\n" + MAIN,
+        "is_dir": FS + "const VALUE = fs.existsSync(process.env.HS_DIR) && fs.statSync(process.env.HS_DIR).isDirectory() ? 'yes' : 'no';\n" + MAIN,
+        "relative_if_there": FS + "const VALUE = fs.existsSync('local.cfg') ? fs.readFileSync('local.cfg', 'utf8') : 'none';\n" + MAIN,
+        "relative": FS + "const VALUE = fs.readFileSync('local.cfg', 'utf8');\n" + MAIN,
+        "relative_exists": FS + "const VALUE = fs.existsSync('local.cfg') ? 'yes' : 'no';\n" + MAIN,
+        "cwd": "const VALUE = process.cwd();\n" + MAIN,
+        "lazy": "exports.main = () => console.log(require('./hsread_lazy.js').VALUE);\n",
+        "lazy_module": FS + "exports.VALUE = fs.readFileSync(process.env.HS_CFG, 'utf8');\n",
+        "read_at_run": FS + "exports.main = () => console.log(fs.readFileSync(process.env.HS_CFG, 'utf8'));\n",
+        "write": FS + "fs.closeSync(fs.openSync(process.env.HS_CFG, 'a'));\nconst VALUE = 'ok';\n" + MAIN,
+    }
+
+    def script(self):
+        return "#!/usr/bin/env node\nrequire('./hsread_lib.js').main();\n"
+
+    def teach(self, env, cwd):
+        # Node preloads what it learned only: the module once a run has loaded it.
+        first = m.status("hsread", env)
+        gen = int(m.status_field(first, "gen") or 0)
+        if gen:
+            return
+        deadline = time.monotonic() + 30
+        while int(m.status_field(m.status("hsread", env), "gen") or 0) <= gen:
+            run("hs", ["hsread"], env=env, cwd=cwd, require_fast=False)
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.2)
+        m.wait_ready("hsread", env, cwd=cwd)
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class Failures(m.Matrix):
     def start_hold(self, env, marker, seconds="1"):
         cmd = [HS_BIN, "run", "nodetest", "--", "hold", seconds, marker]

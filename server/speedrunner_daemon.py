@@ -397,6 +397,12 @@ class State:
         self.import_env_read = set()  # keys module-level code read: frozen in the daemon
         self.tty = None  # TtyStandIn: the starting client's terminals, during imports
         self.import_tty_read = {}  # fd -> whether a terminal, as module-level code found it
+        self.start_cwd = None
+        self.start_cwd_fd = None  # the starting client's cwd: module-level code runs there
+        self.start_cwd_id = None
+        self.import_cwd_read = False  # module-level code asked for the cwd
+        self.import_cwd_files = {}  # relative path it read -> as it was, there
+        self.import_dirs = set()  # paths it only found to be directories
         self.learned = []    # level 2: modules imported because children did
         self.learned_paths = []  # sys.path entries the tool added itself, to import them with
         self.pending_origins = {}  # module -> the file a child imported it from
@@ -800,7 +806,8 @@ def extend_fingerprint(state, paths, watch=False):
 
 def is_stale(state):
     return ((state.watch is not None and state.watch.fired())
-            or compute_fingerprint(state.fingerprint_paths) != state.fingerprint)
+            or compute_fingerprint(state.fingerprint_paths) != state.fingerprint
+            or not all(os.path.isdir(p) for p in state.import_dirs))
 
 
 def compute_fingerprint(paths):
@@ -852,6 +859,155 @@ class EnvReads:
 
     def __exit__(self, *exc):
         os._Environ.__getitem__ = self.original
+
+
+class FileReads:
+    """Records what module-level code reads of the filesystem while active:
+    it keeps what it found, in the daemon, for every client.
+
+    Opens and listings by the audit hook, which sees them however they are
+    called; what the os.path functions ask by wrapping os.stat, which has no
+    audit event. Importing itself goes through neither: the import system
+    keeps its own posix.stat, and its files are the modules', already covered.
+    """
+    active = None
+    NOT_INPUTS = ("/proc/", "/sys/", "/dev/")
+    COMPILED = (".pyc", ".so", ".pyd", ".dylib")
+    TEMP_ROOTS = {"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp",
+                  os.environ.get("TMPDIR", "/tmp").rstrip("/")}
+    # Adapters. multiprocessing and rich keep it, and each child sets it again
+    # (apply_request). tempfile only falls back on it, when no temporary
+    # directory is usable. ansible looks for its config under it: that is
+    # compared in each client's cwd, and without a config nothing it keeps
+    # depends on it.
+    CWD_NOT_KEPT = ("multiprocessing.process", "rich", "pip._vendor.rich", "tempfile",
+                    "ansible.config.manager", "ansible.utils.path")
+
+    def __init__(self, state):
+        self.state = state
+        self.files = set()    # absolute: must stay as they are, for everyone
+        self.listed = set()   # absolute directories whose entries were read
+        self.probed = set()   # absolute paths only stat-ed: a directory's mtime is no read
+        self.relative = set()  # as given: resolved in each client's cwd
+        self.cwd_read = False
+        self.cwd_asked = False  # by anyone: what it then reads under it is relative
+
+    @staticmethod
+    def audit(event, args):
+        reads = FileReads.active
+        if reads is None:
+            return
+        if event == "open":
+            if args[2] is None or not args[2] & (os.O_WRONLY | os.O_TRUNC | os.O_EXCL):
+                reads.note(args[0], reads.files)
+        elif event in ("os.listdir", "os.scandir"):
+            reads.note(args[0] if args[0] is not None else ".", reads.listed)
+
+    def note(self, path, into):
+        try:
+            path = os.fsdecode(path)  # a fd has no path to go back to: TypeError
+        except TypeError:
+            return
+        if path.endswith(self.COMPILED) or "/__pycache__/" in path:
+            return
+        # Its entries change all the time, and no tool's output depends on them.
+        if into is self.listed and path.rstrip("/") in self.TEMP_ROOTS:
+            return
+        if not os.path.isabs(path):
+            self.relative.add(path)
+        elif not path.startswith(self.NOT_INPUTS):
+            into.add(path)
+
+    def stat_wrapper(self, original):
+        # May stay bound in a module that took `from os import stat`.
+        def stat(path, *args, **kwargs):
+            if FileReads.active is self and kwargs.get("dir_fd") is None:
+                self.note(path, self.probed)
+            return original(path, *args, **kwargs)
+        return stat
+
+    def getcwd_wrapper(self, original):
+        def getcwd():
+            if FileReads.active is self:
+                self.cwd_asked = True
+                if sys._getframe(1).f_globals.get("__name__") not in self.CWD_NOT_KEPT:
+                    self.cwd_read = True
+            return original()
+        return getcwd
+
+    def __enter__(self):
+        self.modules_before = len(sys.modules)
+        self.saved = {name: getattr(os, name) for name in ("stat", "lstat", "access", "getcwd", "getcwdb")}
+        for name in ("stat", "lstat", "access"):
+            setattr(os, name, self.stat_wrapper(self.saved[name]))
+        for name in ("getcwd", "getcwdb"):
+            setattr(os, name, self.getcwd_wrapper(self.saved[name]))
+        # Natively module-level code runs in the client's directory.
+        if self.state.start_cwd_fd is not None:
+            os.fchdir(self.state.start_cwd_fd)
+        FileReads.active = self
+        return self
+
+    def __exit__(self, *exc):
+        FileReads.active = None
+        if self.state.start_cwd_fd is not None:
+            os.fchdir(RUNTIME_DIR_FD)
+        ours = {id(getattr(os, name)): original for name, original in self.saved.items()}
+        for name, original in self.saved.items():
+            setattr(os, name, original)
+        # `from os import stat` took the wrapper: no frame of ours in a traceback.
+        for module in list(sys.modules.values())[self.modules_before:]:
+            namespace = getattr(module, "__dict__", None)
+            for key, value in list(namespace.items()) if isinstance(namespace, dict) else ():
+                if id(value) in ours:
+                    namespace[key] = ours[id(value)]
+
+
+def keep_file_reads(state, reads):
+    """Cover what `reads` saw, as it is now. The cache's name does not depend
+    on them: a config file that changed keeps what the daemon has learned."""
+    state.import_cwd_read |= reads.cwd_read
+    if reads.cwd_asked and state.start_cwd not in (None, "/"):
+        prefix = state.start_cwd + "/"
+        for found in (reads.files, reads.probed, reads.listed):
+            under = {p for p in found if p.startswith(prefix)}
+            found -= under
+            reads.relative |= {p[len(prefix):] for p in under}
+    if state.start_cwd_fd is not None:
+        for path in reads.relative:
+            state.import_cwd_files.setdefault(path, cwd_file_key(path, state.start_cwd_fd))
+    dirs = {p for p in reads.files | reads.probed if os.path.isdir(p)}
+    extend_fingerprint(state, sorted(reads.listed))  # by stat: a watch would miss new entries
+    extend_fingerprint(state, sorted((reads.files | reads.probed) - dirs), watch=True)
+    state.import_dirs |= dirs & reads.probed
+    extend_fingerprint(state, sorted(dirs - reads.probed))
+
+
+def cwd_file_key(path, cwd_fd):
+    try:
+        st = os.stat(path, dir_fd=cwd_fd)
+    except OSError:
+        return None
+    if stat.S_ISDIR(st.st_mode):
+        return "dir"
+    return (st.st_mtime_ns, st.st_size, st.st_ino, st.st_dev)
+
+
+def why_cwd_differs(state, cwd_fd):
+    """Whether what module-level code read through the cwd would read otherwise
+    in this client's. A change where the daemon started is a stale daemon;
+    a client elsewhere runs natively and leaves it to the others."""
+    if not (state.import_cwd_read or state.import_cwd_files):
+        return None
+    st = os.fstat(cwd_fd)
+    same = state.start_cwd_id == (st.st_dev, st.st_ino)
+    if state.import_cwd_read and not same:
+        return "import-time cwd differs"
+    for path, key in state.import_cwd_files.items():
+        if cwd_file_key(path, cwd_fd) != key:
+            return (f"stale: {path}, read at import, changed" if same
+                    else f"import-time file differs: {path}")
+    return None
 
 
 class ArgvProbe(list):
@@ -955,8 +1111,9 @@ def preload(state):
                 return
 
     t0 = time.perf_counter()
+    files = None
     try:
-        with EnvReads() as reads, TtyReads() as ttys:
+        with EnvReads() as reads, TtyReads() as ttys, FileReads(state) as files:
             state.import_output = capture_fds_during(do_imports, state.tty)
         state.import_env_read = reads.keys
         state.import_tty_read = ttys.seen
@@ -975,6 +1132,8 @@ def preload(state):
     extend_fingerprint(state, fingerprint_paths(state.script))
     extend_fingerprint(state, module_files(), watch=True)
     state.cache_path = cache_file(state)
+    if files is not None:
+        keep_file_reads(state, files)
 
     if 2 in state.levels and not state.disabled:
         cached = load_cache(state)
@@ -1022,12 +1181,14 @@ def import_in_daemon(state, names):
             imported.append(name)
             before = dict(os.environ)
             try:
-                with EnvReads() as reads, TtyReads() as ttys, ExtraPath(state.learned_paths):
+                with (EnvReads() as reads, TtyReads() as ttys, ExtraPath(state.learned_paths),
+                      FileReads(state) as files):
                     output, argv_read = reads_argv(
                         lambda: capture_fds_during(lambda: importlib.import_module(name), state.tty))
             except Exception as exc:
                 state.blacklist[name] = f"import failed in the daemon: {exc!r}"
                 continue
+            keep_file_reads(state, files)
             why = ("printed in the daemon" if output != (b"", b"")
                    else "read the command line in the daemon" if argv_read
                    else "changed the env in the daemon" if dict(os.environ) != before
@@ -1324,6 +1485,9 @@ def why_not_fast(state, req, peer_gid, fds, peer_groups=None):
         return "script path mismatch"
     if is_stale(state):
         return "stale: installed files changed"
+    why = why_cwd_differs(state, fds[3])
+    if why:
+        return why
     groups = req.groups if peer_groups is None else peer_groups
     if peer_gid != os.getgid() or sorted(set(groups)) != sorted(set(own_groups())):
         return "credentials differ from the daemon's"
@@ -1396,6 +1560,11 @@ def apply_request(state, req, fds):
     os.environ.update(req.env)
     # Same startup env as ours (why_not_fast): CPython would set the same.
     os.environ.update(state.interpreter_env)
+    # Adapters: modules that keep the cwd they loaded in.
+    for name, attr in (("multiprocessing.process", "ORIGINAL_DIR"), ("rich", "_IMPORT_CWD"),
+                       ("pip._vendor.rich", "_IMPORT_CWD")):
+        if hasattr(sys.modules.get(name), attr):
+            setattr(sys.modules[name], attr, os.path.abspath(os.getcwd()))
     # Adapter: pre-commit's xargs bounds a command line by ARG_MAX less the
     # environment's size, measured as it loads (before pre-commit's main
     # drops keys at import), into a default argument: measured for this run.
@@ -1669,6 +1838,9 @@ def run_spare(state, lsock, ctl, inherited):
         os.close(fd)  # other clients must see EOF when their own child exits
     if isinstance(state.watch, KqueueWatch):
         state.watch.drop()
+    if state.start_cwd_fd is not None:
+        os.close(state.start_cwd_fd)
+        state.start_cwd_fd = None
     os.setpgid(0, 0)
     while True:
         readable, _, _ = select.select([lsock, ctl], [], [])
@@ -2073,6 +2245,13 @@ def serve(state):
     if lock_fd is None:
         log("another daemon holds the lock; exiting")
         return 0
+    try:
+        state.start_cwd = os.getcwd()
+        state.start_cwd_fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        st = os.fstat(state.start_cwd_fd)
+        state.start_cwd_id = (st.st_dev, st.st_ino)
+    except OSError:  # no longer there, or not ours to read: imports stay in ours
+        pass
     # Relative to the verified directory from here on.
     os.fchdir(dir_fd)
     global RUNTIME_DIR_FD
@@ -2224,6 +2403,7 @@ def main():
     track_std_streams()  # before anything holds a reference to them
     opts = parse_args(sys.argv[1:])
     atexit.register(report_exit)  # before any import can register its own
+    sys.addaudithook(FileReads.audit)
     lock_fd = int(opts["lock-fd"]) if "lock-fd" in opts else None
     state = State(opts["tool"], opts.get("script"), opts["socket"], lock_fd, opts.get("module"))
     state.origin = opts.get("origin", state.origin)
