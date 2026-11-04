@@ -367,21 +367,41 @@ function keepFileReads() {
   fileReads.cwd = false;
 }
 
+// A tool that depends on the cwd it loaded in: how long its directory must
+// have gone unused before the daemon follows a client elsewhere.
+const FOLLOW_AFTER_MS = Number(realEnv.SPEEDRUNNER_FOLLOW_AFTER ?? 30) * 1000;
+
 // Whether what modules read through the cwd would read otherwise in this
-// client's. A change where the daemon started is a stale daemon; a client
-// elsewhere runs natively and leaves it to the others.
+// client's. A change where the daemon started is a stale daemon. A client
+// elsewhere runs natively; if that directory has gone unused for a while, the
+// daemon restarts, and so follows it. The socket's mtime says when it was last
+// used: a call in a loop across directories moves nothing.
 function whyCwdDiffers(cwdFd) {
   if (!state.cwdRead && !state.cwdFiles.size) return null;
   const st = fs.fstatSync(cwdFd);
   const same = state.startCwdId === `${st.dev}:${st.ino}`;
-  if (state.cwdRead && !same) return "import-time cwd differs";
-  const cwd = sys.fdpath(cwdFd);
-  for (const [file, key] of state.cwdFiles) {
-    if (cwdFileKey(`${cwd}/${file}`) !== key) {
-      return same ? `stale: ${file}, read at load, changed` : `import-time file differs: ${file}`;
+  const socket = path.basename(state.sockPath); // our cwd is its directory
+  let why = null;
+  if (state.cwdRead && !same) {
+    why = "import-time cwd differs";
+  } else {
+    const cwd = sys.fdpath(cwdFd);
+    for (const [file, key] of state.cwdFiles) {
+      if (cwdFileKey(`${cwd}/${file}`) !== key) {
+        if (same) return `stale: ${file}, read at load, changed`;
+        why = `import-time file differs: ${file}`;
+        break;
+      }
     }
   }
-  return null;
+  try {
+    if (why === null) {
+      if (same) fs.utimesSync(socket, new Date(), new Date());
+      return null;
+    }
+    if (Date.now() - fs.statSync(socket).mtimeMs >= FOLLOW_AFTER_MS) return `stale: its directory unused, and ${why}`;
+  } catch {}
+  return why;
 }
 
 // --- loading modules ------------------------------------------------------------

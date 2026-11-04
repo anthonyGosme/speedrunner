@@ -28,6 +28,9 @@ module Speedrunner
   HANDSHAKE_TIMEOUT_S = 5.0
   LOCK_WAIT_S = 10.0
   IDLE_TIMEOUT_S = Float(ENV.fetch("SPEEDRUNNER_IDLE_TIMEOUT", 4 * 3600))
+  # A tool that depends on the cwd it loaded in: how long its directory must
+  # have gone unused before the daemon follows a client elsewhere.
+  FOLLOW_AFTER_S = Float(ENV.fetch("SPEEDRUNNER_FOLLOW_AFTER", 30))
   # Read once at interpreter startup (RubyGems is loaded at boot): a child
   # cannot honour a client whose values differ from the daemon's.
   STARTUP_ENV_PREFIXES = %w[RUBY GEM_].freeze
@@ -442,21 +445,42 @@ module Speedrunner
   end
 
   # Whether what a file read through the cwd as it loaded would read otherwise
-  # in this client's. A change where the daemon started is a stale daemon; a
-  # client elsewhere runs natively and leaves it to the others. Runs in the
-  # child, which exits if it falls back.
+  # in this client's. A change where the daemon started is a stale daemon. A
+  # client elsewhere runs natively; if that directory has gone unused for a
+  # while, the daemon restarts, and so follows it. The socket's mtime says when
+  # it was last used: a call in a loop across directories moves nothing. Runs
+  # in the child, which exits if it falls back.
   def self.why_cwd_differs(state, cwd_io)
     return nil unless state.import_cwd_read || state.import_cwd_files.any?
 
     st = cwd_io.stat
     same = state.start_cwd_id == [st.dev, st.ino]
-    return "import-time cwd differs" if state.import_cwd_read && !same
+    socket = File.basename(state.sock_path)
+    unused = begin
+      Time.now - File.mtime(socket) >= FOLLOW_AFTER_S # before the chdir: our cwd is its directory
+    rescue SystemCallError
+      false
+    end
+    why = "import-time cwd differs" if state.import_cwd_read && !same
+    unless why
+      runtime = Dir.pwd
+      chdir_to(cwd_io)
+      state.import_cwd_files.each do |path, (key)|
+        next if cwd_file_key(File.join(Dir.pwd, path)) == key
+        return "stale: #{path}, read at load, changed" if same
 
-    chdir_to(cwd_io)
-    state.import_cwd_files.each do |path, (key)|
-      next if cwd_file_key(File.join(Dir.pwd, path)) == key
-
-      return same ? "stale: #{path}, read at load, changed" : "import-time file differs: #{path}"
+        why = "import-time file differs: #{path}"
+        break
+      end
+      Dir.chdir(runtime)
+    end
+    if why
+      return unused ? "stale: its directory unused, and #{why}" : why
+    end
+    begin
+      File.utime(nil, nil, socket) if same
+    rescue SystemCallError
+      nil
     end
     nil
   end

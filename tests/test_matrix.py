@@ -1338,6 +1338,64 @@ class ImportTimeReadChecks:
                          outcome(run("hs", ["hsread"], env=env, cwd=other, require_fast=False)))
         self.assertEqual(run("hs", ["hsread"], env=env, cwd=other).returncode, EXIT_NOT_FAST)
 
+    def wait_new_daemon(self, env, cwd, daemon):
+        deadline = time.monotonic() + 30
+        while True:
+            run("hs", ["hsread"], env=env, cwd=cwd, require_fast=False)
+            text = status("hsread", env)
+            if text.startswith("ready") and int(status_field(text, "pid")) != daemon:
+                break
+            self.assertLess(time.monotonic(), deadline, text)
+            time.sleep(0.1)
+        self.teach(env, cwd)
+
+    def test_daemon_follows_a_client_that_stays_elsewhere(self):
+        root, env = self.tool("cwd")
+        env["SPEEDRUNNER_FOLLOW_AFTER"] = "1"
+        here = os.path.realpath(self.directory(root, "here"))
+        other = os.path.realpath(self.directory(root, "other"))
+        daemon = self.start(env, here)
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=here).stdout, f"{here}\n".encode())
+        time.sleep(1.3)
+        # Right from the first call, as natively.
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=other, require_fast=False).stdout,
+                         f"{other}\n".encode())
+        self.wait_new_daemon(env, other, daemon)
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=other).stdout, f"{other}\n".encode())
+
+    def test_daemon_follows_to_a_directory_with_its_own_file(self):
+        root, env = self.tool("relative_if_there")
+        env["SPEEDRUNNER_FOLLOW_AFTER"] = "1"
+        here = self.directory(root, "here", "here")
+        other = self.directory(root, "other", "other")
+        daemon = self.start(env, here)
+        time.sleep(1.3)
+        self.wait_new_daemon(env, other, daemon)
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=other).stdout, b"other\n")
+        # And its first directory, while the second is in use: natively.
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=here).returncode, EXIT_NOT_FAST)
+
+    def test_daemon_stays_while_its_directory_is_in_use(self):
+        # A loop across directories must not restart it at each call.
+        root, env = self.tool("cwd")
+        env["SPEEDRUNNER_FOLLOW_AFTER"] = "1.5"
+        here = os.path.realpath(self.directory(root, "here"))
+        other = os.path.realpath(self.directory(root, "other"))
+        daemon = self.start(env, here)
+        for _ in range(8):
+            self.assertEqual(run("hs", ["hsread"], env=env, cwd=here).stdout, f"{here}\n".encode())
+            self.assertEqual(run("hs", ["hsread"], env=env, cwd=other).returncode, EXIT_NOT_FAST)
+            time.sleep(0.3)
+        self.assertEqual(int(status_field(status("hsread", env), "pid")), daemon)
+
+    def test_daemon_stays_within_the_delay(self):
+        root, env = self.tool("cwd")
+        here = os.path.realpath(self.directory(root, "here"))
+        other = os.path.realpath(self.directory(root, "other"))
+        daemon = self.start(env, here)  # the default delay: 30 s
+        self.assertEqual(run("hs", ["hsread"], env=env, cwd=other).returncode, EXIT_NOT_FAST)
+        self.assertEqual(int(status_field(status("hsread", env), "pid")), daemon)
+
     def test_file_read_by_a_learned_module(self):
         # Loaded on first use: frozen only once a run has taught the daemon it.
         root, env = self.with_config("lazy", "one")

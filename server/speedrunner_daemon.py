@@ -66,6 +66,9 @@ TTY = "/dev/tty"
 HANDSHAKE_TIMEOUT_S = 5.0
 LOCK_WAIT_S = 10.0
 IDLE_TIMEOUT_S = float(os.environ.get("SPEEDRUNNER_IDLE_TIMEOUT", 4 * 3600))
+# A tool that depends on the cwd it loaded in: how long its directory must have
+# gone unused before the daemon follows a client elsewhere.
+FOLLOW_AFTER_S = float(os.environ.get("SPEEDRUNNER_FOLLOW_AFTER", 30))
 # Env vars read once at interpreter startup: a child cannot honour a client
 # whose values differ from the daemon's, so such requests run natively.
 STARTUP_ENV_PREFIX = "PYTHON"
@@ -995,19 +998,35 @@ def cwd_file_key(path, cwd_fd):
 
 def why_cwd_differs(state, cwd_fd):
     """Whether what module-level code read through the cwd would read otherwise
-    in this client's. A change where the daemon started is a stale daemon;
-    a client elsewhere runs natively and leaves it to the others."""
+    in this client's. A change where the daemon started is a stale daemon. A
+    client elsewhere runs natively; if that directory has gone unused for a
+    while, the daemon restarts, and so follows it. The socket's mtime says when
+    it was last used: a call in a loop across directories moves nothing."""
     if not (state.import_cwd_read or state.import_cwd_files):
         return None
     st = os.fstat(cwd_fd)
     same = state.start_cwd_id == (st.st_dev, st.st_ino)
+    name = os.path.basename(state.sock_path)  # our cwd is its directory
+    why = None
     if state.import_cwd_read and not same:
-        return "import-time cwd differs"
-    for path, key in state.import_cwd_files.items():
-        if cwd_file_key(path, cwd_fd) != key:
-            return (f"stale: {path}, read at import, changed" if same
-                    else f"import-time file differs: {path}")
-    return None
+        why = "import-time cwd differs"
+    else:
+        for path, key in state.import_cwd_files.items():
+            if cwd_file_key(path, cwd_fd) != key:
+                if same:
+                    return f"stale: {path}, read at import, changed"
+                why = f"import-time file differs: {path}"
+                break
+    try:
+        if why is None:
+            if same:
+                os.utime(name)
+            return None
+        if time.time() - os.stat(name).st_mtime >= FOLLOW_AFTER_S:
+            return f"stale: its directory unused, and {why}"
+    except OSError:
+        pass
+    return why
 
 
 class ArgvProbe(list):

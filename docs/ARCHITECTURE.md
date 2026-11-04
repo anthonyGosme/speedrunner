@@ -276,6 +276,7 @@ After `G` (`apply_request`, then `run_tool`):
 | `SPEEDRUNNER_DAEMON` | client | path to a daemon script (of any runtime): each runtime's daemon is taken from that directory (otherwise: next to the binary, then `../share/speedrunner/`, then `../../../server/` for development; failing that, the copy embedded in the binary, extracted to `$XDG_DATA_HOME/speedrunner/daemons/<fingerprint>/`) |
 | `SPEEDRUNNER_PRELOAD` | daemon | levels, `1,2,3` by default |
 | `SPEEDRUNNER_MEMO_MB` | daemon | level 3 budget, 16 by default |
+| `SPEEDRUNNER_FOLLOW_AFTER` | daemon | seconds its directory must go unused before it follows a client elsewhere, for a tool that keeps its cwd, 30 by default |
 | `SPEEDRUNNER_IDLE_TIMEOUT` | daemon | seconds idle before stopping, 4 h by default |
 | `XDG_RUNTIME_DIR`, `XDG_CACHE_HOME`, `XDG_CONFIG_HOME` | all | socket (fallback: `/tmp/speedrunner-$UID`), learned cache, list of enrolled tools |
 
@@ -305,7 +306,7 @@ cd /root/speedrunner/repo && RB_GEM_HOME=/root/speedrunner/gems-rbtest HS_BIN=$P
   - `OutputsAndExitCodes`, `Terminal`, `Signals`, `Context`, `Randomness`, `Teardown`, `NoLocale`: fidelity;
   - `FailOpen`: native fallback;
   - `Preload`: each level, learning, blacklist, modified botocore file, a tool called by its path, a project's modules not learned;
-  - `ImportTimeReads` (Python, Ruby, Node; PHP's own, shorter): config file changed, replaced, created, deleted, size read, listing, a directory only looked for, relative file elsewhere and in place, absent everywhere, cwd read, file read by a learned module, file read at run or only written (daemon kept); Python also `os.environ.copy()`, a bound `os.stat`, a thread holding a lock at import, the multiprocessing, rich and tempfile adapters, a real `pip install` from one version to the next;
+  - `ImportTimeReads` (Python, Ruby, Node; PHP's own, shorter): the daemon following a client or staying while its directory is in use, config file changed, replaced, created, deleted, size read, listing, a directory only looked for, relative file elsewhere and in place, absent everywhere, cwd read, file read by a learned module, file read at run or only written (daemon kept); Python also `os.environ.copy()`, a bound `os.stat`, a thread holding a lock at import, the multiprocessing, rich and tempfile adapters, a real `pip install` from one version to the next;
   - `Concurrency`: 10 calls in parallel, warm and cold;
   - `ScriptPrefix`: `srr`;
   - `RelativeScript`: `./manage.py`;
@@ -440,7 +441,7 @@ They are not implementation bugs, but what forking from a daemon changes by natu
 - no controlling terminal in the child: a subprocess that opens `/dev/tty` fails;
 - what interpreter teardown writes after the X is lost;
 - reads made in C at load (`getenv`, a native extension opening a file) are not seen, nor rubygems' own or what the interpreter reads before the daemon runs;
-- a tool that keeps the cwd at load (prettier, az, bundler) is served only in the directory its daemon started in, natively elsewhere, since the daemon does not follow it; adapters cover multiprocessing, rich, tempfile, rspec and ansible (natively only where an `ansible.cfg` differs); a file it reads at load and changes at each run costs it the daemon each time; listing a temporary directory at load is not tracked;
+- a tool that keeps the cwd at load (prettier, az, bundler) is served only in the directory its daemon started in, natively elsewhere; the daemon follows a client once that directory has gone unused for `SPEEDRUNNER_FOLLOW_AFTER` seconds (30); adapters cover multiprocessing, rich, tempfile, rspec and ansible (natively only where an `ansible.cfg` differs); a file it reads at load and changes at each run costs it the daemon each time; listing a temporary directory at load is not tracked;
 - a tool that reads the terminal state at import runs natively when called in another state than that of the client that started its daemon (for example `tool | less` after a call on the terminal); the terminal size read at import is not tracked;
 - a clock read at load time is the daemon's; for rspec alone, an adapter resets it to the start of the run;
 - in Ruby, comparing namespaces does not see a dependency on a refused file through `defined?` or through a constant's value; a missing constant makes loading fail in the probe, so the file is refused;
