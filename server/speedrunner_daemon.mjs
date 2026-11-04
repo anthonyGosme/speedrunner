@@ -38,7 +38,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import tty from "node:tty";
-import { createRequire } from "node:module";
+import { createRequire, syncBuiltinESMExports } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -258,6 +258,58 @@ function trackedIsatty(fd) {
   });
 });
 
+// What modules read of the filesystem as they load: they keep what they
+// found, in the daemon, for every client. Node's module loader reads through
+// its own bindings or by file names we skip. A module may keep a wrapper
+// (`const { readFileSync } = require("fs")`): idle then, and an error it
+// passes on is rid of our frame.
+const NOT_INPUTS = /^\/(proc|sys|dev)\//;
+// Their entries change all the time, and no tool's output depends on them.
+const TEMP_ROOTS = new Set(["/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp", (realEnv.TMPDIR ?? "/tmp").replace(/\/$/, "")]);
+const MODULE_FILE = /\.(c?js|mjs|node|wasm)$/;
+const fileReads = { files: new Set(), listed: new Set(), probed: new Set(), relative: new Set(), cwd: false };
+const WRAPPED = { readFileSync: "files", openSync: "files", readdirSync: "listed", opendirSync: "listed",
+                  existsSync: "probed", statSync: "probed", lstatSync: "probed", accessSync: "probed" };
+const realFs = Object.fromEntries(Object.keys(WRAPPED).map((name) => [name, fs[name]]));
+const realCwd = process.cwd;
+const SELF = fileURLToPath(import.meta.url);
+
+function noteRead(file, into) {
+  if (file instanceof URL) file = fileURLToPath(file);
+  else if (Buffer.isBuffer(file)) file = file.toString();
+  if (typeof file !== "string" || MODULE_FILE.test(file)) return;
+  if (into === "listed" && TEMP_ROOTS.has(file.replace(/\/$/, ""))) return;
+  if (!file.startsWith("/")) fileReads.relative.add(file);
+  else if (!NOT_INPUTS.test(file)) fileReads[into].add(file);
+}
+
+function writes(flags) {
+  if (typeof flags === "object" && flags !== null) flags = flags.flag;
+  if (typeof flags === "number") return (flags & (fs.constants.O_WRONLY | fs.constants.O_TRUNC | fs.constants.O_EXCL)) !== 0;
+  return typeof flags === "string" && /^[wa]/.test(flags);
+}
+
+const fsWrappers = Object.fromEntries(Object.entries(WRAPPED).map(([name, into]) => {
+  const real = realFs[name];
+  const wrapper = {
+    [name](file, ...rest) {
+      if (tracking && !((name === "openSync" || name === "readFileSync") && writes(rest[0]))) noteRead(file, into);
+      try {
+        return real.call(this, file, ...rest);
+      } catch (e) {
+        if (typeof e?.stack === "string") e.stack = e.stack.split("\n").filter((l) => !l.includes(SELF)).join("\n");
+        throw e;
+      }
+    },
+  }[name];
+  return [name, wrapper];
+}));
+
+function trackedCwd() {
+  if (tracking) fileReads.cwd = true;
+  return realCwd.call(process);
+}
+
 function startTracking() {
   tracking = true;
   process.env = envProxy;
@@ -265,6 +317,15 @@ function startTracking() {
   realArgv.splice(0, realArgv.length, process.execPath, state.script);
   process.argv = argvProxy;
   tty.isatty = trackedIsatty;
+  Object.assign(fs, fsWrappers);
+  process.cwd = trackedCwd;
+  syncBuiltinESMExports();
+  // Natively modules load in the client's directory.
+  try {
+    if (state.startCwd) process.chdir(state.startCwd);
+  } catch {
+    state.startCwd = null;
+  }
 }
 
 function stopTracking() {
@@ -272,6 +333,75 @@ function stopTracking() {
   process.env = realEnv;
   process.argv = realArgv;
   tty.isatty = realIsatty;
+  Object.assign(fs, realFs);
+  process.cwd = realCwd;
+  syncBuiltinESMExports();
+  if (state.startCwd) process.chdir(state.runtimeDir);
+}
+
+function cwdFileKey(file) {
+  try {
+    const st = fs.statSync(file);
+    return st.isDirectory() ? "dir" : JSON.stringify([st.mtimeMs, st.size, st.ino, st.dev]);
+  } catch {
+    return null;
+  }
+}
+
+// Covers what fileReads saw, as it is now.
+function keepFileReads() {
+  if (state.startCwd) {
+    for (const file of fileReads.relative) {
+      if (!state.cwdFiles.has(file)) state.cwdFiles.set(file, cwdFileKey(`${state.startCwd}/${file}`));
+    }
+  }
+  state.cwdRead ||= fileReads.cwd;
+  const isDir = (p) => cwdFileKey(p) === "dir";
+  for (const dir of fileReads.listed) addStatFile(dir);
+  for (const p of [...fileReads.files, ...fileReads.probed]) {
+    if (!isDir(p)) addWatchedFile(p);
+    else if (fileReads.probed.has(p)) state.importDirs.add(p);
+    else addStatFile(p);
+  }
+  for (const set of [fileReads.files, fileReads.listed, fileReads.probed, fileReads.relative]) set.clear();
+  fileReads.cwd = false;
+}
+
+// A tool that depends on the cwd it loaded in: how long its directory must
+// have gone unused before the daemon follows a client elsewhere.
+const FOLLOW_AFTER_MS = Number(realEnv.SPEEDRUNNER_FOLLOW_AFTER ?? 30) * 1000;
+
+// Whether what modules read through the cwd would read otherwise in this
+// client's. A change where the daemon started is a stale daemon. A client
+// elsewhere runs natively; if that directory has gone unused for a while, the
+// daemon restarts, and so follows it. The socket's mtime says when it was last
+// used: a call in a loop across directories moves nothing.
+function whyCwdDiffers(cwdFd) {
+  if (!state.cwdRead && !state.cwdFiles.size) return null;
+  const st = fs.fstatSync(cwdFd);
+  const same = state.startCwdId === `${st.dev}:${st.ino}`;
+  const socket = path.basename(state.sockPath); // our cwd is its directory
+  let why = null;
+  if (state.cwdRead && !same) {
+    why = "import-time cwd differs";
+  } else {
+    const cwd = sys.fdpath(cwdFd);
+    for (const [file, key] of state.cwdFiles) {
+      if (cwdFileKey(`${cwd}/${file}`) !== key) {
+        if (same) return `stale: ${file}, read at load, changed`;
+        why = `import-time file differs: ${file}`;
+        break;
+      }
+    }
+  }
+  try {
+    if (why === null) {
+      if (same) fs.utimesSync(socket, new Date(), new Date());
+      return null;
+    }
+    if (Date.now() - fs.statSync(socket).mtimeMs >= FOLLOW_AFTER_MS) return `stale: its directory unused, and ${why}`;
+  } catch {}
+  return why;
 }
 
 // --- loading modules ------------------------------------------------------------
@@ -354,21 +484,33 @@ function fingerprint(paths) {
 // Every file loaded is watched: a pending inotify event means stale, for
 // every process; nobody reads the queue. Files that cannot be watched are
 // compared by stat.
+function addWatchedFile(f) {
+  if (state.watched.has(f)) return;
+  state.watched.add(f);
+  if (state.inotify < 0 || sys.inotifyWatch(state.inotify, f) < 0) state.unwatched.push([f, fingerprint([f])]);
+}
+
+// A directory: a watch would miss new entries.
+function addStatFile(f) {
+  if (state.watched.has(f)) return;
+  state.watched.add(f);
+  state.unwatched.push([f, fingerprint([f])]);
+}
+
 function watchLoaded() {
   const files = new Set([state.scriptReal, process.execPath]);
   for (const k of Object.keys(require.cache)) if (k.startsWith("/")) files.add(k);
   for (const [url] of state.preloaded) if (url.startsWith("file:")) files.add(fileURLToPath(url));
-  for (const f of files) {
-    if (state.watched.has(f)) continue;
-    if (state.inotify >= 0 && sys.inotifyWatch(state.inotify, f) >= 0) state.watched.add(f);
-    else state.unwatched.push([f, fingerprint([f])]);
-  }
+  for (const f of files) addWatchedFile(f);
+  keepFileReads();
 }
 
 function stale() {
   if (state.inotify >= 0 && sys.poll([state.inotify], 0)[0] !== 0) return true;
   if (fingerprint(state.fpPaths) !== state.fp) return true;
-  return state.unwatched.some(([f, fp]) => fingerprint([f]) !== fp);
+  if (state.unwatched.some(([f, fp]) => fingerprint([f]) !== fp)) return true;
+  for (const dir of state.importDirs) if (cwdFileKey(dir) !== "dir") return true;
+  return false;
 }
 
 function statusText() {
@@ -448,6 +590,8 @@ function whyNotFast(req, peerGid, fds, peerGroups = null) {
   } catch {}
   if (!typed || real !== state.scriptReal) return "script path mismatch";
   if (stale()) return "stale: installed files changed";
+  const why = whyCwdDiffers(fds[3]);
+  if (why) return why;
   const mine = [...new Set(groupsOfOurs())].sort();
   const theirs = [...new Set(peerGroups ?? req.groups)].sort();
   if (peerGid !== process.getgid() || JSON.stringify(mine) !== JSON.stringify(theirs)) {
@@ -520,8 +664,16 @@ let ctl = -1;
 // no teardown. After an uncaught exception, Node prints it only once "exit"
 // was emitted: the addon passes that report on, as a native run would
 // print it, then sends X and exits.
+// R: the tool runs, its client may only leave by dying. E: it may leave.
+function tellParent(kind) {
+  try {
+    if (ctl >= 0) sendMsg(ctl, kind);
+  } catch {} // the daemon is gone: the child goes on alone
+}
+
 function exiting(code) {
   if (serving.dying) {
+    tellParent("E");
     sys.reportThenExit(conn, code, `Node.js ${process.version}`, state.mainFrame ?? "");
     return;
   }
@@ -535,10 +687,12 @@ function exiting(code) {
       } catch {}
     }
   }
+  tellParent("E");
   sys.exitOnCleanup(conn, code);
 }
 
 function finish(code) {
+  tellParent("E");
   try {
     sendMsg(conn, "X", i32(code));
   } catch {}
@@ -589,6 +743,7 @@ function serveChild(c) {
     script = path.resolve(MACOS ? sys.fdpath(fds[3]) : fs.readlinkSync(`/proc/self/fd/${fds[3]}`), req.argv[0]);
     sendMsg(conn, "R", i32(process.pid));
     if (readExact(conn, 1, deadline).toString() !== "G") sys.exit(0);
+    tellParent("R");
   } catch (e) {
     log(`child setup failed: ${e.message}`);
     sys.exit(0); // nothing has run yet: let the client fall back
@@ -634,6 +789,14 @@ function openRuntimeDir(dir) {
   if (!st.isDirectory() || st.uid !== process.getuid() || (st.mode & 0o7777) !== 0o700) {
     throw new Error(`${dir} must be a directory owned by uid ${process.getuid()} with mode 0700`);
   }
+  try {
+    state.startCwd = process.cwd();
+    const start = fs.statSync(state.startCwd);
+    state.startCwdId = `${start.dev}:${start.ino}`;
+  } catch { // no longer there: modules load in the runtime directory
+    state.startCwd = null;
+  }
+  state.runtimeDir = dir;
   process.chdir(dir);
   const here = fs.statSync(".");
   if (here.ino !== st.ino || here.dev !== st.dev) throw new Error(`${dir} changed under us`);
@@ -917,8 +1080,9 @@ async function serve(opts) {
       }
     }
     const ctls = [...children.values()].map((ch) => ch.ctl).filter((fd) => fd !== null);
+    const clients = [...children.values()].filter((ch) => ch.running && ch.conn !== null).map((ch) => ch.conn);
     // Once stale, the inotify fd stays readable: not watched while leaving.
-    const watch = [sigfd, leaving ? -1 : state.inotify, ...ctls];
+    const watch = [sigfd, leaving ? -1 : state.inotify, ...ctls, ...clients];
     const timeout = leaving ? 50 : pending.length ? 50 : Math.max(1000, lastActivity + idle - performance.now());
     const r = sys.poll(watch, Math.ceil(timeout));
     if (Array.isArray(r)) {
@@ -939,11 +1103,36 @@ async function serve(opts) {
           }
         } else if (kind === "L") {
           takeLearned(payload, pending);
+        } else if (kind === "R" || kind === "E") {
+          ch.running = kind === "R";
         }
         for (const fd of fds) sys.close(fd);
         if (kind === null) {
           sys.close(ch.ctl);
           ch.ctl = null;
+        }
+      }
+      // The client sends nothing after its go: readable means end of file.
+      // Killed (kill -9): the tool dies with it, as natively. An E already
+      // sent means the client left normally.
+      for (const [pid, ch] of children) {
+        const i = ch.running && ch.conn !== null ? watch.indexOf(ch.conn) : -1;
+        if (i < 0 || r[i] === 0) continue;
+        while (ch.ctl !== null && waitReadable(ch.ctl, performance.now())) {
+          const [k, payload, fds] = readCtl(ch.ctl);
+          if (k === "R" || k === "E") ch.running = k === "R";
+          if (k === "L") takeLearned(payload, pending);
+          for (const fd of fds) sys.close(fd);
+          if (k === null) {
+            sys.close(ch.ctl);
+            ch.ctl = null;
+          }
+        }
+        if (ch.running) {
+          ch.running = false;
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
         }
       }
       if (r[0] !== 0) {
@@ -1069,6 +1258,7 @@ async function main() {
     tool: opts.tool, script: opts.script, scriptReal: fs.realpathSync(opts.script), sockPath: opts.socket,
     disabled: null, startEnv: { ...realEnv }, preloaded: [], blacklist: new Set(), gen: 0, learning: 0,
     preloadMs: 0, watched: new Set(), unwatched: [], inotify: -1, importEnv: {},
+    cwdFiles: new Map(), importDirs: new Set(), cwdRead: false, startCwd: null, startCwdId: null,
   });
   state.scriptUrl = pathToFileURL(state.scriptReal).href;
   state.fpPaths = [state.script, state.scriptReal, process.execPath];

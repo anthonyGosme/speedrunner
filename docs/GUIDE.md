@@ -233,9 +233,9 @@ ready pid=53935 preload_ms=369 modules=345 levels=1,2,3 learned=1 blacklisted=0 
 `preload_ms` is how long the daemon took to load the tool; `modules`, how many
 modules it holds; `levels`, the [preload levels](#environment-variables) in use;
 `learned`, the modules it added after watching calls; `blacklisted`, those it
-refused (they print, start a thread, change the environment, leave an object
-with a finalizer, or fail as they load); `memo`, data files kept parsed
-(botocore); `gen`, how many times the
+refused (they print, start a thread, take a file lock, change the environment,
+leave an object with a finalizer, or fail as they load); `memo`, data files kept
+parsed (botocore); `gen`, how many times the
 preload grew; `tty_read`, which of fds 0 to 2 the tool asked "is this a terminal?"
 as it loaded. `learning=N`, when present, means modules are still being vetted.
 
@@ -316,6 +316,7 @@ To change them, stop the daemon and start it again with the new value:
 
 | Variable | Default | Effect |
 |---|---|---|
+| `SPEEDRUNNER_FOLLOW_AFTER` | `30` | Seconds the daemon's directory must go unused before it follows a client elsewhere, for a tool that keeps the current directory it loaded in. |
 | `SPEEDRUNNER_IDLE_TIMEOUT` | `14400` (4 h) | Seconds without a call before the daemon exits. All runtimes. |
 | `SPEEDRUNNER_PRELOAD` | `1,2,3` | Preload levels. 1: the modules the tool's script imports. 2: the modules earlier calls loaded later on, learned. 3: botocore's data files, kept parsed. Python reads all three, Ruby 1 and 2. PHP and Node have no levels. |
 | `SPEEDRUNNER_MEMO_MB` | `16` | Python, level 3: megabytes of source JSON kept parsed. |
@@ -475,11 +476,20 @@ and none runs a command twice.
 - **`PYTHONHASHSEED`**: every call of a Python tool shares the daemon's hash seed,
   where native runs each draw one. The order of a `set` of strings is then the same
   from call to call. `random` and `uuid` stay random.
-- **Values frozen at load.** The daemon checks the environment variables a tool
-  reads as it loads, and whether it asks if its streams are terminals; a call that
-  would see something else runs natively. It cannot see reads through
-  `os.environ.copy()` or C's `getenv`, nor the terminal's size read at load. A
-  clock read at load is the daemon's (rspec's load time is corrected).
+- **Values frozen at load.** The daemon checks what a tool reads as it loads: the
+  environment variables, whether its streams are terminals, the files it opens or
+  looks for, the directories it lists, and the current directory. A call that
+  would see something else runs natively, and a file that changed gets the daemon
+  restarted. It cannot see reads made in C (`getenv`, a native extension opening a
+  file), nor the terminal's size read at load. A clock read at load is the
+  daemon's (rspec's load time is corrected).
+- **A tool that keeps the current directory it loaded in** (prettier, az, bundler)
+  is served only from the directory its daemon started in: anywhere else it runs
+  natively, with the right result. Once that directory has gone unused for 30 s
+  (`SPEEDRUNNER_FOLLOW_AFTER`), the next call elsewhere still runs natively and
+  restarts the daemon there. A script going back and forth between directories
+  stays on the first. ansible is served elsewhere, unless that directory has its
+  own `ansible.cfg`.
 - **Learned modules are shared.** A module one command loaded is preloaded for all
   commands of that tool. Only code that inspects the list of loaded modules can
   tell. For Node, a module that patches Node's globals as it loads (`graceful-fs`,
@@ -493,9 +503,10 @@ and none runs a command twice.
   waited for: a weakref callback, and what a C extension does as it frees its
   objects. Not run at all: a generator suspended since the tool loaded, and any
   `__del__` after an uncaught Ctrl-C.
-- **Client killed with `kill -9`**: the tool runs to the end, where natively it
-  would die with the client. Closing the terminal sends SIGHUP, which is relayed:
-  same as natively.
+- **What a tool does as it loads happens once, in the daemon.** Writing to a file
+  there, or keeping the process id or the time, is not done again for each call,
+  and nothing detects it. A file lock is the exception, in Python and Ruby: a module
+  that takes one as it loads is left to each call, and so holds as in a native run.
 - **The daemon's own state**: if a daemon is started from a terminal and the tool
   checks for a terminal as it loads, later piped calls run natively, and the
   reverse.
