@@ -381,7 +381,7 @@ class Preload(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
-class ImportTimeReads(m.ImportTimeReadChecks, m.LockAtLoadChecks, m.Matrix):
+class ImportTimeReads(m.ImportTimeReadChecks, m.LockAtLoadChecks, m.LoadDirChecks, m.Matrix):
     LIB = "hsread_lib.rb"
     LAZY = "hsread_lazy.rb"
     LOCK_BODY = ("LOCK_FILE = File.open(ENV['HS_CFG'], 'w')\n"
@@ -390,7 +390,36 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.LockAtLoadChecks, m.Matrix):
                  "  exit 3\n"
                  "end\n")
     LOCK_MAIN = "def main\n  sleep(ENV.fetch('HS_HOLD', '0').to_f)\n  puts 'held'\nend\n"
+    DIR_HEAD = "require 'fileutils'\nrequire 'tmpdir'\n"
+    DIR_TEMP = "DIR = Dir.mktmpdir('hs-', ENV['HS_DIR'])\n"
+    DIR_OWN = "DIR = File.join(ENV['HS_DIR'], \"own-#{Process.pid}\")\nFileUtils.mkdir_p(DIR)\n"
+    DIR_RM = "at_exit { FileUtils.remove_entry(DIR, true) }\n"
+    DIR_HOLD = "  sleep(ENV.fetch('HS_HOLD', '0').to_f)\n"
+    DIR_MAIN = ("def main\n" + DIR_HOLD +
+                "  if ENV['HS_CLEAR']\n    FileUtils.rm_rf(DIR)\n    puts 'cleared'\n    return\n  end\n"
+                "  path = File.join(DIR, \"f#{Process.pid}\")\n"
+                "  File.write(path, '')\n  File.unlink(path)\n  puts 'ok'\nend\n")
+    LAZY_DIR = DIR_HEAD + DIR_TEMP + DIR_RM + "HSREAD_LAZY = 'ok'\n"
     SOURCES = {
+        "dir_temp": DIR_HEAD + DIR_TEMP + DIR_RM + DIR_MAIN,
+        "dir_own": DIR_HEAD + DIR_OWN + "at_exit { FileUtils.rm_rf(DIR) }\n" + DIR_MAIN,
+        "dir_data": DIR_HEAD + DIR_TEMP + "File.write(File.join(DIR, 'data'), '')\n" + DIR_RM +
+                    "def main\n" + DIR_HOLD + "  puts(File.exist?(File.join(DIR, 'data')) ? 'ok' : 'GONE')\nend\n",
+        "dir_gone": DIR_HEAD + "Dir.mktmpdir('hs-', ENV['HS_DIR']) { }\ndef main = puts('ok')\n",
+        "dir_at_run": DIR_HEAD + "def main\n  dir = Dir.mktmpdir('hs-', ENV['HS_DIR'])\n"
+                      "  at_exit { FileUtils.rm_rf(dir) }\n  puts 'ok'\nend\n",
+        "temp_rm_rf": DIR_HEAD + DIR_TEMP + "at_exit { FileUtils.rm_rf(DIR) }\n" + DIR_MAIN,
+        "temp_rm_r": DIR_HEAD + DIR_TEMP + "at_exit { FileUtils.rm_r(DIR) }\n" + DIR_MAIN,
+        "temp_secure": DIR_HEAD + DIR_TEMP + "at_exit { FileUtils.remove_entry_secure(DIR) }\n" + DIR_MAIN,
+        "temp_pathname": DIR_HEAD + "require 'pathname'\n" + DIR_TEMP + "at_exit { Pathname(DIR).rmtree }\n" + DIR_MAIN,
+        "temp_by_hand": DIR_HEAD + DIR_TEMP +
+                        "at_exit do\n  Dir.children(DIR).each { |e| File.delete(File.join(DIR, e)) }\n"
+                        "  Dir.rmdir(DIR)\nend\n" + DIR_MAIN,
+        "temp_late_require": "require 'tmpdir'\nDIR = Dir.mktmpdir('hs-', ENV['HS_DIR'])\n"
+                             "at_exit do\n  require 'fileutils'\n  FileUtils.rm_rf(DIR)\nend\n"
+                             "require 'fileutils'\n" + DIR_MAIN,
+        "own_mkdir": DIR_HEAD + "DIR = File.join(ENV['HS_DIR'], \"own-#{Process.pid}\")\nDir.mkdir(DIR)\n"
+                     "at_exit { FileUtils.rm_rf(DIR) }\n" + DIR_MAIN,
         "flock": LOCK_BODY + LOCK_MAIN,
         "flock_hidden": "LOCK_FILE = File.open(ENV['HS_CFG'], 'w')\n"
                         "begin\n  got = LOCK_FILE.flock(File::LOCK_EX | File::LOCK_NB)\n"
@@ -425,6 +454,27 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.LockAtLoadChecks, m.Matrix):
         return (f"#!{shutil.which('ruby')}\n"
                 "require_relative 'hsread_lib'\n"
                 "main\n")
+
+    def test_load_dir_removed_by_rm_rf(self):
+        self.check_load_dir("temp_rm_rf")
+
+    def test_load_dir_removed_by_rm_r(self):
+        self.check_load_dir("temp_rm_r")
+
+    def test_load_dir_removed_by_remove_entry_secure(self):
+        self.check_load_dir("temp_secure")
+
+    def test_load_dir_removed_by_a_pathname(self):
+        self.check_load_dir("temp_pathname")
+
+    def test_load_dir_removed_by_hand(self):
+        self.check_load_dir("temp_by_hand")
+
+    def test_load_dir_removed_by_a_library_required_at_exit(self):
+        self.check_load_dir("temp_late_require")
+
+    def test_own_load_dir_made_by_mkdir(self):
+        self.check_load_dir("own_mkdir")
 
     def test_flock_at_load_stays_per_run(self):
         self.check_lock_stays_per_run("flock")

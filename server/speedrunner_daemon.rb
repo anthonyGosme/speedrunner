@@ -207,7 +207,7 @@ module Speedrunner
     attr_accessor :tool, :script, :sock_path, :lock_fd, :origin, :disabled, :start_env,
                   :pre_import_env, :import_env_changed, :import_env_deleted, :import_env_read,
                   :start_cwd, :start_cwd_id, :runtime_dir, :pending_reads, :import_cwd_read,
-                  :import_cwd_files, :import_dirs,
+                  :import_cwd_files, :import_dirs, :load_dirs,
                   :import_output, :fingerprint_paths, :fingerprint, :fingerprint_set, :watch,
                   :preload_s, :bound_ino, :levels, :gem_binstub, :learned, :learned_gems,
                   :blacklist, :pending, :pending_gems, :gen, :cache_path, :restart, :tty,
@@ -224,6 +224,7 @@ module Speedrunner
       @import_cwd_read = false
       @import_cwd_files = {} # relative path read as it loaded -> [as it was, there]
       @import_dirs = [] # paths it only found to be directories
+      @load_dirs = {} # path -> [made by Dir.mktmpdir?, mode]: see keep_load_dirs
       @import_output = ["".b, "".b]
       @fingerprint_paths = []
       @fingerprint = []
@@ -311,7 +312,7 @@ module Speedrunner
     PROBES = { File => %i[exist? file? directory? size size? zero? empty? stat lstat mtime ctime atime
                           readable? symlink? readlink realpath],
                Dir => %i[exist?] }.freeze
-    attr_reader :files, :listed, :probed, :relative, :cwd_read
+    attr_reader :files, :listed, :probed, :relative, :cwd_read, :made
 
     def initialize(start_cwd, runtime_dir)
       @start_cwd = start_cwd
@@ -321,6 +322,7 @@ module Speedrunner
       @probed = {}
       @relative = {}
       @cwd_read = false
+      @made = {} # path -> [made by Dir.mktmpdir?, mode]: see keep_load_dirs
       @restore = []
     end
 
@@ -357,15 +359,17 @@ module Speedrunner
       end
     end
 
-    def wrap(owner, name, on: nil, &note)
+    def wrap(owner, name, on: nil, after: nil, &note)
       singleton = on || (owner.equal?(Kernel) ? Kernel : owner.singleton_class)
       own = singleton.instance_methods(false).include?(name) || singleton.private_instance_methods(false).include?(name)
       original = singleton.instance_method(name)
       visibility = singleton.private_method_defined?(name) ? :private : :public
       singleton.send(:define_method, name) do |*args, **kwargs, &blk|
-        note.call(args, kwargs)
+        note&.call(args, kwargs)
         bound = original.bind(self)
-        kwargs.empty? ? bound.call(*args, &blk) : bound.call(*args, **kwargs, &blk)
+        result = kwargs.empty? ? bound.call(*args, &blk) : bound.call(*args, **kwargs, &blk)
+        after&.call(args)
+        result
       end
       singleton.send(visibility, name)
       @restore << lambda do
@@ -388,8 +392,33 @@ module Speedrunner
       end
     end
 
+    # After the call: one that was already there raises, and is not made here.
+    # Dir.mkdir is what Dir.mktmpdir and FileUtils.mkdir_p come down to, and it
+    # is there before either is required. Relative: where each run would make it.
+    def note_mkdirs
+      wrap(Dir, :mkdir, after: lambda do |args|
+        path = args[0].respond_to?(:to_path) ? args[0].to_path : args[0]
+        from = reader
+        next if !path.is_a?(String) || !path.start_with?("/") || from.match?(RUBYGEMS)
+
+        temp = from.end_with?("/tmpdir.rb")
+        @made[File.absolute_path(path)] = [temp, temp ? 0o700 : (args[1] || 0o777)]
+      end)
+    end
+
+    # In a probe, which leaves without running at_exit handlers. A name of the
+    # tool's own may be in use by now: only if nothing was put in it.
+    def remove_made
+      @made.to_a.reverse_each do |path, (temp, _)|
+        temp ? Speedrunner.remove_tree(path) : Dir.rmdir(path)
+      rescue SystemCallError
+        nil
+      end
+    end
+
     def start
       refuse_locks
+      note_mkdirs
       READERS.each do |owner, names|
         names.each do |name|
           wrap(owner, name) { |args, kwargs| note(args[0], @files) unless writes?(args, kwargs) }
@@ -442,6 +471,14 @@ module Speedrunner
     return unless reads
 
     state.pending_reads = nil
+    reads.made.each { |path, how| state.load_dirs[path] = how if File.directory?(path) }
+    # Runs write in a temporary directory: nothing to compare. One of the tool's
+    # own may hold its config, and only its being there is the tool's doing.
+    temp = state.load_dirs.select { |_, (made_temp, _)| made_temp }
+    [reads.files, reads.listed, reads.probed].each do |found|
+      found.delete_if { |path, _| in_load_dir?(temp, path) }
+    end
+    reads.probed.delete_if { |path, _| state.load_dirs.key?(path) }
     state.import_cwd_read ||= reads.cwd_read
     if state.start_cwd
       reads.relative.each_key do |path|
@@ -458,6 +495,68 @@ module Speedrunner
 
   def self.cwd_file_key(path)
     File.directory?(path) ? "dir" : stat_key(path)
+  end
+
+  def self.in_load_dir?(dirs, path)
+    dirs.key?(path) || dirs.any? { |dir, _| path.start_with?("#{dir}/") }
+  end
+
+  def self.remove_tree(path)
+    Dir.children(path).each do |entry|
+      file = File.join(path, entry)
+      File.lstat(file).directory? ? remove_tree(file) : File.unlink(file)
+    end
+    Dir.rmdir(path)
+  end
+
+  # A directory made as files loaded: natively each process has its own; here
+  # its path is kept in the tool's state, so all children share it, and the
+  # first to leave would take it away from the others. Each child makes it again
+  # if it is gone (a temp cleaner), and leaves its removal to the daemon, whose
+  # at_exit handlers run as it exits.
+  #
+  # At the level of File and Dir, under every name they go by: that is what
+  # FileUtils, Pathname and a tool's own loop come down to. An at_exit handler
+  # registered as files loaded runs after the one run_tool adds, in the phase
+  # CHILD[:exiting] marks: it removes nothing in such a directory. A command may
+  # (`tool cache clear`, in a directory of the tool's own), except for the
+  # directory made by Dir.mktmpdir itself, which others may be using. What
+  # another process removes is out of reach.
+  def self.keep_load_dirs(state)
+    return if state.load_dirs.empty?
+
+    state.load_dirs.each do |path, (_, mode)|
+      next if File.directory?(path)
+
+      FileUtils_mkdir_p(File.dirname(path))
+      Dir.mkdir(path, mode)
+    rescue SystemCallError
+      nil
+    end
+    CHILD[:load_dirs] = state.load_dirs
+    File.singleton_class.prepend(Module.new do
+      %i[unlink delete].each do |name|
+        define_method(name) do |*paths|
+          kept, others = paths.partition { |path| Speedrunner.spared?(path, false) }
+          super(*others) + kept.size
+        end
+      end
+    end)
+    Dir.singleton_class.prepend(Module.new do
+      %i[rmdir unlink delete].each do |name|
+        define_method(name) { |path| Speedrunner.spared?(path, true) ? 0 : super(path) }
+      end
+    end)
+  end
+
+  def self.spared?(path, a_directory)
+    path = path.to_path if path.respond_to?(:to_path)
+    return false unless path.is_a?(String)
+
+    path = File.absolute_path(path)
+    dirs = CHILD[:load_dirs]
+    return true if a_directory && dirs[path]&.first
+    CHILD[:exiting] && in_load_dir?(dirs, path)
   end
 
   # Whether what a file read through the cwd as it loaded would read otherwise
@@ -863,8 +962,11 @@ module Speedrunner
     pid = Process.fork
     if pid.nil?
       r.close
+      reads = FileReads.new(nil, nil)
+      reads.note_mkdirs
       w.write(JSON.generate(yield))
       w.close
+      reads.remove_made
       exit!(0)
     end
     w.close
@@ -1246,6 +1348,7 @@ module Speedrunner
     fds[0, 4].each(&:close)
     bridge_tty(fds[4]) if fds.size > 4 # kept open, close-on-exec, for the run
     File.umask(req.umask)
+    keep_load_dirs(state)
     # Adapter: rspec keeps the cwd it loaded in, to tell the project's files.
     if defined?(RSpec::Core::FilterRules::PROJECT_DIR)
       RSpec::Core::FilterRules.send(:remove_const, :PROJECT_DIR)
@@ -1367,6 +1470,7 @@ module Speedrunner
     CHILD[:script] = state.script
     track_files
     start_learning if state.levels.include?("2")
+    at_exit { CHILD[:exiting] = true } if CHILD[:load_dirs] # see keep_load_dirs
     load state.script # exceptions and exit go up to Ruby, as natively
   end
 
