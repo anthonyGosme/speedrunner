@@ -294,6 +294,9 @@ module Speedrunner
   # in the daemon, for every client. See FileReads in speedrunner_daemon.py.
   # Installed for the load only, so that no frame of ours is in a backtrace.
   # Not rubygems' own reads: its layout is in the fingerprint already.
+  LOCK_AT_LOAD = "takes a file lock at load"
+  LOCK_SEEN = [false] # also when the file swallowed what the wrapper raised
+
   class FileReads
     NOT_INPUTS = %r{\A/(proc|sys|dev)/}
     COMPILED = /\.(so|bundle|dylib)\z/
@@ -354,8 +357,8 @@ module Speedrunner
       end
     end
 
-    def wrap(owner, name, &note)
-      singleton = owner.equal?(Kernel) ? Kernel : owner.singleton_class
+    def wrap(owner, name, on: nil, &note)
+      singleton = on || (owner.equal?(Kernel) ? Kernel : owner.singleton_class)
       own = singleton.instance_methods(false).include?(name) || singleton.private_instance_methods(false).include?(name)
       original = singleton.instance_method(name)
       visibility = singleton.private_method_defined?(name) ? :private : :public
@@ -374,7 +377,19 @@ module Speedrunner
       end
     end
 
+    # Raising stops the call: the daemon never holds it, which would refuse
+    # every other run, and every child would share it.
+    def refuse_locks
+      wrap(File, :flock, on: File) do |args, _|
+        next if args[0].to_i.anybits?(File::LOCK_UN) || reader.match?(RUBYGEMS)
+
+        LOCK_SEEN[0] = true
+        raise Refused, LOCK_AT_LOAD
+      end
+    end
+
     def start
+      refuse_locks
       READERS.each do |owner, names|
         names.each do |name|
           wrap(owner, name) { |args, kwargs| note(args[0], @files) unless writes?(args, kwargs) }
@@ -688,7 +703,14 @@ module Speedrunner
             (name.is_a?(Proc) ? name.call : [name]).each do |req|
               next if skip.key?(req)
 
-              why = if reads_argv { require req }[1] then "reads the command line at load"
+              why = if begin
+                         reads_argv { require req }[1]
+                       rescue Refused => e
+                         LOCK_SEEN[0] = true
+                         log("#{req}: #{e.message}")
+                         false
+                       end then "reads the command line at load"
+                    elsif LOCK_SEEN[0] then LOCK_AT_LOAD
                     elsif threads_running? then "starts a thread at load"
                     elsif cf_unsafe? then "uses CoreFoundation at load"
                     end
@@ -765,6 +787,9 @@ module Speedrunner
           TtyReads::SEEN.clear
           TtyReads::ON[0] = true
           output, argv_read = reads_argv { reading_files(state) { capture_fds(state.tty) { require file } } }
+        rescue Refused => e
+          state.blacklist[file] = e.message
+          return "#{file} #{e.message}"
         rescue Exception => e # rubocop:disable Lint/RescueException
           state.blacklist[file] = "load failed in the daemon: #{e.class}"
           next
@@ -774,7 +799,8 @@ module Speedrunner
           TtyReads::SEEN.each { |fd, was| state.import_tty_read[fd] = was unless state.import_tty_read.key?(fd) }
         end
         keep_file_reads(state)
-        why = if output != ["".b, "".b] then "printed in the daemon"
+        why = if LOCK_SEEN[0] then LOCK_AT_LOAD
+              elsif output != ["".b, "".b] then "printed in the daemon"
               elsif argv_read then "read the command line in the daemon"
               elsif ENV.to_h != env_before then "changed the env in the daemon"
               elsif threads_running? then "started a thread in the daemon"
@@ -875,6 +901,7 @@ module Speedrunner
       verdict = { "ok" => [], "bad" => {}, "retry" => [] }
       activate_gems(gems)
       refused = refused.to_h { |f| [f, true] }
+      FileReads.new(nil, nil).refuse_locks
       compiled = {}
       TracePoint.new(:script_compiled) do |t|
         next unless t.eval_script.nil?
@@ -907,7 +934,8 @@ module Speedrunner
         env_before = ENV.to_h
         why = begin
           output, argv_read = reads_argv { capture_fds(tty) { require file } }
-          if output != ["".b, "".b] then "prints at load" # natively mid-run
+          if LOCK_SEEN[0] then LOCK_AT_LOAD
+          elsif output != ["".b, "".b] then "prints at load" # natively mid-run
           elsif argv_read then "reads the command line at load"
           elsif ENV.to_h != env_before then "changes the env at load"
           elsif threads_running? then "starts a thread at load"
