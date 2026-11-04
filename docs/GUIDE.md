@@ -507,6 +507,9 @@ and none runs a command twice.
   there, or keeping the process id or the time, is not done again for each call,
   and nothing detects it. A file lock is the exception, in Python and Ruby: a module
   that takes one as it loads is left to each call, and so holds as in a native run.
+- **A temporary directory made as a tool loads is shared.** In Python, one made by
+  `tempfile.mkdtemp` belongs to the daemon, which removes it as it exits: all calls
+  use the same one, where natively each has its own. ansible's is an example.
 - **The daemon's own state**: if a daemon is started from a terminal and the tool
   checks for a terminal as it loads, later piped calls run natively, and the
   reverse.
