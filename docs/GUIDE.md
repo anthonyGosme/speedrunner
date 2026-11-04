@@ -494,9 +494,6 @@ and none runs a command twice.
   teardown goes on unseen. What it would still print (`Exception ignored in …`
   from a `__del__`) is lost; a file a `__del__` writes appears after the client
   has returned; a `flock` the tool holds is released at the very end.
-- **Client killed with `kill -9`**: the tool runs to the end, where natively it
-  would die with the client. Closing the terminal sends SIGHUP, which is relayed:
-  same as natively.
 - **The daemon's own state**: if a daemon is started from a terminal and the tool
   checks for a terminal as it loads, later piped calls run natively, and the
   reverse.

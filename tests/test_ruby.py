@@ -425,6 +425,13 @@ class Failures(m.Matrix):
         self.assertEqual(line[0], b"ready", line)
         return p, int(line[1])
 
+    def test_client_killed_mid_run(self):
+        root, env = m.private_daemon("rbtest")
+        try:
+            m.check_client_killed(self, "rbtest", self.start_hold, root, env)
+        finally:
+            m.stop("rbtest", env)
+
     def test_daemon_killed_mid_run(self):
         root, env = m.private_daemon("rbtest")
         try:

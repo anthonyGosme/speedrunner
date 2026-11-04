@@ -1109,17 +1109,9 @@ class Failures(Matrix):
             stop("hstest", env)
 
     def test_client_killed_mid_run(self):
-        # Brief §8, current choice: the child is left to finish, once.
         root, env = private_daemon("hstest")
         try:
-            marker = os.path.join(root, "marker")
-            p, _ = self.start_hold(env, marker)
-            p.kill()
-            p.wait()
-            deadline = time.monotonic() + 10
-            while read_lines(marker) != ["start", "done"] and time.monotonic() < deadline:
-                time.sleep(0.1)
-            self.assertEqual(read_lines(marker), ["start", "done"])
+            check_client_killed(self, "hstest", self.start_hold, root, env)
         finally:
             stop("hstest", env)
 
@@ -1544,6 +1536,26 @@ class ImportTimeReads(ImportTimeReadChecks, Matrix):
         self.start(env)
         for _ in range(10):
             self.assertEqual(run("hs", ["hsread"], env=env, require_fast=False).stdout, b"True\n")
+
+
+def check_client_killed(case, tool, start_hold, root, env):
+    """kill -9 of the client: the tool dies too, as natively, and never finishes;
+    the daemon goes on serving."""
+    marker = os.path.join(root, "marker")
+    p, child = start_hold(env, marker, seconds="5")
+    p.kill()
+    p.wait()
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.02)
+    else:
+        case.fail("the tool outlived its client")
+    case.assertEqual(read_lines(marker), ["start"])
+    case.assertTrue(status(tool, env).startswith("ready"))
 
 
 def daemon_socket(env):

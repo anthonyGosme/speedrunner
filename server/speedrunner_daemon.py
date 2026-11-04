@@ -1649,6 +1649,14 @@ def flush_open_files():
                 pass  # teardown will retry and report it
 
 
+def tell_parent(kind):
+    """R: the tool runs, its client may only leave by dying. E: it may leave."""
+    try:
+        send_msg(CHILD["ctl"], kind)
+    except OSError:
+        pass  # the daemon is gone: the child goes on alone
+
+
 def report_exit():
     """atexit callback registered before anything else, so it runs last."""
     conn = CHILD["conn"]
@@ -1667,6 +1675,7 @@ def report_exit():
         os.kill(os.getpid(), EXIT["signal"])
     if EXIT["code"] is None:
         return
+    tell_parent(b"E")  # before the client can leave
     try:
         send_msg(conn, b"X", struct.pack("<i", EXIT["code"]))
     except OSError:
@@ -1905,6 +1914,7 @@ def serve_child(state, conn):
         send_msg(conn, b"R", struct.pack("<i", os.getpid()))
         if recv_exact(conn, 1) != b"G":
             os._exit(0)
+        tell_parent(b"R")
         conn.settimeout(None)
         apply_request(state, req, fds)
     except BaseException as exc:  # nothing has run yet: let the client fall back
@@ -1995,6 +2005,7 @@ class Child:
         self.pid = pid
         self.ctl = ctl    # parent end of the control socket; None at EOF
         self.conn = None  # the client connection, once accepted
+        self.running = False  # the tool runs and owes its client an exit
         self.retired = False
 
     def close(self):
@@ -2071,6 +2082,8 @@ class Parent:
             kind, payload, fds = None, b"", []
         if kind == b"L":
             self.learn(payload)
+        if kind in (b"R", b"E"):
+            child.running = kind == b"R"
         if kind == b"A" and fds:
             child.conn = socket.socket(fileno=fds.pop(0))
             if isinstance(self.state.watch, KqueueWatch):
@@ -2087,6 +2100,19 @@ class Parent:
         if kind is None:
             child.ctl.close()
             child.ctl = None
+
+    def on_client_gone(self, child):
+        """The client sends nothing after its go: readable means end of file.
+        Killed (kill -9): the tool dies with it, as natively. An E already
+        sent means the client left normally."""
+        while child.ctl is not None and select.select([child.ctl], [], [], 0)[0]:
+            self.on_ctl(child)
+        if child.running:
+            child.running = False
+            try:
+                os.kill(child.pid, signal.SIGKILL)
+            except OSError:
+                pass
 
     def learn(self, payload):
         try:
@@ -2301,6 +2327,7 @@ def serve(state):
             if state.disabled:
                 parent.retire_spare()
             watch = [wake_r] + [c.ctl for c in parent.children.values() if c.ctl is not None]
+            watch += [c.conn for c in parent.children.values() if c.running and c.conn is not None]
             if state.disabled:
                 watch.append(lsock)
             if state.watch is not None and state.watch.fd >= 0:
@@ -2315,6 +2342,8 @@ def serve(state):
             for child in list(parent.children.values()):
                 if child.ctl is not None and child.ctl in readable:
                     parent.on_ctl(child)
+                if child.running and child.conn in readable:
+                    parent.on_client_gone(child)
             if wake_r in readable:
                 try:
                     while os.read(wake_r, 512):

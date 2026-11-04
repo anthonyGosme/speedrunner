@@ -644,8 +644,16 @@ let ctl = -1;
 // no teardown. After an uncaught exception, Node prints it only once "exit"
 // was emitted: the addon passes that report on, as a native run would
 // print it, then sends X and exits.
+// R: the tool runs, its client may only leave by dying. E: it may leave.
+function tellParent(kind) {
+  try {
+    if (ctl >= 0) sendMsg(ctl, kind);
+  } catch {} // the daemon is gone: the child goes on alone
+}
+
 function exiting(code) {
   if (serving.dying) {
+    tellParent("E");
     sys.reportThenExit(conn, code, `Node.js ${process.version}`, state.mainFrame ?? "");
     return;
   }
@@ -659,10 +667,12 @@ function exiting(code) {
       } catch {}
     }
   }
+  tellParent("E");
   sys.exitOnCleanup(conn, code);
 }
 
 function finish(code) {
+  tellParent("E");
   try {
     sendMsg(conn, "X", i32(code));
   } catch {}
@@ -713,6 +723,7 @@ function serveChild(c) {
     script = path.resolve(MACOS ? sys.fdpath(fds[3]) : fs.readlinkSync(`/proc/self/fd/${fds[3]}`), req.argv[0]);
     sendMsg(conn, "R", i32(process.pid));
     if (readExact(conn, 1, deadline).toString() !== "G") sys.exit(0);
+    tellParent("R");
   } catch (e) {
     log(`child setup failed: ${e.message}`);
     sys.exit(0); // nothing has run yet: let the client fall back
@@ -1049,8 +1060,9 @@ async function serve(opts) {
       }
     }
     const ctls = [...children.values()].map((ch) => ch.ctl).filter((fd) => fd !== null);
+    const clients = [...children.values()].filter((ch) => ch.running && ch.conn !== null).map((ch) => ch.conn);
     // Once stale, the inotify fd stays readable: not watched while leaving.
-    const watch = [sigfd, leaving ? -1 : state.inotify, ...ctls];
+    const watch = [sigfd, leaving ? -1 : state.inotify, ...ctls, ...clients];
     const timeout = leaving ? 50 : pending.length ? 50 : Math.max(1000, lastActivity + idle - performance.now());
     const r = sys.poll(watch, Math.ceil(timeout));
     if (Array.isArray(r)) {
@@ -1071,11 +1083,36 @@ async function serve(opts) {
           }
         } else if (kind === "L") {
           takeLearned(payload, pending);
+        } else if (kind === "R" || kind === "E") {
+          ch.running = kind === "R";
         }
         for (const fd of fds) sys.close(fd);
         if (kind === null) {
           sys.close(ch.ctl);
           ch.ctl = null;
+        }
+      }
+      // The client sends nothing after its go: readable means end of file.
+      // Killed (kill -9): the tool dies with it, as natively. An E already
+      // sent means the client left normally.
+      for (const [pid, ch] of children) {
+        const i = ch.running && ch.conn !== null ? watch.indexOf(ch.conn) : -1;
+        if (i < 0 || r[i] === 0) continue;
+        while (ch.ctl !== null && waitReadable(ch.ctl, performance.now())) {
+          const [k, payload, fds] = readCtl(ch.ctl);
+          if (k === "R" || k === "E") ch.running = k === "R";
+          if (k === "L") takeLearned(payload, pending);
+          for (const fd of fds) sys.close(fd);
+          if (k === null) {
+            sys.close(ch.ctl);
+            ch.ctl = null;
+          }
+        }
+        if (ch.running) {
+          ch.running = false;
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
         }
       }
       if (r[0] !== 0) {
