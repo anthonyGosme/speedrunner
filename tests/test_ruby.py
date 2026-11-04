@@ -409,7 +409,8 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
         return root, env
 
     def script(self):
-        return ("#!/usr/bin/env ruby\n"
+        # The one the suite runs with: the tests' PATH may only find the system's.
+        return (f"#!{shutil.which('ruby')}\n"
                 "require_relative 'hsread_lib'\n"
                 "main\n")
 
