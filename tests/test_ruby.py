@@ -381,10 +381,21 @@ class Preload(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
-class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
+class ImportTimeReads(m.ImportTimeReadChecks, m.LockAtLoadChecks, m.Matrix):
     LIB = "hsread_lib.rb"
     LAZY = "hsread_lazy.rb"
+    LOCK_BODY = ("LOCK_FILE = File.open(ENV['HS_CFG'], 'w')\n"
+                 "unless LOCK_FILE.flock(File::LOCK_EX | File::LOCK_NB)\n"
+                 "  puts 'BUSY'\n"
+                 "  exit 3\n"
+                 "end\n")
+    LOCK_MAIN = "def main\n  sleep(ENV.fetch('HS_HOLD', '0').to_f)\n  puts 'held'\nend\n"
     SOURCES = {
+        "flock": LOCK_BODY + LOCK_MAIN,
+        "flock_hidden": "LOCK_FILE = File.open(ENV['HS_CFG'], 'w')\n"
+                        "begin\n  got = LOCK_FILE.flock(File::LOCK_EX | File::LOCK_NB)\n"
+                        "rescue Exception\n  got = true\nend\n"
+                        "unless got\n  puts 'BUSY'\n  exit 3\nend\n" + LOCK_MAIN,
         "read": "VALUE = File.read(ENV['HS_CFG'])\ndef main = puts(VALUE)\n",
         "read_if_there": "CFG = ENV['HS_CFG']\nVALUE = File.exist?(CFG) ? File.read(CFG) : 'none'\n"
                          "def main = puts(VALUE)\n",
@@ -414,6 +425,12 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
         return (f"#!{shutil.which('ruby')}\n"
                 "require_relative 'hsread_lib'\n"
                 "main\n")
+
+    def test_flock_at_load_stays_per_run(self):
+        self.check_lock_stays_per_run("flock")
+
+    def test_lock_at_load_seen_though_the_error_is_swallowed(self):
+        self.check_lock_stays_per_run("flock_hidden")
 
     def test_child_does_not_collect_for_its_parent(self):
         # A child that finds the parent's heap nearly full collects it itself,

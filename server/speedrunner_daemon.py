@@ -864,6 +864,11 @@ class EnvReads:
         os._Environ.__getitem__ = self.original
 
 
+LOCK_AT_LOAD = "takes a file lock at load"
+SET_LOCK = {getattr(fcntl, name) for name in ("F_SETLK", "F_SETLKW", "F_OFD_SETLK", "F_OFD_SETLKW")
+            if hasattr(fcntl, name)}
+
+
 class FileReads:
     """Records what module-level code reads of the filesystem while active:
     it keeps what it found, in the daemon, for every client.
@@ -874,6 +879,11 @@ class FileReads:
     keeps its own posix.stat, and its files are the modules', already covered.
     """
     active = None
+    loading = False  # module-level code runs, here or in a probe
+    lock_seen = False  # also when the module swallowed what the hook raised
+    LOCKS = {"fcntl.flock": lambda args: not args[1] & fcntl.LOCK_UN,
+             "fcntl.lockf": lambda args: not args[1] & fcntl.LOCK_UN,
+             "fcntl.fcntl": lambda args: args[1] in SET_LOCK}
     NOT_INPUTS = ("/proc/", "/sys/", "/dev/")
     COMPILED = (".pyc", ".so", ".pyd", ".dylib")
     TEMP_ROOTS = {"/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp",
@@ -897,6 +907,11 @@ class FileReads:
 
     @staticmethod
     def audit(event, args):
+        if FileReads.loading and event in FileReads.LOCKS and FileReads.LOCKS[event](args):
+            # Raising stops the call: the daemon never holds it, which would
+            # refuse every other run, and every child would share it.
+            FileReads.lock_seen = True
+            raise Refused(LOCK_AT_LOAD)
         reads = FileReads.active
         if reads is None:
             return
@@ -945,6 +960,7 @@ class FileReads:
             setattr(os, name, self.stat_wrapper(self.saved[name]))
         for name in ("getcwd", "getcwdb"):
             setattr(os, name, self.getcwd_wrapper(self.saved[name]))
+        FileReads.loading = True
         # Natively module-level code runs in the client's directory.
         if self.state.start_cwd_fd is not None:
             os.fchdir(self.state.start_cwd_fd)
@@ -953,6 +969,7 @@ class FileReads:
 
     def __exit__(self, *exc):
         FileReads.active = None
+        FileReads.loading = False
         if self.state.start_cwd_fd is not None:
             os.fchdir(RUNTIME_DIR_FD)
         ours = {id(getattr(os, name)): original for name, original in self.saved.items()}
@@ -1116,9 +1133,13 @@ def preload(state):
                 raise ImportError(f"{state.module}'s packages use CoreFoundation at import")
         names = script_imports(state.script) if 1 in state.levels else []
         for name in [n for n in names if n not in skip]:
-            why = ("reads the command line at import" if reads_argv(lambda: importlib.import_module(name))[1]
-                   else "starts a thread at import" if threads_running()
-                   else "uses CoreFoundation at import" if cf_unsafe() else None)
+            try:
+                why = ("reads the command line at import" if reads_argv(lambda: importlib.import_module(name))[1]
+                       else LOCK_AT_LOAD if FileReads.lock_seen
+                       else "starts a thread at import" if threads_running()
+                       else "uses CoreFoundation at import" if cf_unsafe() else None)
+            except Refused as exc:
+                why = str(exc)
             if why:
                 # Already run with the daemon's command line, or a thread
                 # or CoreFoundation that forbid forking, which cannot be undone: skip it from
@@ -1204,11 +1225,15 @@ def import_in_daemon(state, names):
                       FileReads(state) as files):
                     output, argv_read = reads_argv(
                         lambda: capture_fds_during(lambda: importlib.import_module(name), state.tty))
+            except Refused as exc:
+                state.blacklist[name] = str(exc)
+                return f"{name} {exc}"
             except Exception as exc:
                 state.blacklist[name] = f"import failed in the daemon: {exc!r}"
                 continue
             keep_file_reads(state, files)
-            why = ("printed in the daemon" if output != (b"", b"")
+            why = (LOCK_AT_LOAD if FileReads.lock_seen
+                   else "printed in the daemon" if output != (b"", b"")
                    else "read the command line in the daemon" if argv_read
                    else "changed the env in the daemon" if dict(os.environ) != before
                    else "started a thread in the daemon" if threads_running()
@@ -1269,6 +1294,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
             os.close(r)
             sys.path[:0] = [p for p in paths if p not in sys.path]
             sys.meta_path.insert(0, RefuseImports(set(refused)))
+            FileReads.loading = True
             verdict = {"ok": [], "bad": {}, "retry": []}
             step_end = time.monotonic() + PROBE_STEP_S
             for i, name in enumerate(names):
@@ -1282,7 +1308,8 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
                 try:
                     output, argv_read = reads_argv(
                         lambda: capture_fds_during(lambda: importlib.import_module(name), tty))
-                    why = ("prints at import" if output != (b"", b"")  # natively mid-run
+                    why = (LOCK_AT_LOAD if FileReads.lock_seen
+                           else "prints at import" if output != (b"", b"")  # natively mid-run
                            else "reads the command line at import" if argv_read
                            else "changes the env at import" if dict(os.environ) != env_before
                            else "starts a thread at import" if threads_running()
