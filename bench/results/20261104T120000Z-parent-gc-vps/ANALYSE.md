@@ -70,3 +70,18 @@ first spare still comes out before the first collection, and may collect as toda
 ## Not covered
 
 Node's collector, PHP and Apple Silicon were not measured. Memory neither.
+
+## From an eighth to a sixteenth
+
+The release run failed on Fedora's Ruby 3.4.8: with the parent collecting once it had
+allocated an eighth of what was free, 48 children in 150 still collected. The official
+image's 3.4.12 passed. Slots of the smallest objects are not published, and they run out
+before the total says so. A sixteenth passes on Fedora (4 runs of 4), Ruby 3.1 to 3.4,
+Ubuntu 22.04 and Alpine.
+
+`threshold-1-16.json`, 50 rounds, a neutral version first, median ms, a sixteenth against
+an eighth, paired (95% CI): bundle +0.30 [-0.21, +0.85], rake +0.10 [-0.48, +0.73], rdoc
+-0.19 [-0.86, +0.37], gem list -0.28 [-1.45, +1.87], rubocop -1.92 [-5.26, +0.89], rails
+-0.01 [-1.18, +0.69], solargraph +0.28 [-1.32, +2.34]. Geometric mean of served time:
++0.6%. Nothing measurable. A sixteenth is what passed, not a value derived: another Ruby
+build may need less.
