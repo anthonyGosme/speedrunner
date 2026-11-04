@@ -211,7 +211,7 @@ module Speedrunner
                   :import_output, :fingerprint_paths, :fingerprint, :fingerprint_set, :watch,
                   :preload_s, :bound_ino, :levels, :gem_binstub, :learned, :learned_gems,
                   :blacklist, :pending, :pending_gems, :gen, :cache_path, :restart, :tty,
-                  :import_tty_read, :skip, :learning
+                  :import_tty_read, :skip, :learning, :gc_next
 
     def initialize(tool, script, sock_path)
       @tool, @script, @sock_path = tool, script, sock_path
@@ -229,6 +229,7 @@ module Speedrunner
       @fingerprint = []
       @fingerprint_set = {}
       @preload_s = 0.0
+      @gc_next = 0
       @levels = ENV.fetch("SPEEDRUNNER_PRELOAD", "1,2,3").split(",").map(&:strip) & %w[1 2]
       @learned = []      # level 2: files loaded because children did
       @learned_gems = [] # level 2: [name, version] activated because children did
@@ -1342,6 +1343,23 @@ module Speedrunner
   end
 
   # R: the tool runs, its client may only leave by dying. E: it may leave.
+  GC_ROOM_FRACTION = 8
+
+  # A child that finds this heap nearly full collects it itself, at each call
+  # until the parent does: 3 to 8 ms for a small tool. Just after a fork: the
+  # spare is out, so no client waits for this, not even the first.
+  #
+  # By what this process allocated since its last collection, against what that
+  # one freed: the free slots of the smallest objects, which fill first, are
+  # not published (GC.stat adds up all sizes).
+  def self.collect_for_next_fork(state)
+    allocated = GC.stat(:total_allocated_objects)
+    return if allocated < state.gc_next
+
+    GC.start
+    state.gc_next = allocated + GC.stat(:heap_free_slots) / GC_ROOM_FRACTION
+  end
+
   def self.tell_parent(kind)
     send_msg(CHILD[:ctl], kind, "")
   rescue IOError, SystemCallError
@@ -1613,6 +1631,7 @@ module Speedrunner
             end
             ctl_child.close
             spare = children[pid] = Child.new(pid, ctl, nil, false)
+            collect_for_next_fork(state)
           end
         end
         if state.disabled && spare

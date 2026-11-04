@@ -400,6 +400,7 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
         "lazy_module": "HSREAD_LAZY = File.read(ENV['HS_CFG'])\n",
         "read_at_run": "def main = puts(File.read(ENV['HS_CFG']))\n",
         "write": "File.open(ENV['HS_CFG'], 'a') {}\ndef main = puts('ok')\n",
+        "allocate": "def main\n  before = GC.count\n  Array.new(1000) { Object.new }\n  puts(GC.count - before)\nend\n",
     }
 
     def tool(self, kind):
@@ -413,6 +414,16 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
         return (f"#!{shutil.which('ruby')}\n"
                 "require_relative 'hsread_lib'\n"
                 "main\n")
+
+    def test_child_does_not_collect_for_its_parent(self):
+        # A child that finds the parent's heap nearly full collects it itself,
+        # at each call until the parent does: 3 to 8 ms for a small tool.
+        _, env = self.tool("allocate")
+        self.start(env)
+        # The first spare came out before the parent's first collection.
+        m.run("hs", ["hsread"], env=env)
+        counts = [int(m.run("hs", ["hsread"], env=env).stdout) for _ in range(150)]
+        self.assertEqual(sum(counts), 0, counts)
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
