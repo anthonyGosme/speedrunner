@@ -642,29 +642,40 @@ fn handshake(sock: &UnixStream, tool: &Tool, args: &[OsString]) -> Result<i32, R
 
 fn wait_for_child(sock: &UnixStream, tool: &Tool, pid: i32) -> i32 {
     let _ = sock.set_read_timeout(None);
-    match read_msg(sock) {
-        // Sent once nothing visible is left: the child tears down after we exit.
-        Ok((b'X', p)) if p.len() == 4 => i32::from_le_bytes([p[0], p[1], p[2], p[3]]),
-        // No X: the child died by a signal or its teardown decided the status.
-        Ok((b'W', p)) if p.len() == 5 => {
-            let value = i32::from_le_bytes([p[1], p[2], p[3], p[4]]);
-            if p[0] == 1 {
-                die_by_signal(value);
+    let mut in_teardown = None;
+    loop {
+        return match read_msg(sock) {
+            // Sent once nothing visible is left: the child tears down after we exit.
+            Ok((b'X', p)) if p.len() == 4 => i32::from_le_bytes([p[0], p[1], p[2], p[3]]),
+            // The tool's code still runs in its teardown: wait for it to end.
+            Ok((b'T', p)) if p.len() == 4 => {
+                in_teardown = Some(i32::from_le_bytes([p[0], p[1], p[2], p[3]]));
+                continue;
             }
-            value
-        }
-        Ok(_) => {
-            eprintln!("speedrunner: protocol error from {} daemon; not re-running it",
-                      tool.display());
-            EXIT_LOST
-        }
-        Err(_) => {
-            eprintln!(
-                "speedrunner: lost track of {} (pid {}) after it started; not re-running it",
-                tool.display(), pid
-            );
-            EXIT_LOST
-        }
+            // No X: the child died by a signal or its teardown decided the status.
+            Ok((b'W', p)) if p.len() == 5 => {
+                let value = i32::from_le_bytes([p[1], p[2], p[3], p[4]]);
+                if p[0] == 1 {
+                    die_by_signal(value);
+                }
+                value
+            }
+            Ok(_) => {
+                eprintln!("speedrunner: protocol error from {} daemon; not re-running it",
+                          tool.display());
+                EXIT_LOST
+            }
+            Err(_) => match in_teardown {
+                Some(code) => code, // the child is done, and the daemon gone (kill -9)
+                None => {
+                    eprintln!(
+                        "speedrunner: lost track of {} (pid {}) after it started; not re-running it",
+                        tool.display(), pid
+                    );
+                    EXIT_LOST
+                }
+            },
+        };
     }
 }
 

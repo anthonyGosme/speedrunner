@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import uuid
+import weakref
 
 import hstest  # noqa: F401  (import-time side effects)
 
@@ -94,7 +95,8 @@ def cmd_frozen(args):
 
 def cmd_lazy(args):
     # Imported on first use only: what level 2 learns.
-    from hstest import lazy_plain, lazy_thread, lazy_print, lazy_env, lazy_argv, lazy_uses_argv  # noqa: F401
+    from hstest import lazy_plain, lazy_thread, lazy_print, lazy_env, lazy_argv, lazy_uses_argv, lazy_finalizer  # noqa: F401
+    from hstest.pyparsing import core  # noqa: F401
     print(lazy_plain.VALUE, lazy_env.VALUE, lazy_argv.VALUE)
 
 
@@ -201,6 +203,80 @@ def cmd_unclosed(args):
     f = open(args[0], "w")
     f.write("x" * 100000)
     _keep.append(f)
+
+
+class Late:
+    """Reaches a file at teardown, slowly: the client must wait for it."""
+
+    def __init__(self, path):
+        self.path = path
+
+    def __del__(self, sleep=time.sleep, open=os.open, close=os.close,
+                flags=os.O_CREAT | os.O_WRONLY):
+        sleep(0.3)
+        close(open(self.path, flags))
+
+
+class Noisy:
+    def __del__(self):
+        print("from __del__", flush=True)
+        raise ValueError("in __del__")
+
+
+def closing(path):
+    try:
+        yield
+    finally:
+        os.close(os.open(path, os.O_CREAT | os.O_WRONLY))
+
+
+def cmd_odd_metaclass(args):
+    from hstest.lazy_plain import Odd
+    _keep.append(Odd())
+    print("ok")
+
+
+def cmd_del_global(args):
+    global KEEP
+    KEEP = Late(args[0])
+    print("ok")
+
+
+def cmd_del_garbage(args):
+    late = Late(args[0])
+    late.me = late
+
+
+def cmd_del_exit(args):
+    global KEEP
+    KEEP = Late(args[0])
+    print("ready", flush=True)
+    sys.exit(int(args[1]))
+
+
+def cmd_del_noisy(args):
+    global KEEP
+    KEEP = Noisy()
+    print("ok")
+
+
+def cmd_suspended(args):
+    global KEEP
+    KEEP = closing(args[0])
+    next(KEEP)
+
+
+def cmd_unseen_teardown(args):
+    # Nothing here counts as a finalizer: served, the client returns on X.
+    # The object is garbage, the weakref is not: its callback runs at teardown.
+    def callback(_, sleep=time.sleep, open=os.open, close=os.close,
+                 flags=os.O_CREAT | os.O_WRONLY, path=args[0]):
+        sleep(0.5)
+        close(open(path, flags))
+
+    obj = type("Obj", (), {})()
+    obj.me = obj
+    _keep.append(weakref.ref(obj, callback))
 
 
 def cmd_atexit(args):

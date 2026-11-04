@@ -189,6 +189,7 @@ Little-endian, on the Unix socket. Every frame: `kind (1 byte) + u32 length + pa
 | child → client | `P(text)` | answer to the ping (`ready …`, `stale: …`, `disabled: …`) |
 | client → child | `G` | go: **from here on, the client never falls back to native** |
 | child → client | `X(code i32)` | exit code, sent from the last `atexit`; the client exits with it |
+| child → client | `T(code i32)` | instead of X, when teardown still has the tool's code to run: wait for W, or for the end of the connection |
 | parent → client | `W(kind u8, value i32)` | wait status (0 = exited, 1 = killed by a signal), when X did not come |
 
 Body of an `R`: argv list (u32 count, then u32+bytes blobs; argv[0] = script path), env list (`KEY=value`), u32 umask, u64 mask of inherited ignored signals, groups (u32 count + one u32 each). Fds: 0, 1, 2, an `O_PATH` of the cwd, and `/dev/tty` if the client has a controlling terminal.
@@ -209,7 +210,7 @@ Control socket parent ↔ child: `A` (+ client fd: "I accepted"), `L(json)` ("he
 3. **Preloading** (§6), check of Python and native threads (`/proc/self/task`, `proc_pidinfo` on macOS, plus the CoreFoundation canary, §2 quinquies), computation of the fingerprint and of the inotify watches (§7).
 4. **Serving.** The parent's loop: spare, `on_ctl` (A/L), `reap` (W), applying what was learned when no child is active.
 5. **Stopping**: `S` (stop), stale fingerprint (SIGUSR1 sent by a child), watched file modified, 4 h idle (`SPEEDRUNNER_IDLE_TIMEOUT`), or a learned import that misbehaves (the next daemon blacklists it). It steps down first: it writes `exiting <pid>` into the lock, removes its socket (only if it is still its own, by inode), closes its listening socket and dismisses its spare. It also releases its lock, which only says who serves the socket: the next daemon can start at once, even while a long call is in progress. Then it waits for its running children and sends them their W: in PHP, and for a child killed by a signal, that is the only way for the client to learn that it ended. (Keeping the lock during that wait made the next daemon's starter give up after 3 s: the tool stayed without a daemon until the call after. Found by `platforms`, Python 3.14; test `test_stopped_mid_run_lets_a_new_daemon_start`.)
-6. **Crash** (`kill -9`): the active children finish and send their X, the spare exits. The next client finds a socket nobody listens on, restarts the daemon in the background and runs natively.
+6. **Crash** (`kill -9`): the active children finish and send their X (or their T, then close the connection), the spare exits. The next client finds a socket nobody listens on, restarts the daemon in the background and runs natively.
 
 ## 6. Preloading
 
@@ -247,6 +248,7 @@ After `G` (`apply_request`, then `run_tool`):
 - output of the import replayed, then `runpy.run_path(script, run_name="__main__")`, or for a module `runpy._run_module_as_main`;
 - exit in the CPython way (`SystemExit` None/int/other, exception printed with the traceback limited to the script's frames, KeyboardInterrupt that ends with SIGINT);
 - last `atexit` (registered first): flush of the buffered writers and of stdout/stderr, then `X`, then fds 0/1/2 to `/dev/null`, then `L`. If flushing stdout fails, no X: teardown exits with 120, as natively.
+- if teardown has code of the tool's to run, a live object with a `__del__` or a suspended generator: `gc.unfreeze()`, `T`, `L`, and no X. The client takes the W once the full teardown is over, as natively, with stderr still open; if the daemon was killed meanwhile, the end of the connection and the code in `T` stand for it. What counts is found in the types of the run's objects, walked along with the flush. If one turns up, a `gc.collect()` over the run's heap only comes first: the finalizers of garbage run there, before the X, and only live objects make the client wait (`regex` leaves a parser node with a `__del__` in a cycle: cfn-lint pays 75 ms for the collection, where a full teardown cost it 300). What does not: plain files once flushed, sockets, pyparsing's `Forward` (its `__del__` only warns, if asked to; without this, nearly all of pip was refused). An open writer in the frozen heap is flushed before the X like the others, from the list the parent notes at each freeze. The frozen heap holds no finalizer: a module that leaves an object with one at import is refused, at level 1 as at level 2, and the child imports it itself.
 
 ## 8. Shell and scripts
 
@@ -403,6 +405,7 @@ A release is a single file: the client embeds the four daemons, the Node addon a
   - only count the `class`/`module` of the file's body: a `class << self` inside a method (puppet's metaid.rb) runs on every call, from other files;
   - strip addresses from the names of anonymous classes (`#<Class:0x…>::Config` in psych);
   - call `Module#name` through `instance_method`: puppet redefines it on some classes, which return a Symbol. The tracer must never raise: an exception raised in a TracePoint propagates into the load it is watching.
+- **`gc.freeze()` and module globals.** At exit, CPython drops each module from `sys.modules`. The module object goes with its last reference, but not its dictionary, which is in a cycle with its functions' `__globals__` and only falls to the collection at exit. Frozen, that dictionary is never found unreachable: a run's object in a module global was never freed, a `__del__` never ran and a suspended generator's `finally` neither. `__main__`'s objects were not affected. The same held for a file opened at import and written during the run: its last buffer was lost. Unfreezing on every call would be exact but doubles a loop of 50 `aws --version` on the VPS (the heap is copied and freed each time), hence the check in the last `atexit`, which finds next to nothing in real tools. See `bench/results/…-teardown-finalizers-mac/`.
 - **A project's modules, learned as the tool's.** pytest puts each project's directory on `sys.path` and imports its modules by name; level 2 learned them with pytest's own, and the parent preloaded them. In the demo script, pytest then ran every service's tests against the first service's `app` module: 11 failures, found on 0.4.2 (the video's runs, recorded on 29 October, passed). rspec had the same flaw with a project's `spec_helper`, which would have configured every later run. Since 0.4.3, only files under the load path the tool was preloaded with are learned (§2 ter), and the cache key changed so that an earlier cache, which may hold a project's modules, is not reused. Node is not concerned: it keys modules by their full URL, so one project's file never stands for another's. Tests `Preload.test_project_modules_are_not_learned` (Python) and `test_project_files_are_not_learned` (Ruby).
 - **A SIGCHLD that arrives outside `poll` wakes nobody.** The PHP daemon sees end-of-file on a child's control socket, its `waitpid` runs before the child can be reaped, then the signal arrives while PHP runs the loop: the next `poll` slept for up to 4 h, and the client waited for its W (seen once on psalm, in the panel). As long as a child has closed its control socket without having been reaped, the parent looks again after 5 ms. Python (`signal.set_wakeup_fd`) and Ruby (self-pipe written by `trap`) are not exposed.
 - **Node, `MADV_DONTFORK`.** V8 marks its heap pages so that they are not copied on fork (the `dc` flag in smaps, not to be confused with `dd`). The child crashed at the first JavaScript object it touched (SIGSEGV in `napi_get_uv_event_loop`). The addon sets `MADV_DOFORK` back before each fork.
@@ -434,7 +437,8 @@ They are not implementation bugs, but what forking from a daemon changes by natu
 
 - hash seed shared between children;
 - no controlling terminal in the child: a subprocess that opens `/dev/tty` fails;
-- what interpreter teardown writes after the X is lost;
+- after the X, teardown runs unseen. It is only sent when no `__del__` or suspended generator is left, so what is missed is what those checks do not see: a weakref callback or a C destructor runs after the client returned, and what it writes to stderr is lost;
+- a generator suspended since import is not closed, and nothing runs after an uncaught Ctrl-C, where the child ends by SIGINT from its last `atexit`;
 - env reads through `os.environ.copy()` or in C are not seen;
 - data files read at import are not covered by the fingerprint;
 - the child runs to the end if the client is killed with `kill -9`;

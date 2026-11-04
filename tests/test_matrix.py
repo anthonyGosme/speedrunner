@@ -758,6 +758,75 @@ class Teardown(Matrix):
                 with open(path) as f:
                     self.assertEqual(len(f.read()), 100000)
 
+    def assertMarksOnReturn(self, argv, *after, env=None):
+        """The marker is there when the client returns, and the rest as natively."""
+        seen = []
+        for mode in ("native", "hs"):
+            with tempfile.TemporaryDirectory(dir=ROOT) as d:
+                path = os.path.join(d, "mark")
+                p = run(mode, [*argv, path, *after], env=env)
+                self.assertTrue(os.path.exists(path), f"{mode}: no marker on return")
+                seen.append(outcome(p))
+        self.assertEqual(*seen)
+        return seen[0]
+
+    def test_object_of_an_unhashable_class(self):
+        self.assertSame(["hstest", "odd-metaclass"])
+
+    def test_del_of_a_module_global(self):
+        rc, out, _ = self.assertMarksOnReturn(["hstest", "del-global"])
+        self.assertEqual((rc, out), (0, b"ok\n"))
+
+    def test_del_of_garbage_in_a_cycle(self):
+        self.assertMarksOnReturn(["hstest", "del-garbage"])
+
+    def test_del_keeps_the_exit_code(self):
+        rc, _, _ = self.assertMarksOnReturn(["hstest", "del-exit"], "3")
+        self.assertEqual(rc, 3)
+
+    def test_finally_of_a_suspended_generator(self):
+        self.assertMarksOnReturn(["hstest", "suspended"])
+
+    def test_object_with_a_del_made_at_import(self):
+        # Not preloaded: each call has its own, and its own temporary file.
+        self.addCleanup(lambda: HS_BIN and stop("hslate"))
+        if HS_BIN:
+            served_soon(["hslate", os.path.join(ROOT, "stamp-warm")])
+        for _ in range(3):
+            _, out, _ = self.assertMarksOnReturn(["hslate"])
+            self.assertEqual(out, b"temporary file there\n")
+
+    def test_what_del_prints_reaches_the_client(self):
+        def scrub(p):
+            return p.returncode, p.stdout, re.sub(rb"0x[0-9a-f]+", b"0x", p.stderr)
+
+        native = scrub(run("native", ["hstest", "del-noisy"]))
+        self.assertIn(b"from __del__", native[1])
+        self.assertIn(b"ValueError: in __del__", native[2])
+        self.assertEqual(native, scrub(run("hs", ["hstest", "del-noisy"])))
+
+    def test_file_opened_at_import_written_in_the_run(self):
+        log = os.path.join(ROOT, "at-import.log")
+        env = {"HSLOG_FILE": log}
+        self.addCleanup(lambda: HS_BIN and stop("hslog", env))
+        if HS_BIN:
+            served_soon(["hslog", "warm"], env=env)
+        for mode in ("native", "hs"):
+            with self.subTest(mode=mode):
+                self.assertEqual(run(mode, ["hslog", f"line-{mode}"], env=env).returncode, 0)
+                with open(log) as f:
+                    self.assertIn(f"line-{mode}\n", f.read())
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_tool_without_finalizers_returns_before_teardown(self):
+        path = os.path.join(ROOT, "unseen-teardown")
+        self.assertEqual(run("hs", ["hstest", "unseen-teardown", path]).returncode, 0)
+        self.assertFalse(os.path.exists(path), "the client waited for teardown")
+        deadline = time.monotonic() + 10
+        while not os.path.exists(path):
+            self.assertLess(time.monotonic(), deadline, "teardown never got there")
+            time.sleep(0.05)
+
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class FailOpen(Matrix):
@@ -893,6 +962,8 @@ class Preload(Matrix):
             self.assertIn("hstest.lazy_thread", cache["blacklist"])
             self.assertIn("hstest.lazy_print", cache["blacklist"])
             self.assertIn("hstest.lazy_argv", cache["blacklist"])
+            self.assertIn("hstest.lazy_finalizer", cache["blacklist"])
+            self.assertIn("hstest.pyparsing.core", cache["modules"])
             # Refused for importing lazy_argv, which the probe did not run again.
             self.assertTrue(cache["blacklist"].get("hstest.lazy_uses_argv", "").startswith(
                 "imports hstest.lazy_argv"), cache["blacklist"])
@@ -1065,6 +1136,24 @@ class Failures(Matrix):
             out, _ = p.communicate(timeout=30)
             self.assertEqual((p.returncode, out), (0, b"done\n"))
             self.assertEqual(read_lines(marker), ["start", "done"])
+        finally:
+            stop("hstest", env)
+
+    def test_daemon_killed_during_teardown(self):
+        # No X when a __del__ has to run: the exit code does not depend on the W.
+        root, env = private_daemon("hstest")
+        try:
+            daemon = int(status_field(status("hstest", env), "pid"))
+            marker = os.path.join(root, "marker")
+            p = subprocess.Popen([HS_BIN, "run", "hstest", "--", "del-exit", marker, "3"],
+                                 env={**BASE_ENV, **env, "SPEEDRUNNER_REQUIRE_FAST": "1"},
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.assertEqual(p.stdout.readline(), b"ready\n")
+            os.kill(daemon, signal.SIGKILL)
+            out, err = p.communicate(timeout=30)
+            self.assertEqual((p.returncode, out), (3, b""))
+            self.assertNotIn(b"lost track", err)
+            self.assertTrue(os.path.exists(marker))
         finally:
             stop("hstest", env)
 

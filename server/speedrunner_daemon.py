@@ -27,6 +27,9 @@ Protocol, little-endian, over the Unix socket:
     child  -> client  X(code): exit code, sent from the last atexit once
                       teardown has nothing visible left to do. The client
                       returns on it; the child tears down unseen.
+                      | T(code): instead of X, when teardown has code of the
+                      tool's to run: the client waits for the W, and exits
+                      with this code if the daemon is gone by then
     parent -> client  W(kind, value): wait status, for when no X came
 
 Between the parent and each child, over a socketpair:
@@ -46,6 +49,7 @@ import importlib
 import importlib.machinery
 import importlib.util
 import io
+import itertools
 import json
 import os
 import runpy
@@ -908,6 +912,11 @@ def reads_argv(fn):
     return result, probe.read
 
 
+# Children would each run it, on what they share: a temporary file made at
+# import would be gone for the next call. Imported in the child, it is its own.
+FINALIZER_AT_IMPORT = "leaves an object with a finalizer at import"
+
+
 def threads_running():
     return threading.active_count() != 1 or native_thread_count() != 1
 
@@ -940,13 +949,16 @@ def preload(state):
             if cf_unsafe():
                 raise ImportError(f"{state.module}'s packages use CoreFoundation at import")
         names = script_imports(state.script) if 1 in state.levels else []
+        freeze_heap()  # what the daemon made itself is not any module's
         for name in [n for n in names if n not in skip]:
             why = ("reads the command line at import" if reads_argv(lambda: importlib.import_module(name))[1]
                    else "starts a thread at import" if threads_running()
-                   else "uses CoreFoundation at import" if cf_unsafe() else None)
+                   else "uses CoreFoundation at import" if cf_unsafe()
+                   else FINALIZER_AT_IMPORT if freeze_heap() else None)
             if why:
                 # Already run with the daemon's command line, or a thread
-                # or CoreFoundation that forbid forking, which cannot be undone: skip it from
+                # or CoreFoundation that forbid forking, or an object each
+                # child would finalize, which cannot be undone: skip it from
                 # now on, in a fresh daemon. Level 2 still learns what it
                 # imports, short of what starts the thread.
                 skip[name] = why
@@ -1032,6 +1044,7 @@ def import_in_daemon(state, names):
                    else "read the command line in the daemon" if argv_read
                    else "changed the env in the daemon" if dict(os.environ) != before
                    else "started a thread in the daemon" if threads_running()
+                   else FINALIZER_AT_IMPORT if freeze_heap()
                    else None)
             if why:  # cannot be undone
                 state.blacklist[name] = why
@@ -1090,6 +1103,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
             sys.path[:0] = [p for p in paths if p not in sys.path]
             sys.meta_path.insert(0, RefuseImports(set(refused)))
             verdict = {"ok": [], "bad": {}, "retry": []}
+            freeze_heap()
             step_end = time.monotonic() + PROBE_STEP_S
             for i, name in enumerate(names):
                 if verdict["ok"] and time.monotonic() > step_end:
@@ -1109,6 +1123,7 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
                            else "found in another file than at run time"
                            if origins.get(name, file_of(name)) != file_of(name)
                            else "uses CoreFoundation at import" if each and cf_unsafe()
+                           else FINALIZER_AT_IMPORT if freeze_heap()
                            else None)
                 except Refused as exc:
                     why = str(exc)
@@ -1464,15 +1479,50 @@ CHILD = {"conn": None, "ctl": None, "base_modules": None, "base_finders": (), "i
 # run installed, as pytest's assertion rewriting) must not be preloaded.
 STANDARD_LOADER_MODULES = {"importlib._bootstrap", "importlib._bootstrap_external",
                            "_frozen_importlib", "_frozen_importlib_external", "zipimport"}
+# Types are told apart by id here: a metaclass that defines __eq__ makes its
+# classes unhashable, and comparing them would run the tool's code.
 # Buffered writers that interpreter teardown would flush when it frees them.
-FILE_TYPES = {io.TextIOWrapper, io.BufferedWriter, io.BufferedRandom}
+FILE_TYPES = {id(k) for k in (io.TextIOWrapper, io.BufferedWriter, io.BufferedRandom)}
+# Once flushed, what teardown does to these is what any process exit does.
+PLAIN_TYPES = FILE_TYPES | {id(k) for k in (io.FileIO, io.BufferedReader, io.BytesIO, io.StringIO, TrackedStream)}
+SUSPENDABLE_TYPES = {id(types.GeneratorType): "gi_frame", id(types.CoroutineType): "cr_frame",
+                     id(types.AsyncGeneratorType): "ag_frame"}
+# Open writers in the frozen heap, which report_exit's walk does not see.
+FROZEN_WRITERS = []
 
 
-def flush_open_files():
+def has_finalizer(kind):
+    """Whether teardown would run code for an instance of this type."""
+    if id(kind) in PLAIN_TYPES or id(kind) in SUSPENDABLE_TYPES:
+        return False
+    if kind.__name__ == "Forward" and str(kind.__module__).endswith("pyparsing.core"):
+        return False  # only warns, if asked to: the grammars of packaging, vendored by pip
+    for base in kind.__mro__:  # not getattr: a metaclass's __getattr__ is the tool's code
+        finalizer = vars(base).get("__del__")
+        if finalizer is not None:
+            return finalizer is not socket.socket.__del__  # it only closes the fd
+    return False
+
+
+def any_finalizer(objects):
+    kinds = {id(kind): kind for kind in map(type, objects)}
+    return any(map(has_finalizer, kinds.values()))
+
+
+def freeze_heap():
+    """gc.freeze(), noting what it hides from report_exit. Returns whether what
+    it froze has a finalizer: only what came since the last call, so calling
+    it after each import walks the heap once in all."""
+    objects = gc.get_objects()
+    FROZEN_WRITERS.extend(obj for obj in objects if id(type(obj)) in FILE_TYPES)
+    gc.freeze()
+    return any_finalizer(objects)
+
+
+def flush_open_files(objects):
     std = {id(s) for s in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)}
-    # Objects frozen in the daemon are skipped: they predate the run.
-    for obj in gc.get_objects():
-        if type(obj) in FILE_TYPES and id(obj) not in std:
+    for obj in itertools.chain(objects, FROZEN_WRITERS):
+        if id(type(obj)) in FILE_TYPES and id(obj) not in std:
             try:
                 if not obj.closed:
                     obj.flush()
@@ -1480,12 +1530,38 @@ def flush_open_files():
                 pass  # teardown will retry and report it
 
 
+def finalizers_pending(objects):
+    """Whether teardown has code to run: a __del__, or the finally of a
+    suspended generator. `objects` leaves out the frozen heap, which has no
+    finalizer: a module that leaves one at import is refused. A generator
+    suspended since import does not count: the only ones met (certifi's, in
+    poetry and httpie) have nothing to run."""
+    if any_finalizer(objects):
+        return True
+    return any(getattr(obj, SUSPENDABLE_TYPES[id(type(obj))]) is not None
+               for obj in objects if id(type(obj)) in SUSPENDABLE_TYPES)
+
+
 def report_exit():
     """atexit callback registered before anything else, so it runs last."""
     conn = CHILD["conn"]
     if conn is None:
         return  # the daemon itself
-    flush_open_files()
+    objects = gc.get_objects()
+    finalizers = finalizers_pending(objects)
+    if finalizers:
+        # Perhaps only garbage's (regex leaves a parser node in a cycle): they
+        # run here, over the run's own heap, and need no full teardown.
+        del objects
+        gc.collect()
+        objects = gc.get_objects()
+        finalizers = finalizers_pending(objects)
+    flush_open_files(objects)
+    if finalizers:
+        # Frozen, a module's globals would stay alive once the module is gone:
+        # natively the collection at exit finds them unreachable.
+        gc.unfreeze()
+    del objects
     try:
         sys.stdout.flush()
         sys.stderr.flush()
@@ -1497,6 +1573,14 @@ def report_exit():
         signal.signal(EXIT["signal"], signal.SIG_DFL)
         os.kill(os.getpid(), EXIT["signal"])
     if EXIT["code"] is None:
+        return
+    if finalizers:
+        # No X: what they do is visible, as natively, before the client returns.
+        try:
+            send_msg(conn, b"T", struct.pack("<i", EXIT["code"]))
+        except OSError:
+            pass
+        send_learned()
         return
     try:
         send_msg(conn, b"X", struct.pack("<i", EXIT["code"]))
@@ -1864,7 +1948,7 @@ class Parent:
         if threading.active_count() != 1 or native_thread_count() != 1:
             self.state.disabled = "threads appeared in the daemon"
             return -1
-        gc.freeze()  # the children's GC must not walk, and so copy, the inherited heap
+        freeze_heap()  # the children's GC must not walk, and so copy, the inherited heap
         sys.stdout.flush()
         sys.stderr.flush()
         ctl, ctl_child = socket.socketpair()
