@@ -199,6 +199,14 @@ class Teardown(m.Matrix):
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class FailOpen(m.Matrix):
+    @unittest.skipUnless(m.HS_BIN, "needs the speedrunner client")
+    def test_child_missing_its_go_says_so(self):
+        m.check_child_says_it_missed_its_go(self, "rbtest")
+
+    @unittest.skipUnless(m.HS_BIN, "needs the speedrunner client")
+    def test_signal_before_the_go(self):
+        m.check_child_dies_of_a_signal_before_its_go(self, "rbtest")
+
     def check_falls_back(self, argv, env):
         native = outcome(run("native", argv, env=env))
         self.assertEqual(native, outcome(run("hs", argv, env=env, require_fast=False)))

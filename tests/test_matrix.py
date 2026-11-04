@@ -26,6 +26,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 import zipfile
@@ -151,6 +152,76 @@ def stop(tool, env=None, timeout=10.0):
     deadline = time.monotonic() + timeout
     while status(tool, env) != "down" and time.monotonic() < deadline:
         time.sleep(0.05)
+
+
+def read_frame(sock):
+    """A message from a daemon: kind, payload."""
+    def exactly(n):
+        data = b""
+        while len(data) < n:
+            chunk = sock.recv(n - len(data))
+            if not chunk:
+                raise EOFError(f"after {data!r}")
+            data += chunk
+        return data
+
+    header = exactly(5)
+    return header[:1], exactly(struct.unpack("<I", header[1:])[0])
+
+
+def tool_socket(tool, env=None):
+    run_dir = {**BASE_ENV, **(env or {})}["XDG_RUNTIME_DIR"]
+    return glob.glob(os.path.join(run_dir, "speedrunner", f"{tool}-*.sock"))[0]
+
+
+def ask_to_run(tool, *args, timeout=30.0):
+    """A client that stops at the child's R, to send its go when the test
+    says: the socket, and the child's pid."""
+    def blobs(items):
+        return struct.pack("<I", len(items)) + b"".join(struct.pack("<I", len(i)) + i for i in items)
+
+    umask = os.umask(0o022)
+    os.umask(umask)
+    groups = os.getgroups()
+    body = (blobs([os.fsencode(a) for a in (shutil.which(tool, path=BASE_ENV["PATH"]), *args)])
+            + blobs([os.fsencode(f"{k}={v}") for k, v in BASE_ENV.items()])
+            + struct.pack("<IQ", umask, 0)
+            + struct.pack(f"<I{len(groups)}I", len(groups), *groups))
+    deadline = time.monotonic() + timeout
+    while True:
+        wait_ready(tool)
+        sock = socket.socket(socket.AF_UNIX)
+        sock.settimeout(15)
+        sock.connect(tool_socket(tool))
+        fds = [os.open(os.devnull, os.O_RDWR) for _ in range(3)] + [os.open(".", os.O_RDONLY)]
+        socket.send_fds(sock, [b"HS1R" + struct.pack("<I", len(body)) + body], fds)
+        for fd in fds:
+            os.close(fd)
+        kind, payload = read_frame(sock)
+        if kind == b"R":
+            return sock, struct.unpack("<i", payload)[0]
+        sock.close()  # a daemon that restarts (it skipped a module) refuses for a moment
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"{tool}: {kind} {payload!r}")
+        time.sleep(0.1)
+
+
+def check_child_says_it_missed_its_go(test, tool):
+    """Past G the client waits for the end of the run: from a child that gave
+    up before starting the tool, it must learn that nothing ran, or it takes
+    the child's exit for the tool's success. It gives up after 5 s."""
+    sock, _ = ask_to_run(tool, "argv")
+    with sock:
+        test.assertEqual(read_frame(sock)[0], b"N")
+
+
+def check_child_dies_of_a_signal_before_its_go(test, tool):
+    """A client relays signals as soon as it has the pid: natively, Ctrl-C at
+    that moment kills the tool. Not an exit in 0, not a run."""
+    sock, pid = ask_to_run(tool, "argv")
+    with sock:
+        os.kill(pid, signal.SIGINT)
+        test.assertEqual(read_frame(sock), (b"W", b"\x01" + struct.pack("<i", signal.SIGINT)))
 
 
 def setUpModule():
@@ -839,6 +910,47 @@ class FailOpen(Matrix):
         native = outcome(run("native", argv, env=env))
         self.assertEqual(native, outcome(run("hs", argv, env=env, require_fast=False)))
         self.assertEqual(run("hs", argv, env=env).returncode, EXIT_NOT_FAST)
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_child_missing_its_go_says_so(self):
+        check_child_says_it_missed_its_go(self, "hstest")
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_signal_before_the_go(self):
+        check_child_dies_of_a_signal_before_its_go(self, "hstest")
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_client_runs_natively_when_the_child_never_started(self):
+        # In place of the daemon: a child that gets its go, then fails.
+        root = tempfile.mkdtemp(dir=ROOT)
+        env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        wait_ready("hstest", env)
+        path = tool_socket("hstest", env)
+        stop("hstest", env)
+
+        def fake_daemon(listener):
+            while True:
+                try:
+                    conn = listener.accept()[0]
+                except OSError:
+                    return
+                with conn:
+                    _, fds, _, _ = socket.recv_fds(conn, 1 << 20, 8)
+                    for fd in fds:
+                        os.close(fd)
+                    conn.sendall(b"R" + struct.pack("<Ii", 4, os.getpid()))
+                    self.assertEqual(conn.recv(1), b"G")
+                    conn.sendall(b"N" + struct.pack("<I", 5) + b"never")
+
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(path)
+            listener.listen(8)
+            threading.Thread(target=fake_daemon, args=(listener,), daemon=True).start()
+            argv = ["hstest", "argv", "x"]
+            self.assertEqual(outcome(run("native", argv, env=env)),
+                             outcome(run("hs", argv, env=env, require_fast=False)))
+            self.assertEqual(run("hs", argv, env=env).returncode, EXIT_NOT_FAST)
 
     def test_import_time_env_differs(self):
         self.check_falls_back(["hstest", "env", "HSTEST_IMPORTED"], {"HSTEST_IMPORTED": "0"})

@@ -185,10 +185,10 @@ Little-endian, on the Unix socket. Every frame: `kind (1 byte) + u32 length + pa
 | Direction | Message | Role |
 |---|---|---|
 | client → child | `HS1` + `R`/`P`/`S` + u32 + body, fds as `SCM_RIGHTS` | R = run, P = ping/status, S = stop the daemon |
-| child → client | `N(reason)` | run natively (before anything has started) |
+| child → client | `N(reason)` | run natively: the tool has not started, even if `G` was sent |
 | child → client | `R(pid i32)` | ready, waiting for the go |
 | child → client | `P(text)` | answer to the ping (`ready …`, `stale: …`, `disabled: …`) |
-| client → child | `G` | go: **from here on, the client never falls back to native** |
+| client → child | `G` | go: **from here on, the client only falls back to native on an `N`** |
 | child → client | `X(code i32)` | exit code, sent from the last `atexit`; the client exits with it |
 | child → client | `T(code i32)` | instead of X, when teardown still has the tool's code to run: wait for W, or for the end of the connection |
 | parent → client | `W(kind u8, value i32)` | wait status (0 = exited, 1 = killed by a signal), when X did not come |
@@ -197,7 +197,7 @@ Body of an `R`: argv list (u32 count, then u32+bytes blobs; argv[0] = script pat
 
 Control socket parent ↔ child: `R` ("the tool runs"), `E` ("I am about to send X"), `A` (+ client fd: "I accepted"), `L(json)` ("here is what I imported and loaded", sent after X), `Q` (parent → spare: "step down"), and in PHP `K` (parent → child: "I have your copy"). A PHP child only reports its end through the daemon's W: it waits for `K` before serving. If it sees end-of-file instead (daemon killed by `kill -9`, which the kernel tears down over a few milliseconds during which the spare still takes calls), it closes the connection before the `R` answer, and the client runs natively. Found by the stress suite on arm64.
 
-**Rule no. 1: never run twice.** Before `G`, any anomaly (no socket, N refusal, failed handshake, stale fingerprint) leads to an `exec` of the real CLI. After `G`, nothing is ever rerun: without X or W, the client prints "lost track … not re-running it" and exits with 125. `SPEEDRUNNER_REQUIRE_FAST=1` replaces the native fallback with an exit with 124, for tests and benches.
+**Rule no. 1: never run twice.** Before `G`, any anomaly (no socket, N refusal, failed handshake, stale fingerprint) leads to an `exec` of the real CLI. After `G`, nothing is ever rerun: without X or W, the client prints "lost track … not re-running it" and exits with 125. The one exception is a child that says N because it failed before starting the tool (its go came too late, `apply_request` raised): nothing ran, so the client runs the tool natively. Without that N, the client would take the child's exit for the tool's and report a success with no output. A signal the client relays in that window kills the child, as it would kill the native tool. `SPEEDRUNNER_REQUIRE_FAST=1` replaces the native fallback with an exit with 124, for tests and benches.
 
 ## 5. Daemon life cycle
 

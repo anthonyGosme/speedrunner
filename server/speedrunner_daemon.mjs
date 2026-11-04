@@ -742,13 +742,20 @@ function serveChild(c) {
     // process.argv[1] as Node makes it: the script as typed, made absolute.
     script = path.resolve(MACOS ? sys.fdpath(fds[3]) : fs.readlinkSync(`/proc/self/fd/${fds[3]}`), req.argv[0]);
     sendMsg(conn, "R", i32(process.pid));
-    if (readExact(conn, 1, deadline).toString() !== "G") sys.exit(0);
+    if (readExact(conn, 1, deadline).toString() !== "G") throw new Error("no go from the client");
     tellParent("R");
+    applyRequest(req, fds, script);
   } catch (e) {
     log(`child setup failed: ${e.message}`);
-    sys.exit(0); // nothing has run yet: let the client fall back
+    // Nothing has run. Our exit would not do: past G, the client takes our
+    // wait status for the tool's, and a run that never started for a success.
+    try {
+      sendMsg(conn, "N", `child setup failed: ${e.message}`);
+    } catch {
+      // the client is gone
+    }
+    sys.exit(0);
   }
-  applyRequest(req, fds, script);
   sys.close(logFd);
   serving = { dying: false };
   process.on("uncaughtExceptionMonitor", () => {
