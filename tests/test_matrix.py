@@ -88,6 +88,8 @@ def run(mode, argv, input=b"", cwd=None, env=None, tty=False, umask=None,
 
     p = subprocess.run(cmd, input=input, capture_output=True, cwd=cwd,
                        env=full_env, preexec_fn=setup, timeout=60)
+    if p.returncode == EXIT_NOT_FAST:
+        sys.stderr.write(p.stderr.decode(errors="replace"))  # why: most tests only see its stdout
     if tty and MACOS:
         # BSD script(1) now and then turns a line's \r\n into \r\r\n on a
         # long output, natively as served (CI, aws's skeleton), and echoes
@@ -1532,6 +1534,8 @@ class ImportTimeReads(ImportTimeReadChecks, Matrix):
                     "    while True:\n"
                     "        with LOCK:\n"
                     "            time.sleep(0.01)\n"
+                    # Taken again at once it starves a waiter, natively too.
+                    "        time.sleep(0.01)\n"
                     "threading.Thread(target=hold, daemon=True).start()\n"
                     "def main():\n"
                     "    print(LOCK.acquire(timeout=5))\n")
