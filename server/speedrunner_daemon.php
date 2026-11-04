@@ -58,6 +58,7 @@ final class Daemon
 
     private static \FFI $c;
     private static int $log = 2;
+    private static int $childCtl = -1; // in a child: its control socket
     private static int $parentPid;
     private static array $state = [];
 
@@ -630,6 +631,11 @@ final class Daemon
             if (self::readExact($conn, 1, $deadline) !== 'G') {
                 exit(0);
             }
+            try {
+                self::sendMsg(self::$childCtl, 'R'); // its client may only leave by dying
+            } catch (\Throwable $e) {
+                // the daemon is gone: the child goes on alone
+            }
             self::applyRequest($req, $fds);
         } catch (\Throwable $e) {
             self::log('child setup failed: ' . $e->getMessage());
@@ -787,6 +793,7 @@ final class Daemon
                 exit(0);
             }
         }
+        self::$childCtl = $ctl;
         self::serveChild($conn);
     }
 
@@ -1030,6 +1037,11 @@ final class Daemon
             if (self::$state['disabled']) {
                 $watch['listen'] = $lsock; // answered here, without forking
             }
+            foreach ($children as $pid => $ch) {
+                if (($ch['running'] ?? false) && $ch['conn'] !== null) {
+                    $watch["client$pid"] = $ch['conn'];
+                }
+            }
             $n = count($watch);
             $pfds = $c->new('struct pollfd[' . max(1, $n) . ']');
             $i = 0;
@@ -1054,8 +1066,19 @@ final class Daemon
             foreach ($watch as $pid => $fd) {
                 if ($r > 0 && $pfds[$i]->revents !== 0 && $pid === 'listen') {
                     $stop ??= self::handleInline($lsock);
+                } elseif ($r > 0 && $pfds[$i]->revents !== 0 && is_string($pid)) {
+                    // The client sends nothing after its go: readable means end
+                    // of file. Killed (kill -9): the tool dies with it, as natively.
+                    $child = (int) substr($pid, 6);
+                    if (isset($children[$child])) {
+                        $children[$child]['running'] = false;
+                        posix_kill($child, SIGKILL);
+                    }
                 } elseif ($r > 0 && $pfds[$i]->revents !== 0) {
                     [$kind, , $fds] = self::readCtl($fd);
+                    if ($kind === 'R') {
+                        $children[$pid]['running'] = true;
+                    }
                     if ($kind === 'A' && $fds) {
                         $children[$pid]['conn'] = array_shift($fds);
                         try {

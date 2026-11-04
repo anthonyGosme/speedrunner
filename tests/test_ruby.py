@@ -381,10 +381,21 @@ class Preload(m.Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
-class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
+class ImportTimeReads(m.ImportTimeReadChecks, m.LockAtLoadChecks, m.Matrix):
     LIB = "hsread_lib.rb"
     LAZY = "hsread_lazy.rb"
+    LOCK_BODY = ("LOCK_FILE = File.open(ENV['HS_CFG'], 'w')\n"
+                 "unless LOCK_FILE.flock(File::LOCK_EX | File::LOCK_NB)\n"
+                 "  puts 'BUSY'\n"
+                 "  exit 3\n"
+                 "end\n")
+    LOCK_MAIN = "def main\n  sleep(ENV.fetch('HS_HOLD', '0').to_f)\n  puts 'held'\nend\n"
     SOURCES = {
+        "flock": LOCK_BODY + LOCK_MAIN,
+        "flock_hidden": "LOCK_FILE = File.open(ENV['HS_CFG'], 'w')\n"
+                        "begin\n  got = LOCK_FILE.flock(File::LOCK_EX | File::LOCK_NB)\n"
+                        "rescue Exception\n  got = true\nend\n"
+                        "unless got\n  puts 'BUSY'\n  exit 3\nend\n" + LOCK_MAIN,
         "read": "VALUE = File.read(ENV['HS_CFG'])\ndef main = puts(VALUE)\n",
         "read_if_there": "CFG = ENV['HS_CFG']\nVALUE = File.exist?(CFG) ? File.read(CFG) : 'none'\n"
                          "def main = puts(VALUE)\n",
@@ -400,6 +411,7 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
         "lazy_module": "HSREAD_LAZY = File.read(ENV['HS_CFG'])\n",
         "read_at_run": "def main = puts(File.read(ENV['HS_CFG']))\n",
         "write": "File.open(ENV['HS_CFG'], 'a') {}\ndef main = puts('ok')\n",
+        "allocate": "def main\n  before = GC.count\n  Array.new(1000) { Object.new }\n  puts(GC.count - before)\nend\n",
     }
 
     def tool(self, kind):
@@ -414,6 +426,22 @@ class ImportTimeReads(m.ImportTimeReadChecks, m.Matrix):
                 "require_relative 'hsread_lib'\n"
                 "main\n")
 
+    def test_flock_at_load_stays_per_run(self):
+        self.check_lock_stays_per_run("flock")
+
+    def test_lock_at_load_seen_though_the_error_is_swallowed(self):
+        self.check_lock_stays_per_run("flock_hidden")
+
+    def test_child_does_not_collect_for_its_parent(self):
+        # A child that finds the parent's heap nearly full collects it itself,
+        # at each call until the parent does: 3 to 8 ms for a small tool.
+        _, env = self.tool("allocate")
+        self.start(env)
+        # The first spare came out before the parent's first collection.
+        m.run("hs", ["hsread"], env=env)
+        counts = [int(m.run("hs", ["hsread"], env=env).stdout) for _ in range(150)]
+        self.assertEqual(sum(counts), 0, counts)
+
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class Failures(m.Matrix):
@@ -424,6 +452,13 @@ class Failures(m.Matrix):
         line = p.stdout.readline().split()
         self.assertEqual(line[0], b"ready", line)
         return p, int(line[1])
+
+    def test_client_killed_mid_run(self):
+        root, env = m.private_daemon("rbtest")
+        try:
+            m.check_client_killed(self, "rbtest", self.start_hold, root, env)
+        finally:
+            m.stop("rbtest", env)
 
     def test_daemon_killed_mid_run(self):
         root, env = m.private_daemon("rbtest")

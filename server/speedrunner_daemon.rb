@@ -28,6 +28,9 @@ module Speedrunner
   HANDSHAKE_TIMEOUT_S = 5.0
   LOCK_WAIT_S = 10.0
   IDLE_TIMEOUT_S = Float(ENV.fetch("SPEEDRUNNER_IDLE_TIMEOUT", 4 * 3600))
+  # A tool that depends on the cwd it loaded in: how long its directory must
+  # have gone unused before the daemon follows a client elsewhere.
+  FOLLOW_AFTER_S = Float(ENV.fetch("SPEEDRUNNER_FOLLOW_AFTER", 30))
   # Read once at interpreter startup (RubyGems is loaded at boot): a child
   # cannot honour a client whose values differ from the daemon's.
   STARTUP_ENV_PREFIXES = %w[RUBY GEM_].freeze
@@ -208,7 +211,7 @@ module Speedrunner
                   :import_output, :fingerprint_paths, :fingerprint, :fingerprint_set, :watch,
                   :preload_s, :bound_ino, :levels, :gem_binstub, :learned, :learned_gems,
                   :blacklist, :pending, :pending_gems, :gen, :cache_path, :restart, :tty,
-                  :import_tty_read, :skip, :learning
+                  :import_tty_read, :skip, :learning, :gc_next
 
     def initialize(tool, script, sock_path)
       @tool, @script, @sock_path = tool, script, sock_path
@@ -226,6 +229,7 @@ module Speedrunner
       @fingerprint = []
       @fingerprint_set = {}
       @preload_s = 0.0
+      @gc_next = 0
       @levels = ENV.fetch("SPEEDRUNNER_PRELOAD", "1,2,3").split(",").map(&:strip) & %w[1 2]
       @learned = []      # level 2: files loaded because children did
       @learned_gems = [] # level 2: [name, version] activated because children did
@@ -290,6 +294,9 @@ module Speedrunner
   # in the daemon, for every client. See FileReads in speedrunner_daemon.py.
   # Installed for the load only, so that no frame of ours is in a backtrace.
   # Not rubygems' own reads: its layout is in the fingerprint already.
+  LOCK_AT_LOAD = "takes a file lock at load"
+  LOCK_SEEN = [false] # also when the file swallowed what the wrapper raised
+
   class FileReads
     NOT_INPUTS = %r{\A/(proc|sys|dev)/}
     COMPILED = /\.(so|bundle|dylib)\z/
@@ -350,8 +357,8 @@ module Speedrunner
       end
     end
 
-    def wrap(owner, name, &note)
-      singleton = owner.equal?(Kernel) ? Kernel : owner.singleton_class
+    def wrap(owner, name, on: nil, &note)
+      singleton = on || (owner.equal?(Kernel) ? Kernel : owner.singleton_class)
       own = singleton.instance_methods(false).include?(name) || singleton.private_instance_methods(false).include?(name)
       original = singleton.instance_method(name)
       visibility = singleton.private_method_defined?(name) ? :private : :public
@@ -370,7 +377,19 @@ module Speedrunner
       end
     end
 
+    # Raising stops the call: the daemon never holds it, which would refuse
+    # every other run, and every child would share it.
+    def refuse_locks
+      wrap(File, :flock, on: File) do |args, _|
+        next if args[0].to_i.anybits?(File::LOCK_UN) || reader.match?(RUBYGEMS)
+
+        LOCK_SEEN[0] = true
+        raise Refused, LOCK_AT_LOAD
+      end
+    end
+
     def start
+      refuse_locks
       READERS.each do |owner, names|
         names.each do |name|
           wrap(owner, name) { |args, kwargs| note(args[0], @files) unless writes?(args, kwargs) }
@@ -442,21 +461,42 @@ module Speedrunner
   end
 
   # Whether what a file read through the cwd as it loaded would read otherwise
-  # in this client's. A change where the daemon started is a stale daemon; a
-  # client elsewhere runs natively and leaves it to the others. Runs in the
-  # child, which exits if it falls back.
+  # in this client's. A change where the daemon started is a stale daemon. A
+  # client elsewhere runs natively; if that directory has gone unused for a
+  # while, the daemon restarts, and so follows it. The socket's mtime says when
+  # it was last used: a call in a loop across directories moves nothing. Runs
+  # in the child, which exits if it falls back.
   def self.why_cwd_differs(state, cwd_io)
     return nil unless state.import_cwd_read || state.import_cwd_files.any?
 
     st = cwd_io.stat
     same = state.start_cwd_id == [st.dev, st.ino]
-    return "import-time cwd differs" if state.import_cwd_read && !same
+    socket = File.basename(state.sock_path)
+    unused = begin
+      Time.now - File.mtime(socket) >= FOLLOW_AFTER_S # before the chdir: our cwd is its directory
+    rescue SystemCallError
+      false
+    end
+    why = "import-time cwd differs" if state.import_cwd_read && !same
+    unless why
+      runtime = Dir.pwd
+      chdir_to(cwd_io)
+      state.import_cwd_files.each do |path, (key)|
+        next if cwd_file_key(File.join(Dir.pwd, path)) == key
+        return "stale: #{path}, read at load, changed" if same
 
-    chdir_to(cwd_io)
-    state.import_cwd_files.each do |path, (key)|
-      next if cwd_file_key(File.join(Dir.pwd, path)) == key
-
-      return same ? "stale: #{path}, read at load, changed" : "import-time file differs: #{path}"
+        why = "import-time file differs: #{path}"
+        break
+      end
+      Dir.chdir(runtime)
+    end
+    if why
+      return unused ? "stale: its directory unused, and #{why}" : why
+    end
+    begin
+      File.utime(nil, nil, socket) if same
+    rescue SystemCallError
+      nil
     end
     nil
   end
@@ -663,7 +703,14 @@ module Speedrunner
             (name.is_a?(Proc) ? name.call : [name]).each do |req|
               next if skip.key?(req)
 
-              why = if reads_argv { require req }[1] then "reads the command line at load"
+              why = if begin
+                         reads_argv { require req }[1]
+                       rescue Refused => e
+                         LOCK_SEEN[0] = true
+                         log("#{req}: #{e.message}")
+                         false
+                       end then "reads the command line at load"
+                    elsif LOCK_SEEN[0] then LOCK_AT_LOAD
                     elsif threads_running? then "starts a thread at load"
                     elsif cf_unsafe? then "uses CoreFoundation at load"
                     end
@@ -740,6 +787,9 @@ module Speedrunner
           TtyReads::SEEN.clear
           TtyReads::ON[0] = true
           output, argv_read = reads_argv { reading_files(state) { capture_fds(state.tty) { require file } } }
+        rescue Refused => e
+          state.blacklist[file] = e.message
+          return "#{file} #{e.message}"
         rescue Exception => e # rubocop:disable Lint/RescueException
           state.blacklist[file] = "load failed in the daemon: #{e.class}"
           next
@@ -749,7 +799,8 @@ module Speedrunner
           TtyReads::SEEN.each { |fd, was| state.import_tty_read[fd] = was unless state.import_tty_read.key?(fd) }
         end
         keep_file_reads(state)
-        why = if output != ["".b, "".b] then "printed in the daemon"
+        why = if LOCK_SEEN[0] then LOCK_AT_LOAD
+              elsif output != ["".b, "".b] then "printed in the daemon"
               elsif argv_read then "read the command line in the daemon"
               elsif ENV.to_h != env_before then "changed the env in the daemon"
               elsif threads_running? then "started a thread in the daemon"
@@ -850,6 +901,7 @@ module Speedrunner
       verdict = { "ok" => [], "bad" => {}, "retry" => [] }
       activate_gems(gems)
       refused = refused.to_h { |f| [f, true] }
+      FileReads.new(nil, nil).refuse_locks
       compiled = {}
       TracePoint.new(:script_compiled) do |t|
         next unless t.eval_script.nil?
@@ -882,7 +934,8 @@ module Speedrunner
         env_before = ENV.to_h
         why = begin
           output, argv_read = reads_argv { capture_fds(tty) { require file } }
-          if output != ["".b, "".b] then "prints at load" # natively mid-run
+          if LOCK_SEEN[0] then LOCK_AT_LOAD
+          elsif output != ["".b, "".b] then "prints at load" # natively mid-run
           elsif argv_read then "reads the command line at load"
           elsif ENV.to_h != env_before then "changes the env at load"
           elsif threads_running? then "starts a thread at load"
@@ -1294,6 +1347,7 @@ module Speedrunner
              STDERR.write(error_text(err))
              1
            end
+    tell_parent("E") # before the client can leave
     begin
       send_msg(conn, "X", [code].pack("l<"))
     rescue IOError, SystemCallError
@@ -1314,6 +1368,30 @@ module Speedrunner
     track_files
     start_learning if state.levels.include?("2")
     load state.script # exceptions and exit go up to Ruby, as natively
+  end
+
+  # R: the tool runs, its client may only leave by dying. E: it may leave.
+  GC_ROOM_FRACTION = 8
+
+  # A child that finds this heap nearly full collects it itself, at each call
+  # until the parent does: 3 to 8 ms for a small tool. Just after a fork: the
+  # spare is out, so no client waits for this, not even the first.
+  #
+  # By what this process allocated since its last collection, against what that
+  # one freed: the free slots of the smallest objects, which fill first, are
+  # not published (GC.stat adds up all sizes).
+  def self.collect_for_next_fork(state)
+    allocated = GC.stat(:total_allocated_objects)
+    return if allocated < state.gc_next
+
+    GC.start
+    state.gc_next = allocated + GC.stat(:heap_free_slots) / GC_ROOM_FRACTION
+  end
+
+  def self.tell_parent(kind)
+    send_msg(CHILD[:ctl], kind, "")
+  rescue IOError, SystemCallError
+    nil # the daemon is gone: the child goes on alone
   end
 
   def self.serve_child(state, conn)
@@ -1359,6 +1437,7 @@ module Speedrunner
       end
       send_msg(conn, "R", [Process.pid].pack("l<"))
       exit!(0) unless read_exact(conn, 1, deadline) == "G"
+      tell_parent("R")
       apply_request(state, req, fds)
     rescue Exception => e # rubocop:disable Lint/RescueException
       log("child setup failed: #{e.inspect}")
@@ -1465,7 +1544,7 @@ module Speedrunner
     conn.close
   end
 
-  Child = Struct.new(:pid, :ctl, :conn, :retired) do
+  Child = Struct.new(:pid, :ctl, :conn, :retired, :running) do
     def close
       [ctl, conn].each { |io| io&.close unless io&.closed? }
       self.ctl = self.conn = nil
@@ -1580,6 +1659,7 @@ module Speedrunner
             end
             ctl_child.close
             spare = children[pid] = Child.new(pid, ctl, nil, false)
+            collect_for_next_fork(state)
           end
         end
         if state.disabled && spare
@@ -1588,6 +1668,7 @@ module Speedrunner
           spare = nil
         end
         watch = [wake_r] + children.values.filter_map(&:ctl)
+        watch += children.values.select(&:running).filter_map(&:conn)
         watch << server if state.disabled
         watch << state.watch.io if state.watch&.io && !exiting # stays readable once stale
         timeout = [1.0, last_activity + IDLE_TIMEOUT_S - now].max
@@ -1615,6 +1696,7 @@ module Speedrunner
               state.pending_gems[g] = true if g.is_a?(Array) && g.size == 2
             end
           end
+          child.running = kind == "R" if %w[R E].include?(kind)
           if kind == "A" && !ios.empty?
             child.conn = ios.shift
             last_activity = now
@@ -1630,6 +1712,22 @@ module Speedrunner
           end
         end
         children.each_value { |c| on_ctl.call(c) if c.ctl && readable.include?(c.ctl) }
+        # The client sends nothing after its go: readable means end of file.
+        # Killed (kill -9): the tool dies with it, as natively. An E already
+        # sent means the client left normally.
+        children.each_value do |c|
+          next unless c.running && readable.include?(c.conn)
+
+          on_ctl.call(c) while c.ctl && IO.select([c.ctl], nil, nil, 0)
+          next unless c.running
+
+          c.running = false
+          begin
+            Process.kill("KILL", c.pid)
+          rescue SystemCallError
+            nil
+          end
+        end
         if readable.include?(wake_r)
           wake_r.read_nonblock(512, exception: false)
           loop do

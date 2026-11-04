@@ -367,21 +367,41 @@ function keepFileReads() {
   fileReads.cwd = false;
 }
 
+// A tool that depends on the cwd it loaded in: how long its directory must
+// have gone unused before the daemon follows a client elsewhere.
+const FOLLOW_AFTER_MS = Number(realEnv.SPEEDRUNNER_FOLLOW_AFTER ?? 30) * 1000;
+
 // Whether what modules read through the cwd would read otherwise in this
-// client's. A change where the daemon started is a stale daemon; a client
-// elsewhere runs natively and leaves it to the others.
+// client's. A change where the daemon started is a stale daemon. A client
+// elsewhere runs natively; if that directory has gone unused for a while, the
+// daemon restarts, and so follows it. The socket's mtime says when it was last
+// used: a call in a loop across directories moves nothing.
 function whyCwdDiffers(cwdFd) {
   if (!state.cwdRead && !state.cwdFiles.size) return null;
   const st = fs.fstatSync(cwdFd);
   const same = state.startCwdId === `${st.dev}:${st.ino}`;
-  if (state.cwdRead && !same) return "import-time cwd differs";
-  const cwd = sys.fdpath(cwdFd);
-  for (const [file, key] of state.cwdFiles) {
-    if (cwdFileKey(`${cwd}/${file}`) !== key) {
-      return same ? `stale: ${file}, read at load, changed` : `import-time file differs: ${file}`;
+  const socket = path.basename(state.sockPath); // our cwd is its directory
+  let why = null;
+  if (state.cwdRead && !same) {
+    why = "import-time cwd differs";
+  } else {
+    const cwd = sys.fdpath(cwdFd);
+    for (const [file, key] of state.cwdFiles) {
+      if (cwdFileKey(`${cwd}/${file}`) !== key) {
+        if (same) return `stale: ${file}, read at load, changed`;
+        why = `import-time file differs: ${file}`;
+        break;
+      }
     }
   }
-  return null;
+  try {
+    if (why === null) {
+      if (same) fs.utimesSync(socket, new Date(), new Date());
+      return null;
+    }
+    if (Date.now() - fs.statSync(socket).mtimeMs >= FOLLOW_AFTER_MS) return `stale: its directory unused, and ${why}`;
+  } catch {}
+  return why;
 }
 
 // --- loading modules ------------------------------------------------------------
@@ -644,8 +664,16 @@ let ctl = -1;
 // no teardown. After an uncaught exception, Node prints it only once "exit"
 // was emitted: the addon passes that report on, as a native run would
 // print it, then sends X and exits.
+// R: the tool runs, its client may only leave by dying. E: it may leave.
+function tellParent(kind) {
+  try {
+    if (ctl >= 0) sendMsg(ctl, kind);
+  } catch {} // the daemon is gone: the child goes on alone
+}
+
 function exiting(code) {
   if (serving.dying) {
+    tellParent("E");
     sys.reportThenExit(conn, code, `Node.js ${process.version}`, state.mainFrame ?? "");
     return;
   }
@@ -659,10 +687,12 @@ function exiting(code) {
       } catch {}
     }
   }
+  tellParent("E");
   sys.exitOnCleanup(conn, code);
 }
 
 function finish(code) {
+  tellParent("E");
   try {
     sendMsg(conn, "X", i32(code));
   } catch {}
@@ -713,6 +743,7 @@ function serveChild(c) {
     script = path.resolve(MACOS ? sys.fdpath(fds[3]) : fs.readlinkSync(`/proc/self/fd/${fds[3]}`), req.argv[0]);
     sendMsg(conn, "R", i32(process.pid));
     if (readExact(conn, 1, deadline).toString() !== "G") sys.exit(0);
+    tellParent("R");
   } catch (e) {
     log(`child setup failed: ${e.message}`);
     sys.exit(0); // nothing has run yet: let the client fall back
@@ -1049,8 +1080,9 @@ async function serve(opts) {
       }
     }
     const ctls = [...children.values()].map((ch) => ch.ctl).filter((fd) => fd !== null);
+    const clients = [...children.values()].filter((ch) => ch.running && ch.conn !== null).map((ch) => ch.conn);
     // Once stale, the inotify fd stays readable: not watched while leaving.
-    const watch = [sigfd, leaving ? -1 : state.inotify, ...ctls];
+    const watch = [sigfd, leaving ? -1 : state.inotify, ...ctls, ...clients];
     const timeout = leaving ? 50 : pending.length ? 50 : Math.max(1000, lastActivity + idle - performance.now());
     const r = sys.poll(watch, Math.ceil(timeout));
     if (Array.isArray(r)) {
@@ -1071,11 +1103,36 @@ async function serve(opts) {
           }
         } else if (kind === "L") {
           takeLearned(payload, pending);
+        } else if (kind === "R" || kind === "E") {
+          ch.running = kind === "R";
         }
         for (const fd of fds) sys.close(fd);
         if (kind === null) {
           sys.close(ch.ctl);
           ch.ctl = null;
+        }
+      }
+      // The client sends nothing after its go: readable means end of file.
+      // Killed (kill -9): the tool dies with it, as natively. An E already
+      // sent means the client left normally.
+      for (const [pid, ch] of children) {
+        const i = ch.running && ch.conn !== null ? watch.indexOf(ch.conn) : -1;
+        if (i < 0 || r[i] === 0) continue;
+        while (ch.ctl !== null && waitReadable(ch.ctl, performance.now())) {
+          const [k, payload, fds] = readCtl(ch.ctl);
+          if (k === "R" || k === "E") ch.running = k === "R";
+          if (k === "L") takeLearned(payload, pending);
+          for (const fd of fds) sys.close(fd);
+          if (k === null) {
+            sys.close(ch.ctl);
+            ch.ctl = null;
+          }
+        }
+        if (ch.running) {
+          ch.running = false;
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
         }
       }
       if (r[0] !== 0) {
