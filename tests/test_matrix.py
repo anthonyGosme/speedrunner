@@ -22,6 +22,7 @@ import re
 import shlex
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -209,6 +210,7 @@ def ask_to_run(tool, *args, timeout=30.0):
         sock.settimeout(15)
         sock.connect(tool_socket(tool))
         fds = [os.open(os.devnull, os.O_RDWR) for _ in range(3)] + [os.open(".", os.O_RDONLY)]
+        assert read_frame(sock)[0] == b"H"
         socket.send_fds(sock, [b"HS1R" + struct.pack("<I", len(body)) + body], fds)
         for fd in fds:
             os.close(fd)
@@ -951,6 +953,7 @@ class FailOpen(Matrix):
                 except OSError:
                     return
                 with conn:
+                    conn.sendall(b"H" + struct.pack("<I", 0))
                     _, fds, _, _ = socket.recv_fds(conn, 1 << 20, 8)
                     for fd in fds:
                         os.close(fd)
@@ -2158,8 +2161,11 @@ def ask_as(sock_path, euid):
             s = socket.socket(socket.AF_UNIX)
             s.settimeout(10)
             s.connect(sock_path)
-            s.sendall(b"HS1P" + struct.pack("<I", 0))
-            os.write(w, b"=" + s.recv(1))
+            first = s.recv(5)
+            if first[:1] == b"H":
+                s.sendall(b"HS1P" + struct.pack("<I", 0))
+                first = s.recv(1)
+            os.write(w, b"=" + first[:1])
         except BaseException as exc:
             os.write(w, b"!" + repr(exc).encode())
         finally:
@@ -2377,12 +2383,350 @@ class Security(Matrix):
         self.assertEqual(daemon_roots(root), [])
 
 
+def in_private_daemon_env(root=None):
+    root = root or tempfile.mkdtemp(dir=ROOT)
+    env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache"),
+           "XDG_DATA_HOME": os.path.join(root, "data")}
+    os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+    return env
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class CallerContext(Matrix):
+    """What a process has from its caller and a daemon started elsewhere
+    would not: each is another daemon, or a native run."""
+
+    @classmethod
+    def tearDownClass(cls):
+        wait_ready("hstest")  # the tests' own, which some of them stopped
+
+    def served(self, argv, env=None, preexec=None, cwd=None):
+        """Same outcome as natively, served, in this context."""
+        native = outcome(run("native", argv, env=env, preexec=preexec, cwd=cwd))
+        self.addCleanup(self.stop_there, argv[0], env, preexec, cwd)
+        deadline = time.monotonic() + 30
+        while True:
+            p = run("hs", argv, env=env, preexec=preexec, cwd=cwd)
+            if p.returncode != EXIT_NOT_FAST or time.monotonic() > deadline:
+                break
+            time.sleep(0.1)
+        self.assertEqual(native, outcome(p))
+        return p.stdout
+
+    def stop_there(self, tool, env, preexec, cwd):
+        subprocess.run([HS_BIN, "stop", tool], env={**BASE_ENV, **(env or {})}, preexec_fn=preexec,
+                       cwd=cwd, capture_output=True, timeout=15)
+
+    def test_file_size_limit(self):
+        import resource
+        limit = lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (1 << 20, 1 << 20))
+        out = self.served(["hstest", "context"], preexec=limit)
+        self.assertIn(b"fsize (1048576, 1048576)", out)
+        # And the caller after it has its own limits, not those.
+        self.assertSame(["hstest", "context"])
+
+    def test_first_callers_limit_does_not_stick(self):
+        import resource
+        limit = lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (10, 10))
+        env = in_private_daemon_env()
+        subprocess.run([HS_BIN, "prewarm", "hstest"], env={**BASE_ENV, **env}, preexec_fn=limit, capture_output=True)
+        self.addCleanup(self.stop_there, "hstest", env, limit, None)
+        self.addCleanup(stop, "hstest", env)
+        wait_ready("hstest", env)  # there, with those limits: not this caller's
+        self.served(["hstest", "context"], env=env)
+
+    def test_nice(self):
+        out = self.served(["hstest", "context"], preexec=lambda: os.nice(3))
+        self.assertIn(b"nice ", out)
+
+    @unittest.skipUnless(hasattr(os, "sched_setaffinity"), "Linux")
+    def test_affinity(self):
+        one = min(os.sched_getaffinity(0))
+        self.served(["hstest", "context"], preexec=lambda: os.sched_setaffinity(0, {one}))
+
+    def test_library_path(self):
+        self.served(["hstest", "env", "LD_LIBRARY_PATH"], env={"LD_LIBRARY_PATH": "/nowhere"})
+
+    def test_preloaded_library_runs_natively(self):
+        # One that exists on macOS, where a missing one aborts any program.
+        name, lib = (("DYLD_INSERT_LIBRARIES", "/usr/lib/libSystem.B.dylib") if MACOS
+                     else ("LD_PRELOAD", "/nowhere/lib.so"))
+        p = run("hs", ["hstest", "argv"], env={name: lib})
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+        self.assertIn(name.encode(), p.stderr)
+
+    @unittest.skipUnless(MACOS, "macOS")
+    def test_sandbox_runs_natively(self):
+        cmd, extra = command("hs", ["hstest", "argv"])
+        p = subprocess.run(["sandbox-exec", "-p", "(version 1)(allow default)", *cmd],
+                           env={**BASE_ENV, **extra}, capture_output=True, timeout=30)
+        self.assertEqual(p.returncode, EXIT_NOT_FAST, p.stderr)
+
+    def test_time_zone(self):
+        out = self.served(["hstest", "tz"], env={"TZ": "Asia/Tokyo"})
+        self.assertIn(b"09:00 JST", out)
+
+    def test_locale_variable_runs_natively(self):
+        self.assertEqual(run("hs", ["hstest", "argv"], env={"LC_TIME": "C"}).returncode, EXIT_NOT_FAST)
+
+    def test_relative_pythonpath(self):
+        projects = []
+        for name in ("alpha", "beta"):
+            d = tempfile.mkdtemp(dir=ROOT)
+            with open(os.path.join(d, "ppmod.py"), "w") as f:
+                f.write(f"NAME = {name!r}\n")
+            projects.append((d, name))
+        for _ in range(2):
+            for d, name in projects:
+                out = self.served(["hstest", "ppmod"], env={"PYTHONPATH": "."}, cwd=d)
+                self.assertEqual(out, name.encode() + b"\n")
+
+    def test_interpreter_from_path(self):
+        # `#!/usr/bin/env python3`, with another venv first on PATH.
+        root = tempfile.mkdtemp(dir=ROOT)
+        tool = os.path.join(root, "bin", "envtool")
+        os.makedirs(os.path.dirname(tool))
+        with open(tool, "w") as f:
+            f.write("#!/usr/bin/env python3\nimport sys\nprint(sys.prefix)\n")
+        os.chmod(tool, 0o755)
+        prefixes = []
+        for name in ("one", "two"):
+            venv = os.path.join(root, name)
+            subprocess.run([sys.executable, "-m", "venv", "--without-pip", venv], check=True)
+            env = {"PATH": f"{venv}/bin:{os.path.dirname(tool)}:{BASE_ENV['PATH']}"}
+            prefixes.append(self.served(["envtool"], env=env).strip())
+            self.assertTrue(prefixes[-1].endswith(name.encode()), prefixes[-1])
+        self.assertNotEqual(prefixes[0], prefixes[1])
+
+    def with_fds(self, line):
+        """The command line in a shell, natively and through us. {} is the tool."""
+        results = []
+        for mode in ("native", "hs"):
+            cmd, extra = command(mode, ["hstest"], require_fast=False)
+            prefix = shlex.join(cmd)
+            p = subprocess.run(["bash", "-c", line.replace("{}", prefix)], capture_output=True,
+                               env={**BASE_ENV, **extra}, timeout=30)
+            results.append(outcome(p))
+        return results
+
+    def test_fd_above_2(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        path = os.path.join(root, "out")
+        native, fast = self.with_fds("{} write-fd 3 3>" + shlex.quote(path) + "; cat " + shlex.quote(path))
+        self.assertEqual(native, fast)
+        self.assertIn(b"on the fd", fast[1])
+
+    def test_process_substitution(self):
+        native, fast = self.with_fds("{} cat <(echo from the shell)")
+        self.assertEqual(native, fast)
+        self.assertIn(b"from the shell", fast[1])
+
+    def test_fd_above_2_tells_why(self):
+        p = subprocess.run(["bash", "-c", shlex.join(command("hs", ["hstest", "argv"])[0]) + " 3</dev/null"],
+                           capture_output=True, env={**BASE_ENV, "SPEEDRUNNER_REQUIRE_FAST": "1"}, timeout=30)
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+        self.assertIn(b"fd 3", p.stderr)
+
+    def test_background_job_on_a_terminal_runs_natively(self):
+        # An interactive shell: the job is in a group of its own, not the terminal's.
+        cmd = shlex.join(command("hs", ["hstest", "argv"])[0])
+        code, out = pty_transcript(["bash", "--norc", "-i", "-c", cmd + " < /dev/tty & wait $!; echo rc=$?"],
+                                   {**BASE_ENV, "SPEEDRUNNER_REQUIRE_FAST": "1"}, [])
+        self.assertIn(b"background job", out)
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class AsNatively(Matrix):
+    def check_multiprocessing(self, method):
+        # Not stderr: how many workers got to print hstest's import-time warning
+        # before the pool ended is a race, natively too.
+        served_soon(["hstest", "argv"])
+        native, fast = run("native", ["hstest", "mp", method]), run("hs", ["hstest", "mp", method])
+        self.assertEqual((native.returncode, native.stdout), (0, b"[1, 2]\n"))
+        self.assertEqual((fast.returncode, fast.stdout), (0, b"[1, 2]\n"), fast.stderr)
+
+    def test_multiprocessing_spawn(self):
+        self.check_multiprocessing("spawn")
+
+    def test_multiprocessing_forkserver(self):
+        self.check_multiprocessing("forkserver")
+
+    def test_forked_child_does_not_report_the_end(self):
+        served_soon(["hstest", "argv"])
+        self.assertSame(["hstest", "fork-exit"])
+
+    def test_signal_handler_set_at_import(self):
+        results = []
+        env = in_private_daemon_env()
+        for mode in ("native", "hs"):
+            if mode == "hs":
+                wait_ready("hssig", env)
+            cmd, extra = command(mode, ["hssig"])
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 env={**BASE_ENV, **env, **extra})
+            self.assertEqual(p.stdout.readline(), b"ready\n")
+            time.sleep(0.2)  # out of its print: the handler prints too
+            p.send_signal(signal.SIGTERM)
+            out, err = p.communicate(timeout=20)
+            results.append((p.returncode, out, err))
+        stop("hssig", env)
+        self.assertEqual(status("hssig", env), "down")  # the daemon, which loaded it, obeys its own stop
+        self.assertEqual(results[0][:2], (42, b"clean up\n"))
+        self.assertEqual(results[0], results[1])
+
+    def test_daemon_does_not_run_the_tools_exit_hooks(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        env = {**in_private_daemon_env(root), "HOME": root}
+        state = os.path.join(root, "hsstate")
+        wait_ready("hsstate", env)
+        self.assertEqual(run("hs", ["hsstate", "from-a-run"], env=env).returncode, 0)
+        time.sleep(0.2)
+        stop("hsstate", env)
+        with open(state) as f:
+            self.assertEqual(f.read(), "from-a-run")
+
+    def test_printing_more_than_a_pty_holds_at_import(self):
+        env = in_private_daemon_env()
+        self.addCleanup(stop, "hsnoisy", env)
+        native = run("native", ["hsnoisy"], env=env, tty=True)
+        # From a terminal, the daemon imports with a pty of its own.
+        run("hs", ["hsnoisy"], env=env, tty=True, require_fast=False)
+        deadline = time.monotonic() + 30
+        while True:
+            fast = run("hs", ["hsnoisy"], env=env, tty=True)
+            if fast.returncode != EXIT_NOT_FAST or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        # stdout and stderr of an import are replayed one after the other.
+        self.assertEqual(fast.returncode, native.returncode)
+        self.assertEqual(sorted(fast.stdout.splitlines()), sorted(native.stdout.splitlines()))
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class StuckDaemon(Matrix):
+    """A daemon that does not take its clients only costs them a delay."""
+
+    SLOW = """#!{python}
+import slowmod
+print("served" if False else "ran")
+"""
+
+    def slow_tool(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        bin_dir = os.path.join(root, "bin")
+        os.makedirs(bin_dir)
+        with open(os.path.join(bin_dir, "slowmod.py"), "w") as f:
+            f.write("import sys, time\n"
+                    "if any('speedrunner_daemon' in a for a in getattr(sys, 'orig_argv', [])):\n"
+                    "    time.sleep(6)\n")
+        tool = os.path.join(bin_dir, "slowtool")
+        python = shutil.which("python3", path=BASE_ENV["PATH"])
+        with open(tool, "w") as f:
+            f.write(self.SLOW.format(python=python))
+        os.chmod(tool, 0o755)
+        return {**in_private_daemon_env(root), "PATH": f"{bin_dir}:{BASE_ENV['PATH']}"}
+
+    def test_pipeline_does_not_wait_for_the_load(self):
+        env = self.slow_tool()
+        self.addCleanup(stop, "slowtool", env)
+        full = {**BASE_ENV, **env}
+        subprocess.run([HS_BIN, "prewarm", "slowtool"], env=full, check=True)
+        time.sleep(0.3)  # its socket is up, and its load under way
+        t0 = time.monotonic()
+        p = subprocess.run(["bash", "-c", f"{shlex.quote(HS_BIN)} run slowtool -- | cat"],
+                           env=full, capture_output=True, timeout=30)
+        elapsed = time.monotonic() - t0
+        self.assertEqual(p.stdout, b"ran\n")
+        self.assertLess(elapsed, 5.0)
+        time.sleep(0.1)
+
+    def test_full_queue_does_not_block(self):
+        env = in_private_daemon_env()
+        wait_ready("hstest", env)
+        path = tool_socket("hstest", env)
+        stop("hstest", env)
+        with socket.socket(socket.AF_UNIX) as listener:
+            listener.bind(path)
+            listener.listen(0)
+            queued = []
+            for _ in range(8):  # up to what the queue takes
+                s = socket.socket(socket.AF_UNIX)
+                s.setblocking(False)
+                try:
+                    s.connect(path)
+                    queued.append(s)
+                except OSError:
+                    s.close()
+                    break
+            t0 = time.monotonic()
+            p = run("hs", ["hstest", "argv", "x"], env=env, require_fast=False)
+            elapsed = time.monotonic() - t0
+            for s in queued:
+                s.close()
+        self.assertEqual(outcome(p), outcome(run("native", ["hstest", "argv", "x"], env=env)))
+        self.assertLess(elapsed, 6.0)
+
+
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class Distribution(Matrix):
     """A release is the client alone: it writes out its built-in daemons and
     prints its zsh hook."""
 
     REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+    def test_daemon_files_others_can_write_are_not_run(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        os.makedirs(os.path.join(root, "bin"))
+        lone = os.path.join(root, "bin", "speedrunner")
+        shutil.copy2(HS_BIN, lone)
+        planted = os.path.join(root, "share", "speedrunner")
+        os.makedirs(planted)
+        ran = os.path.join(root, "planted-ran")
+        with open(os.path.join(planted, "speedrunner_daemon.py"), "w") as f:
+            f.write(f"open({ran!r}, 'w').close()\n")
+        os.chmod(planted, 0o777)
+        env = in_private_daemon_env(root)
+        full = {**BASE_ENV, **env}
+        self.addCleanup(stop, "hstest", env)
+        subprocess.run([lone, "prewarm", "hstest"], env=full, check=True)
+        wait_ready("hstest", env)
+        self.assertFalse(os.path.exists(ran))
+
+    def test_built_in_daemons_are_written_out_for_us_alone(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        os.makedirs(os.path.join(root, "bin"))
+        lone = os.path.join(root, "bin", "speedrunner")
+        shutil.copy2(HS_BIN, lone)
+        env = in_private_daemon_env(root)
+        full = {**BASE_ENV, **env}
+        self.addCleanup(stop, "hstest", env)
+        subprocess.run([lone, "prewarm", "hstest"], env=full, check=True, preexec_fn=lambda: os.umask(0))
+        daemons = os.path.join(env["XDG_DATA_HOME"], "speedrunner", "daemons")
+        wait_ready("hstest", env)
+        for d in (daemons, *glob.glob(os.path.join(daemons, "*"))):
+            self.assertEqual(stat.S_IMODE(os.stat(d).st_mode) & 0o022, 0, d)
+
+    @unittest.skipUnless(os.geteuid() == 0, "needs root")
+    def test_root_does_not_run_on_a_users_files(self):
+        # sudo with HOME kept.
+        home = tempfile.mkdtemp(dir=ROOT)
+        os.chown(home, 65534, 65534)
+        p = run("hs", ["hstest", "argv"], env={"HOME": home, "XDG_DATA_HOME": os.path.join(home, "data")})
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+        self.assertIn(b"another user", p.stderr)
+
+    def test_launcher_that_execs_a_setuid_program_is_not_followed(self):
+        sudo = shutil.which("sudo")
+        if not sudo or not os.stat(sudo).st_mode & stat.S_ISUID:
+            self.skipTest("no setuid sudo")
+        root = tempfile.mkdtemp(dir=ROOT)
+        tool = os.path.join(root, "gosudo")
+        with open(tool, "w") as f:
+            f.write(f"#!/bin/sh\nexec {sudo} -V\n")
+        os.chmod(tool, 0o755)
+        env = {"PATH": f"{root}:{BASE_ENV['PATH']}"}
+        self.assertEqual(outcome(run("native", ["gosudo"], env=env)),
+                         outcome(run("hs", ["gosudo"], env=env, require_fast=False)))
 
     def test_lone_binary_runs_its_built_in_daemon(self):
         root = tempfile.mkdtemp(dir=ROOT)

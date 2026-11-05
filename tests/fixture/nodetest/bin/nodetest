@@ -12,6 +12,9 @@ const [name, ...args] = process.argv.slice(2);
 const out = (s) => process.stdout.write(s + "\n");
 
 const commands = {
+  tz() {
+    out(new Date(0).toString());
+  },
   "echo-stdin"() {
     process.stdin.pipe(process.stdout);
   },

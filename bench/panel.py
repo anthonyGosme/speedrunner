@@ -78,6 +78,9 @@ PANEL = [
     ("python", "ansible --version", ["ansible", "--version"], None, False),
     ("python", "ansible-doc ping", ["ansible-doc", "ping"], None, False),
     ("python", "black --check sample.py", ["black", "--check", "sample.py"], "work", False),
+    # Several files: workers, through multiprocessing. No cache: it would leave none to check.
+    ("python", "black --check . (workers)", ["black", "--check", "--no-cache", "."], "work", False),
+    ("python", "flake8 -j 2 .", ["flake8", "-j", "2", "."], "work", False),
     ("python", "poetry --version", ["poetry", "--version"], None, False),
     ("python", "http --offline (httpie)", ["http", "--offline", "--ignore-stdin", "example.org", "a=b"], None, False),
     ("python", "pre-commit --version", ["pre-commit", "--version"], None, False),

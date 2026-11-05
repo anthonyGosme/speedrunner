@@ -45,13 +45,15 @@ _speedrunner_line_init() {
 # prefix, the tool that follows is warmed up without being enrolled.
 _speedrunner_pre_redraw() {
   # The common keystrokes first, before paying for emulate.
-  (( _speedrunner_warmed )) && return
-  [[ $BUFFER == *[[:space:]]* ]] || return
-  emulate -L zsh -o extended_glob
+  (( _speedrunner_warmed )) && return 0
+  [[ $BUFFER == *[[:space:]]* ]] || return 0
+  # no_bg_nice: at nice +5, by default for a background job, the daemon would
+  # not be the one the command line finds.
+  emulate -L zsh -o extended_glob -o no_bg_nice
   local rest=${BUFFER##[[:space:]]#} word
   local -i prefixed=0
   while :; do
-    [[ $rest == *[[:space:]]* ]] || return
+    [[ $rest == *[[:space:]]* ]] || return 0
     word=${rest%%[[:space:]]*}
     rest=${${rest#*[[:space:]]}##[[:space:]]#}
     [[ $word == [[:alpha:]_][[:alnum:]_]#=* ]] && continue
@@ -61,8 +63,8 @@ _speedrunner_pre_redraw() {
     fi
     break
   done
-  [[ $word == [[:alnum:]._][[:alnum:]._-]# ]] || return
-  (( prefixed || $+_speedrunner_tools[$word] )) || return
+  [[ $word == [[:alnum:]._][[:alnum:]._-]# ]] || return 0
+  (( prefixed || $+_speedrunner_tools[$word] )) || return 0
   _speedrunner_warmed=1
   command speedrunner prewarm $word </dev/null >/dev/null 2>&1 &!
 }

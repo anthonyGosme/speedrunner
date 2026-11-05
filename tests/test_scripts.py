@@ -284,6 +284,7 @@ def stop_hook_daemons(env):
             with socket.socket(socket.AF_UNIX) as s:
                 s.settimeout(5)
                 s.connect(sock)
+                s.recv(5)  # its hello
                 s.sendall(b"HS1S" + struct.pack("<I", 0))
                 s.recv(1)
         except OSError:

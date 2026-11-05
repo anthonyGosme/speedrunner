@@ -607,13 +607,9 @@ static void on_signal(int sig) {
   errno = e;
 }
 
-static napi_value Selfpipe(napi_env env, napi_callback_info info) {
-  args_t a = args(env, info);
-  int p[2];
-  if (sr_pipe2(p, O_NONBLOCK | O_CLOEXEC) < 0) return result(env, -1);
-  pipe_w = p[1];
+static int catch_signals(napi_env env, napi_value signals) {
   uint32_t n = 0;
-  napi_get_array_length(env, a.argv[0], &n);
+  napi_get_array_length(env, signals, &n);
   struct sigaction sa;
   memset(&sa, 0, sizeof sa);
   sa.sa_handler = on_signal;
@@ -622,11 +618,26 @@ static napi_value Selfpipe(napi_env env, napi_callback_info info) {
   for (uint32_t i = 0; i < n; i++) {
     napi_value v;
     int32_t sig;
-    napi_get_element(env, a.argv[0], i, &v);
+    napi_get_element(env, signals, i, &v);
     napi_get_value_int32(env, v, &sig);
-    if (sigaction(sig, &sa, NULL) < 0) return result(env, -1);
+    if (sigaction(sig, &sa, NULL) < 0) return -1;
   }
+  return 0;
+}
+
+static napi_value Selfpipe(napi_env env, napi_callback_info info) {
+  args_t a = args(env, info);
+  int p[2];
+  if (sr_pipe2(p, O_NONBLOCK | O_CLOEXEC) < 0) return result(env, -1);
+  pipe_w = p[1];
+  if (catch_signals(env, a.argv[0]) < 0) return result(env, -1);
   return num(env, p[0]);
+}
+
+// catchagain(signals): after a module's process.on(), which took them for Node.
+static napi_value Catchagain(napi_env env, napi_callback_info info) {
+  args_t a = args(env, info);
+  return result(env, catch_signals(env, a.argv[0]));
 }
 
 // signals(fd) -> the signal numbers written to the pipe since last time.
@@ -757,7 +768,7 @@ napi_value napi_register_module_v1(napi_env env, napi_value exports) {
       FN("flock", Flock),       FN("read", Read),         FN("write", Write),
       FN("poll", Poll),         FN("listen", Listen),     FN("accept", Accept),
       FN("socketpair", Socketpair), FN("peercred", Peercred), FN("recvfds", Recvfds),
-      FN("sendfd", Sendfd),     FN("selfpipe", Selfpipe), FN("signals", Signals),
+      FN("sendfd", Sendfd),     FN("selfpipe", Selfpipe), FN("catchagain", Catchagain), FN("signals", Signals),
       FN("unblock", Unblock),   FN("disposition", Disposition),
       FN("inotifyInit", InotifyInit), FN("inotifyWatch", InotifyWatch), FN("openpty", Openpty),
       FN("threads", Threads),   FN("fdpath", Fdpath),     FN("cfUnsafe", CfUnsafe),

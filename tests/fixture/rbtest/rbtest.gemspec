@@ -5,6 +5,6 @@ Gem::Specification.new do |s|
   s.authors = ["speedrunner"]
   s.files = Dir["lib/**/*.rb"] + Dir["exe/*"]
   s.bindir = "exe"
-  s.executables = ["rbtest", "rbrun", "rbtty", "rbthread", "rbcf"]
+  s.executables = ["rbtest", "rbrun", "rbtty", "rbthread", "rbcf", "rbsig", "rbstate", "rbnoisy"]
   s.license = "MIT"
 end

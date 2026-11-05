@@ -204,7 +204,7 @@ module Speedrunner
   # --- daemon state --------------------------------------------------------
 
   class State
-    attr_accessor :tool, :script, :sock_path, :lock_fd, :origin, :disabled, :start_env,
+    attr_accessor :tool_traps, :daemon_traps, :tool, :script, :sock_path, :lock_fd, :origin, :disabled, :start_env,
                   :pre_import_env, :import_env_changed, :import_env_deleted, :import_env_read,
                   :start_cwd, :start_cwd_id, :runtime_dir, :pending_reads, :import_cwd_read,
                   :import_cwd_files, :import_dirs, :load_dirs,
@@ -239,6 +239,8 @@ module Speedrunner
       @pending_gems = {}
       @gen = 0           # bumped whenever the preloaded state changes
       @tty = nil             # TtyStandIn: the starting client's terminals, during loads
+      @tool_traps = {}       # what files trapped as they loaded, for the children
+      @daemon_traps = {}     # the daemon's own, once it serves
       @import_tty_read = {}  # fd -> whether a terminal, as load-time code found it
       @skip = {}         # level 1: file -> why a fresh daemon must not load it
       @learning = nil    # what apply_learned still has to vet, across its steps
@@ -624,22 +626,65 @@ module Speedrunner
         anon_file
       end
     end
+    drained = { sinks[0] => "".b, sinks[1] => "".b }
     begin
       STDIN.reopen(tty.slave[0]) if tty&.covers?(0)
       STDOUT.reopen(tty&.covers?(1) ? tty.slave[1] : sinks[0])
       STDERR.reopen(tty&.covers?(2) ? tty.slave[2] : sinks[1])
-      yield
+      draining_ptys(sinks.grep_v(File), drained) do
+        yield
+      ensure # what is buffered may fill a pty too
+        [STDOUT, STDERR].each { |io| io.flush rescue nil }
+      end
     ensure
-      [STDOUT, STDERR].each { |io| io.flush rescue nil }
       STDIN.reopen(saved[0])
       STDOUT.reopen(saved[1])
       STDERR.reopen(saved[2])
       STDOUT.sync, STDERR.sync = syncs
     end
-    sinks.map { |f| f.is_a?(File) ? (f.rewind; f.read.b) : drain(f) }
+    sinks.map { |f| f.is_a?(File) ? (f.rewind; f.read.b) : drained[f] + drain(f) }
   ensure
     (saved || []).each(&:close)
     (sinks || []).each { |f| f.close if f.is_a?(File) }
+  end
+
+  # A file that prints as it loads writes to a pty stand-in, which blocks
+  # once full, with nobody reading: read its master on a timer meanwhile,
+  # which interrupts the write. No thread: the daemon must fork. Not over a
+  # tool's own use of the timer.
+  DRAIN_INTERVAL_US = 10_000
+
+  def self.draining_ptys(masters, drained)
+    return yield if masters.empty?
+    previous = trap("ALRM") do
+      masters.each do |master|
+        loop do
+          chunk = master.read_nonblock(65_536, exception: false)
+          break if chunk.nil? || chunk == :wait_readable
+          drained[master] << chunk
+        end
+      rescue Errno::EIO
+        nil
+      end
+    end
+    unless ["DEFAULT", "SYSTEM_DEFAULT", nil].include?(previous)
+      trap("ALRM", previous)
+      return yield
+    end
+    set_timer(DRAIN_INTERVAL_US)
+    begin
+      yield
+    ensure
+      set_timer(0)
+      trap("ALRM", "DEFAULT")
+    end
+  end
+
+  def self.set_timer(microseconds)
+    @setitimer ||= Fiddle::Function.new(LIBC["setitimer"], [Fiddle::TYPE_INT, Fiddle::TYPE_VOIDP, Fiddle::TYPE_VOIDP],
+                                        Fiddle::TYPE_INT)
+    # struct itimerval: two timevals, ITIMER_REAL is 0.
+    @setitimer.call(0, [0, microseconds, 0, microseconds].pack("q l x4 q l x4"), nil)
   end
 
   # A pty hands what was written to its master a little later (the
@@ -886,6 +931,7 @@ module Speedrunner
           TtyReads::SEEN.clear
           TtyReads::ON[0] = true
           output, argv_read = reads_argv { reading_files(state) { capture_fds(state.tty) { require file } } }
+          keep_tool_traps(state)
         rescue Refused => e
           state.blacklist[file] = e.message
           return "#{file} #{e.message}"
@@ -1377,6 +1423,8 @@ module Speedrunner
         nil # reserved by Ruby
       end
     end
+    # What the tool's files set as they loaded, after what it inherits, as natively.
+    state.tool_traps.each { |sig, handler| trap(sig, handler) }
 
     $0 = state.script
     ARGV.replace(req.argv[1..].map { |a| a.dup.force_encoding(enc) })
@@ -1429,12 +1477,20 @@ module Speedrunner
   # at_exit handler registered before anything else, so it runs last.
   def self.report_exit
     conn = CHILD[:conn] or return
+    return unless Process.pid == CHILD[:pid] # a process the tool forked, which ends on its own
     err = $!
     clean_backtrace(err, CHILD[:script]) if err
     CHILD[:files]&.each_key do |io|
       io.flush unless io.closed?
     rescue IOError, SystemCallError
       nil # teardown will retry and report it
+    end
+    if err.is_a?(Errno::EPIPE)
+      # `| head`: natively Ruby dies of SIGPIPE, silently, as its STDOUT is marked
+      # for it. Reopening it lost that mark.
+      trap("PIPE", "SYSTEM_DEFAULT")
+      Process.kill("PIPE", Process.pid)
+      sleep
     end
     begin
       [$stdout, $stderr, STDOUT, STDERR].uniq.each { |io| io.flush unless io.closed? }
@@ -1467,6 +1523,7 @@ module Speedrunner
     STDOUT.syswrite(state.import_output[0]) unless state.import_output[0].empty?
     STDERR.syswrite(state.import_output[1]) unless state.import_output[1].empty?
     CHILD[:conn] = conn
+    CHILD[:pid] = Process.pid
     CHILD[:script] = state.script
     track_files
     start_learning if state.levels.include?("2")
@@ -1504,9 +1561,10 @@ module Speedrunner
       uid, gid, groups = peer_creds(conn)
       exit!(0) unless uid == Process.uid
       begin
+        send_msg(conn, "H") # now that someone is here to read: see the client
         kind, body, fds = recv_request(conn, deadline)
-      rescue EOFError
-        exit!(0) # a client that only checked we are up
+      rescue EOFError, Errno::EPIPE
+        exit!(0) # a client that only checked we are up, or gave up on us
       end
       if kind == "P"
         if stale?(state)
@@ -1639,11 +1697,25 @@ module Speedrunner
     nil
   end
 
+  OWN_TRAPS = %w[CHLD TERM USR1 INT HUP QUIT].freeze
+
+  # What files trapped as they loaded, for the children to have, and the
+  # daemon's own back in place.
+  def self.keep_tool_traps(state)
+    OWN_TRAPS.each do |sig|
+      ours = state.daemon_traps[sig]
+      previous = trap(sig, ours || "DEFAULT")
+      next if previous.equal?(ours)
+      state.tool_traps[sig] = previous if previous.respond_to?(:call) || %w[IGNORE SIG_IGN EXIT].include?(previous)
+    end
+  end
+
   def self.wait_status_payload(status)
     status.signaled? ? [1, status.termsig].pack("Cl<") : [0, status.exitstatus].pack("Cl<")
   end
 
   def self.handle_inline(state, conn)
+    send_msg(conn, "H")
     kind, _body, fds = recv_request(conn, now + 0.5)
     fds.each(&:close)
     case kind
@@ -1732,9 +1804,11 @@ module Speedrunner
     wake_r, wake_w = IO.pipe
     stop = [nil]
     wake = -> { wake_w.write_nonblock(".", exception: false) }
-    trap("CHLD") { wake.call }
-    trap("TERM") { stop[0] ||= "SIGTERM"; wake.call }
-    trap("USR1") { stop[0] ||= "stale fingerprint"; wake.call }
+    keep_tool_traps(state)
+    state.daemon_traps = { "CHLD" => proc { wake.call },
+                           "TERM" => proc { stop[0] ||= "SIGTERM"; wake.call },
+                           "USR1" => proc { stop[0] ||= "stale fingerprint"; wake.call } }
+    state.daemon_traps.each { |sig, handler| trap(sig, handler) }
     parent_ios = [wake_r, wake_w, lock, dir]
     children = {}
     spare = nil
@@ -1906,6 +1980,26 @@ module Speedrunner
     end
   end
 
+  # As the daemon exits, the tool's at_exit handlers are for what it made as it
+  # loaded, which they remove. One that saves what it loaded would overwrite
+  # what the runs saved.
+  def self.write_nothing
+    refuse = ->(path) { raise Errno::EROFS, "the daemon writes nothing as it exits: #{path}" }
+    File.prepend(Module.new do
+      define_method(:initialize) do |path, mode = "r", *rest, **kw|
+        flags = kw[:mode] || mode
+        writing = flags.is_a?(Integer) ? flags & (File::WRONLY | File::RDWR | File::CREAT | File::TRUNC) != 0 : flags.to_s.match?(/[wa+]/)
+        refuse.call(path) if writing
+        super(path, mode, *rest, **kw)
+      end
+    end)
+    [IO, File].each do |kind|
+      kind.singleton_class.prepend(Module.new do
+        %i[write binwrite].each { |name| define_method(name) { |path, *_rest, **_kw| refuse.call(path) } }
+      end)
+    end
+  end
+
   def self.parse_args(argv)
     opts = {}
     it = argv.each
@@ -1929,4 +2023,8 @@ state.lock_fd = Integer(opts["lock-fd"]) if opts["lock-fd"]
 state.origin = opts["origin"] if opts["origin"]
 state.tty = Speedrunner.tty_stand_in(opts["tty"])
 ARGV.clear
-Speedrunner.serve(state)
+begin
+  Speedrunner.serve(state)
+ensure
+  Speedrunner.write_nothing if Process.pid == Speedrunner::PARENT_PID
+end

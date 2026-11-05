@@ -130,12 +130,30 @@ pub fn looks_like_launcher(script: &[u8]) -> bool {
     let last = lines.last().copied().unwrap_or(b"");
     if is_shell(interp) && interp != b"env" {
         let commands: Vec<&[u8]> = lines.iter().map(|l| trim(l)).collect();
-        trim(last).starts_with(b"exec ") || ends_in_exec_chain(&commands)
+        (trim(last).starts_with(b"exec ") || ends_in_exec_chain(&commands))
+            && !commands.iter().any(|c| execs_privileged(c))
     } else if interp.starts_with(b"python") {
         last.starts_with(b"os.exec")
     } else {
         false
     }
+}
+
+/// `exec sudo ...`, named as is: under ptrace the kernel drops a program's
+/// setuid and setgid, and it would fail. Not a launcher, then. A program named
+/// by a variable is not seen.
+fn execs_privileged(command: &[u8]) -> bool {
+    let word = match command.strip_prefix(b"exec ") {
+        Some(rest) => trim(rest).split(|b| b.is_ascii_whitespace()).next().unwrap_or(b""),
+        None => return false,
+    };
+    if word.iter().any(|b| b"$\"'`".contains(b)) {
+        return false;
+    }
+    crate::resolve_in_path(word).map_or(false, |path| {
+        use std::os::unix::fs::MetadataExt;
+        fs::metadata(OsStr::from_bytes(&path)).map_or(false, |m| m.mode() & 0o6000 != 0)
+    })
 }
 
 /// Commands (trimmed lines, comments out) ending in an `if ... fi` block,
@@ -273,6 +291,10 @@ pub fn trace(_path: &[u8], _argv: &[Vec<u8>], _quiet: bool) -> io::Result<Traced
 
 #[cfg(target_os = "linux")]
 pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
+    // Before anything runs: what the launcher execs is read from /proc, and a
+    // run that cannot tell falls back to a native one, so its preamble would
+    // run twice.
+    fs::read_link("/proc/self/exe")?;
     let path_c = CString::new(path)?;
     let argv_c: Vec<CString> = argv.iter().map(|a| CString::new(&a[..])).collect::<Result<_, _>>()?;
     let mut ptrs: Vec<*const libc::c_char> = argv_c.iter().map(|c| c.as_ptr()).collect();

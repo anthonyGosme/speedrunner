@@ -119,6 +119,29 @@ class Outputs(m.Matrix):
         self.assertSame(["composer", "--version"], env={"COMPOSER_ALLOW_SUPERUSER": "1"})
 
 
+class EntryPoint(m.Matrix):
+    def test_script_asking_if_it_is_the_entry_point_runs_natively(self):
+        # Included by the daemon, it would think it is not, and do nothing.
+        root = tempfile.mkdtemp(dir=m.ROOT)
+        for call in ("debug_backtrace()", "count(get_included_files()) > 1"):
+            with self.subTest(call=call):
+                tool = os.path.join(root, "entrytool")
+                with open(tool, "w") as f:
+                    f.write(f"#!/usr/bin/env php\n<?php\nif (!({call})) {{ echo \"main ran\\n\"; }}\n")
+                os.chmod(tool, 0o755)
+                env = {"PATH": f"{root}:{m.BASE_ENV['PATH']}"}
+                self.addCleanup(lambda: subprocess.run([HS_BIN, "stop", "entrytool"], env={**m.BASE_ENV, **env},
+                                                       capture_output=True))
+                native = outcome(run("native", ["entrytool"], env=env))
+                self.assertIn(b"main ran", native[1])
+                self.assertEqual(native, outcome(run("hs", ["entrytool"], env=env, require_fast=False)))
+                if HS_BIN:
+                    time.sleep(0.5)
+                    self.assertIn("entry point", m.status("entrytool", env))
+                    self.assertEqual(native, outcome(run("hs", ["entrytool"], env=env, require_fast=False)))
+                    subprocess.run([HS_BIN, "stop", "entrytool"], env={**m.BASE_ENV, **env}, capture_output=True)
+
+
 class Terminal(m.Matrix):
     def test_tty_streams(self):
         self.assertSame(["phptest", "tty"], tty=True)

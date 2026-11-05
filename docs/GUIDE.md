@@ -196,7 +196,7 @@ stops after 4 hours unused, or with the [stop-everything loop](#stopping-every-d
 | `speedrunner prewarm <tool>` | Starts the daemon if none is up, or replaces one the tool's upgrade made stale. Returns at once. | 0, 1 if it cannot start one |
 | `speedrunner enroll [<tool>…]` | Enrolls tools; with no argument, lists them. | 0, 1 or 127 if refused |
 | `speedrunner init zsh\|bash` | Prints the shell hook, for `eval`. | 0 |
-| `speedrunner --version`, `speedrunner version` | Prints `speedrunner 0.4.0`. | 0 |
+| `speedrunner --version`, `speedrunner version` | Prints `speedrunner 0.4.6`. | 0 |
 
 All of them exit with 127 for a tool not found on `PATH`, and 2 on a usage error.
 `status`, `stop` and `prewarm` also take `php <script>`
@@ -325,7 +325,7 @@ To change them, stop the daemon and start it again with the new value:
 SPEEDRUNNER_IDLE_TIMEOUT=600 speedrunner prewarm aws    # this aws daemon exits after 10 idle minutes
 ```
 
-Read by `install.sh`: `SPEEDRUNNER_VERSION` (a tag such as `v0.4.0`; the latest
+Read by `install.sh`: `SPEEDRUNNER_VERSION` (a tag such as `v0.4.6`; the latest
 release by default), `SPEEDRUNNER_BIN_DIR` (where to install),
 `SPEEDRUNNER_NO_MODIFY_PATH=1` (leave your shell's startup files alone) and
 `SPEEDRUNNER_BASE_URL` (where to download from, for tests). When building the
@@ -470,7 +470,30 @@ and none runs a command twice.
   password) fails, where natively it would find the terminal. Node tools get no
   `/dev/tty` at all.
 - **Ctrl-Z** suspends the client, not the tool, which runs on. Ctrl-C, Ctrl-\,
-  `kill`, terminal resizes and SIGHUP reach the tool as they would natively.
+  `kill`, terminal resizes and SIGHUP reach the tool as they would natively. A job
+  already in the background with the terminal on its stdin runs natively.
+- **What a tool makes as it loads is every call's.** A random generator seeded at
+  load (`random.Random()`, Ruby's `Random.new`, a token, numpy's global one) gives
+  the same values to each call; only the runtime's own global generators are
+  reseeded. State read from a file at load is the daemon's copy: a tool that loads
+  a history as it starts and saves it at exit loses what earlier calls added, and
+  the file ends up with the last call's version. A log file opened at load keeps
+  writing to the same file after a rotation. stdin read at load finds nothing.
+- **Interpreter internals show.** Ruby's `Process.argv0`, stack frames of the
+  daemon below the tool's, and a crash's backtrace in Ruby can tell the difference.
+- **Limits only some can follow.** The tool runs in its daemon's cgroup, not the
+  caller's: `systemd-run --scope -p MemoryMax=…` does not apply to it. A Linux
+  Landlock ruleset cannot be seen either. `ulimit`, `nice`, `taskset`, namespaces,
+  capabilities, seccomp and `no_new_privs` are followed: each different one gets a
+  daemon of its own, started in that context, so a one-off `nice -n 19 tool` leaves
+  a daemon idle for up to 4 h. `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, a macOS sandbox
+  and any open file descriptor above 2 (`<(…)`, `3>file`) run natively.
+- **A launcher that execs a setuid program named in a variable** loses its
+  privileges under ptrace: `exec "$SUDO" …`. Named as is (`exec sudo …`), it is not
+  followed.
+- **The environment of the first call stays in the daemon's memory** and its
+  `/proc/<pid>/environ` until it exits, at most 4 h after its last call. Only your
+  own user's processes can read it.
 - **The tool's parent** is the daemon: `getppid()` differs, and the tool leads its
   own process group.
 - **`PYTHONHASHSEED`**: every call of a Python tool shares the daemon's hash seed,

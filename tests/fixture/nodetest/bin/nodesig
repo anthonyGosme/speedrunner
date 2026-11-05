@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+"use strict";
+require("../lib/sigload.js");
+process.stdout.write("ready\n");
+setTimeout(() => {}, 30000);

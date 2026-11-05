@@ -55,10 +55,11 @@ _speedrunner_line_init() {
 _speedrunner_space() {
   READLINE_LINE="${READLINE_LINE:0:READLINE_POINT} ${READLINE_LINE:READLINE_POINT}"
   (( READLINE_POINT += 1 ))
-  (( _speedrunner_warmed )) && return
+  # return 0, all along: under `set -e`, a failure here would close the shell.
+  (( _speedrunner_warmed )) && return 0
   local rest=${READLINE_LINE#"${READLINE_LINE%%[![:space:]]*}"} word prefixed=0
   while :; do
-    [[ $rest == *[[:space:]]* ]] || return
+    [[ $rest == *[[:space:]]* ]] || return 0
     word=${rest%%[[:space:]]*}
     rest=${rest#*[[:space:]]}
     rest=${rest#"${rest%%[![:space:]]*}"}
@@ -69,8 +70,8 @@ _speedrunner_space() {
     fi
     break
   done
-  [[ $word =~ ^[[:alnum:]._][[:alnum:]._-]*$ ]] || return
-  (( prefixed )) || [[ -n ${_speedrunner_tools[$word]+x} ]] || return
+  [[ $word =~ ^[[:alnum:]._][[:alnum:]._-]*$ ]] || return 0
+  (( prefixed )) || [[ -n ${_speedrunner_tools[$word]+x} ]] || return 0
   _speedrunner_warmed=1
   (command speedrunner prewarm "$word" < /dev/null > /dev/null 2>&1 &)
 }

@@ -297,6 +297,49 @@ def cmd_project(args):
     print(projmod.NAME)
 
 
+def cmd_mp(args):
+    import multiprocessing
+    with multiprocessing.get_context(args[0]).Pool(2) as pool:
+        print(pool.map(abs, [-1, -2]))
+
+
+def cmd_fork_exit(args):
+    # The parent's code is the tool's; what the process it forked exits with is not.
+    pid = os.fork()
+    if pid == 0:
+        sys.exit(3)
+    os.waitpid(pid, 0)
+    sys.exit(5)
+
+
+def cmd_tz(args):
+    print(time.strftime("%H:%M %Z", time.localtime(0)))
+
+
+def cmd_write_fd(args):
+    os.write(int(args[0]), b"on the fd\n")
+
+
+def cmd_cat(args):
+    with open(args[0]) as f:
+        sys.stdout.write(f.read())
+
+
+def cmd_context(args):
+    import resource
+    print("fsize", resource.getrlimit(resource.RLIMIT_FSIZE))
+    print("nofile", resource.getrlimit(resource.RLIMIT_NOFILE))
+    print("nice", os.nice(0))
+    if hasattr(os, "sched_getaffinity"):
+        print("cpus", sorted(os.sched_getaffinity(0)))
+
+
+def cmd_ppmod(args):
+    # From a PYTHONPATH relative to the cwd.
+    import ppmod
+    print(ppmod.NAME)
+
+
 def cmd_signals(args):
     for name in ("SIGINT", "SIGPIPE", "SIGTERM", "SIGCHLD", "SIGHUP", "SIGQUIT", "SIGXFSZ"):
         handler = signal.getsignal(getattr(signal, name))
