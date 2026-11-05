@@ -102,6 +102,8 @@ speedrunner demo
 
 ## Results
 
+Why CLIs are slow to start: [where the time goes, and how to measure it](https://anthonygosme.github.io/).
+
 <!-- panel:start -->
 **96 commands served (46 Python, 18 Ruby, 19 PHP, 13 Node), 96 with an output identical to the native run. Speedup: geometric mean x5.5, median x4.8; 74 at x3 or more, 22 at x10 or more.**
 
