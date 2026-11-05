@@ -16,8 +16,8 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::MetadataExt;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -26,6 +26,9 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 const MAGIC: &[u8] = b"HS1";
+// In each socket's name. The client waits for the child's hello before it hands
+// over any file descriptor, so a client of an older protocol shares no daemon.
+const PROTOCOL: &[u8] = b"hello";
 const EXIT_NOT_FAST: i32 = 124;
 const EXIT_LOST: i32 = 125;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
@@ -55,6 +58,8 @@ const EMBEDDED: [(&str, &[u8]); 7] = [
     ("speedrunner_node-musl.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-musl.node"))),
     ("speedrunner_node-darwin.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-darwin.node"))),
 ];
+const NATIVE_FLAG: &str = "--native";
+const NATIVE_ENV: &str = "SPEEDRUNNER_NATIVE";
 const ZSH_HOOK: &str = include_str!("../../shell/speedrunner.zsh");
 const BASH_HOOK: &str = include_str!("../../shell/speedrunner.bash");
 
@@ -65,13 +70,14 @@ fn main() {
     // nice, that works for any tool without enrolling it. `srr aws s3 ls`
     // is `speedrunner run aws -- s3 ls`.
     if invoked == b"srr" {
-        if args.len() < 2 {
-            eprintln!("usage: srr <tool> [args...]");
+        let at = if args.get(1).map_or(false, |a| a == NATIVE_FLAG) { 2 } else { 1 };
+        if args.len() <= at {
+            eprintln!("usage: srr [{}] <tool> [args...]", NATIVE_FLAG);
             process::exit(2);
         }
-        let rest: Vec<OsString> = [args[1].clone(), OsString::from("--")]
-            .into_iter()
-            .chain(args[2..].iter().cloned())
+        let rest: Vec<OsString> = args[1..=at].iter().cloned()
+            .chain(std::iter::once(OsString::from("--")))
+            .chain(args[at + 1..].iter().cloned())
             .collect();
         process::exit(cmd_run(&rest));
     }
@@ -112,7 +118,7 @@ fn main() {
 
 fn usage() {
     eprintln!(
-        "usage: speedrunner run <tool> -- [args...]   (or: srr <tool> [args...])\n       \
+        "usage: speedrunner run [--native] <tool> -- [args...]   (or: srr [--native] <tool> [args...])\n       \
          eval \"$(speedrunner activate [--eager] [<tool>...])\"     (in a script: no prefix needed)\n       \
          speedrunner exec [--eager] [-t <tool>]... [--] <command> [args...]\n       \
          speedrunner enroll [<tool>...]\n       \
@@ -139,6 +145,8 @@ const DEMO_ARGS: &[&str] = &["--version"];
 /// fallback is reported, not counted), and whether both print the same.
 /// Daemons it started are stopped after; those already running are left.
 fn cmd_demo(rest: &[OsString]) -> i32 {
+    // Asking for the gain is asking for the fast path, whatever the shell exports.
+    env::remove_var(NATIVE_ENV);
     let runs = match rest {
         [] => Some(3),
         [flag, n] if flag == "--runs" => n.to_str().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 0),
@@ -342,7 +350,14 @@ impl<'a> Tool<'a> {
         // `./manage.py` names a different script in each project: the
         // daemon, which runs elsewhere, gets it relative to no directory.
         let path = absolute(&found)?;
-        let (dir, sock) = socket_at(socket_name(name, &path).as_ref());
+        // `#!/usr/bin/env python`: the interpreter is PATH's, venv or version
+        // manager: another one is another daemon.
+        let mut identity = path.clone();
+        if let Ok((interp, _, _)) = read_shebang(&found) {
+            identity.push(0);
+            identity.extend_from_slice(&absolute(&interp).unwrap_or(interp));
+        }
+        let (dir, sock) = socket_at(socket_name(name, &identity, None).as_ref());
         Some(Tool { name, path, found, sock, dir, form: None, target: None, learned: false })
     }
 
@@ -366,7 +381,7 @@ impl<'a> Tool<'a> {
             }
         };
         identity.extend_from_slice(&path);
-        let (dir, sock) = socket_at(socket_name(name, &identity).as_ref());
+        let (dir, sock) = socket_at(socket_name(name, &identity, Some(&target.launch.env)).as_ref());
         Tool { name, path, found, sock, dir, form: None, target: Some(target), learned: false }
     }
 
@@ -426,7 +441,10 @@ impl<'a> Tool<'a> {
             return None;
         }
         let path = script.into_os_string().into_vec();
-        let (dir, sock) = socket_at(socket_name(OsStr::from_bytes(basename(&path)), &path).as_ref());
+        let mut identity = path.clone();
+        identity.push(0);
+        identity.extend_from_slice(&self.path); // the interpreter PATH found
+        let (dir, sock) = socket_at(socket_name(OsStr::from_bytes(basename(&path)), &identity, None).as_ref());
         Some(Tool { name: self.name, found: path.clone(), path, sock, dir,
                     form: Some(ScriptForm { interp: self.path.clone(), typed: typed.clone() }),
                     target: None, learned: false })
@@ -487,6 +505,8 @@ fn cmd_run(rest: &[OsString]) -> i32 {
 /// daemon up, only a tool's second call starts one, so that a tool called
 /// once costs nothing.
 fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
+    let flagged = rest.first().map_or(false, |a| a == NATIVE_FLAG);
+    let rest = if flagged { &rest[1..] } else { rest };
     if rest.len() < 2 || rest[1] != "--" {
         usage();
         return 2;
@@ -499,6 +519,16 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
             return 127;
         }
     };
+    if flagged || native_asked() {
+        // Not fall_back: the caller's choice outranks SPEEDRUNNER_REQUIRE_FAST.
+        if env::var_os("SPEEDRUNNER_DEBUG").is_some() {
+            eprintln!("speedrunner: running {} natively: asked to", tool.display());
+        }
+        exec_native(&tool, args);
+    }
+    if let Some(reason) = only_native() {
+        fall_back(&tool, args, &reason);
+    }
     if let Some(script) = tool.script_form(args) {
         tool = script;
         args = &args[1..];
@@ -508,6 +538,107 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
         fall_back(&tool, args, "not a script of a runtime speedrunner serves");
     }
     serve(&tool, args, lazy)
+}
+
+/// SPEEDRUNNER_NATIVE: everything run under it is the tool itself, sub-processes
+/// included, and starts no daemon. Its forms that read as "no" do not count.
+fn native_asked() -> bool {
+    env::var_os(NATIVE_ENV).map_or(false, |v| !v.is_empty() && v != "0")
+}
+
+/// Why this very call must run natively, and start no daemon either.
+fn only_native() -> Option<String> {
+    untrusted_context().or_else(|| {
+        if let Some(fd) = inherited_fd() {
+            return Some(format!("fd {} is open, which a child could not have as its own", fd));
+        }
+        unsafe {
+            let group = if libc::isatty(0) == 1 { libc::tcgetpgrp(0) } else { -1 };
+            if group > 0 && group != libc::getpgrp() {
+                // The child has no terminal: it would read it, not stop as a job does.
+                return Some("a background job on a terminal".to_string());
+            }
+        }
+        None
+    })
+}
+
+/// Why no daemon may serve or be started in this context: what makes the
+/// process differ is not something a daemon started elsewhere could have (code
+/// preloaded into it, a sandbox), or the files a daemon runs on are not ours.
+fn untrusted_context() -> Option<String> {
+    for name in ["LD_PRELOAD", "LD_AUDIT", "DYLD_INSERT_LIBRARIES"] {
+        if env::var_os(name).map_or(false, |v| !v.is_empty()) {
+            return Some(format!("{} is set", name));
+        }
+    }
+    if platform::sandboxed() {
+        return Some("in a sandbox".to_string());
+    }
+    let euid = unsafe { libc::geteuid() };
+    if euid != unsafe { libc::getuid() } || unsafe { libc::getegid() != libc::getgid() } {
+        return Some("setuid or setgid".to_string());
+    }
+    // sudo keeps HOME on some systems: root would run the user's daemon files.
+    for name in ["HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME"] {
+        if let Some(dir) = env::var_os(name) {
+            if let Ok(meta) = std::fs::metadata(&dir) {
+                if !owned_by_us_or_root(&meta, euid) {
+                    return Some(format!("{} belongs to another user", name));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Ours, or root's: root trusts only its own.
+fn owned_by_us_or_root(meta: &std::fs::Metadata, euid: libc::uid_t) -> bool {
+    meta.uid() == euid || meta.uid() == 0
+}
+
+/// An fd above 2 that the tool would inherit natively: `<(...)`, `3>file`. Only
+/// 0, 1 and 2 are handed over, and the child's own low fds are not the caller's.
+fn inherited_fd() -> Option<RawFd> {
+    let jobserver = legacy_jobserver();
+    let inherited = |fd: RawFd| fd > 2 && {
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        flags >= 0 && flags & libc::FD_CLOEXEC == 0 && !jobserver.contains(&pipe_id(fd))
+    };
+    match std::fs::read_dir("/dev/fd") {
+        // The directory's own fd is close-on-exec.
+        Ok(entries) => entries.flatten()
+            .filter_map(|e| e.file_name().to_str().and_then(|n| n.parse().ok()))
+            .find(|fd| inherited(*fd)),
+        Err(_) => (3..256).find(|fd| inherited(*fd)),
+    }
+}
+
+/// The pipes of a make that hands its jobserver to every recipe under -j, whether
+/// the recipe runs a sub-make or not: `--jobserver-fds=R,W` in MAKEFLAGS, as
+/// macOS's 3.81 does. Not an fd the tool asked for, unlike `--jobserver-auth=R,W`,
+/// which make 4.3 gives only to a recipe marked as recursive: that one stays
+/// native. Nothing here unless both are pipes.
+fn legacy_jobserver() -> Vec<Option<(u64, u64)>> {
+    let flags = env::var_os("MAKEFLAGS").unwrap_or_default();
+    let named = flags.as_bytes().split(|b| *b == b' ')
+        .find_map(|word| word.strip_prefix(&b"--jobserver-fds="[..]))
+        .and_then(|fds| std::str::from_utf8(fds).ok())
+        .and_then(|fds| fds.split_once(','))
+        .and_then(|(r, w)| Some((r.parse::<RawFd>().ok()?, w.parse::<RawFd>().ok()?)));
+    match named {
+        Some((r, w)) if pipe_id(r).is_some() && pipe_id(w).is_some() => vec![pipe_id(r), pipe_id(w)],
+        _ => Vec::new(),
+    }
+}
+
+/// Which pipe an fd is, if it is one: make keeps a dup of the read end too.
+fn pipe_id(fd: RawFd) -> Option<(u64, u64)> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd, &mut st) } != 0 || st.st_mode & libc::S_IFMT != libc::S_IFIFO {
+        return None;
+    }
+    Some((st.st_dev as u64, st.st_ino as u64))
 }
 
 /// Run a launcher natively until it execs the interpreter, then serve that,
@@ -553,7 +684,7 @@ fn run_as_bash(args: &[OsString]) -> i32 {
     let hook = args.first().map_or(false, |a| {
         !a.as_bytes().starts_with(b"-") && launcher::is_precommit_hook(a.as_bytes())
     });
-    if !hook {
+    if !hook || native_asked() {
         exec_native(&bash, args);
     }
     run_launcher(&bash, OsStr::new("pre-commit"), args, lazy_counter(b"pre-commit").as_deref())
@@ -607,6 +738,11 @@ enum Refused {
 
 fn handshake(sock: &UnixStream, tool: &Tool, args: &[OsString]) -> Result<i32, Refused> {
     sock.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).map_err(Refused::Io)?;
+    sock.set_write_timeout(Some(HANDSHAKE_TIMEOUT)).map_err(Refused::Io)?;
+    // Only then the request. What is sent stays in the socket until someone
+    // reads it, whether or not we are still there, and with it our stdout: a
+    // pipeline would wait for a daemon that is busy loading.
+    read_hello(sock).map_err(Refused::Io)?;
     for fd in 0..3 {
         if unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
             return Err(Refused::Native(format!("fd {} is closed", fd)));
@@ -638,6 +774,13 @@ fn handshake(sock: &UnixStream, tool: &Tool, args: &[OsString]) -> Result<i32, R
         (b'N', reason) => Err(Refused::Native(String::from_utf8_lossy(&reason).into_owned())),
         (b'R', p) if p.len() == 4 => Ok(i32::from_le_bytes([p[0], p[1], p[2], p[3]])),
         _ => Err(Refused::Io(io::Error::new(io::ErrorKind::InvalidData, "unexpected reply"))),
+    }
+}
+
+fn read_hello(sock: &UnixStream) -> io::Result<()> {
+    match read_msg(sock)? {
+        (b'H', _) => Ok(()),
+        _ => Err(io::Error::new(io::ErrorKind::InvalidData, "no hello")),
     }
 }
 
@@ -1039,15 +1182,113 @@ fn ensure_runtime_dir(dir: &Path) -> io::Result<()> {
     check_runtime_dir(dir)
 }
 
+/// connect() blocks for as long as the daemon's queue is full, and a daemon
+/// that is stuck never empties it: non-blocking, for a while.
+fn connect_with_timeout(sock: &Path) -> io::Result<UnixStream> {
+    let mut addr: libc::sockaddr_un = unsafe { mem::zeroed() };
+    addr.sun_family = libc::AF_UNIX as _;
+    let path = sock.as_os_str().as_bytes();
+    if path.len() >= addr.sun_path.len() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "socket path too long"));
+    }
+    for (to, from) in addr.sun_path.iter_mut().zip(path) {
+        *to = *from as libc::c_char;
+    }
+    let size = mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+    let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+    unsafe {
+        let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let stream = UnixStream::from_raw_fd(fd); // closes it, however we leave
+        libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        stream.set_nonblocking(true)?;
+        loop {
+            if libc::connect(fd, &addr as *const _ as *const libc::sockaddr, size) == 0 {
+                stream.set_nonblocking(false)?;
+                return Ok(stream);
+            }
+            let err = io::Error::last_os_error();
+            let full = err.raw_os_error() == Some(libc::EAGAIN);
+            if !(full || err.kind() == io::ErrorKind::Interrupted) || Instant::now() >= deadline {
+                return Err(err);
+            }
+            libc::usleep(2_000);
+        }
+    }
+}
+
 fn connect(sock: &Path) -> io::Result<UnixStream> {
-    let s = UnixStream::connect(sock)?;
+    let s = connect_with_timeout(sock)?;
     if platform::peer_uid(s.as_raw_fd())? != unsafe { libc::getuid() } {
         return Err(io::Error::new(io::ErrorKind::PermissionDenied, "daemon runs as another user"));
     }
     Ok(s)
 }
 
-fn socket_name(tool: &OsStr, path: &[u8]) -> String {
+/// What a daemon has for good from the process that starts it, and a child
+/// could not take from its client. Each different one is a daemon of its own,
+/// started in that very context: limits, priority, namespaces, and so on
+/// (platform::context), library paths, and the cwd when the interpreter finds
+/// modules relative to it. `env`: what a launcher gives the tool instead of ours.
+fn context_key(env: Option<&[Vec<u8>]>) -> Vec<u8> {
+    let mut key = PROTOCOL.to_vec();
+    platform::context(&mut key);
+    let ours;
+    let env = match env {
+        Some(env) => env,
+        None => {
+            ours = environ();
+            &ours
+        }
+    };
+    let mut relative = false;
+    for entry in env {
+        let eq = entry.iter().position(|b| *b == b'=').unwrap_or(entry.len());
+        let (name, value) = (&entry[..eq], entry.get(eq + 1..).unwrap_or(b""));
+        if LIBRARY_PATHS.contains(&name) {
+            key.push(0);
+            key.extend_from_slice(entry);
+        }
+        relative = relative || lookup_is_relative(name, value);
+    }
+    if relative {
+        if let Ok(cwd) = env::current_dir() {
+            key.push(0);
+            key.extend_from_slice(cwd.as_os_str().as_bytes());
+        }
+    }
+    key
+}
+
+/// Read as the interpreter starts, and they name files: another value, another
+/// set of libraries for the daemon's whole life.
+const LIBRARY_PATHS: [&[u8]; 4] =
+    [b"LD_LIBRARY_PATH", b"DYLD_LIBRARY_PATH", b"DYLD_FALLBACK_LIBRARY_PATH", b"DYLD_FRAMEWORK_PATH"];
+
+/// Whether this variable makes an interpreter find code relative to the cwd.
+/// Resolved once, in the daemon: `PYTHONPATH=.` would be the first project's in
+/// all of them. Options are not parsed: an option that loads a file counts,
+/// even with an absolute path, which only costs a daemon per directory.
+fn lookup_is_relative(name: &[u8], value: &[u8]) -> bool {
+    match name {
+        b"PYTHONPATH" | b"RUBYLIB" | b"NODE_PATH" => {
+            !value.is_empty() && value.split(|b| *b == b':').any(|e| !e.starts_with(b"/"))
+        }
+        b"NODE_OPTIONS" => value.split(|b| b.is_ascii_whitespace()).any(|o| {
+            o == b"-r" || o.starts_with(b"--require") || o.starts_with(b"--import")
+                || o.starts_with(b"--loader") || o.starts_with(b"--experimental-loader")
+        }),
+        b"RUBYOPT" => value.split(|b| b.is_ascii_whitespace()).any(|o| o.starts_with(b"-I") || o.starts_with(b"-r")),
+        _ => false,
+    }
+}
+
+fn socket_name(tool: &OsStr, path: &[u8], env: Option<&[Vec<u8>]>) -> String {
+    let mut identity = path.to_vec();
+    identity.push(0);
+    identity.extend_from_slice(&context_key(env));
     let base: String = Path::new(tool)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -1056,7 +1297,7 @@ fn socket_name(tool: &OsStr, path: &[u8]) -> String {
         .take(32)
         .map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '_' })
         .collect();
-    format!("{}-{:016x}.sock", base, fnv1a(path))
+    format!("{}-{:016x}.sock", base, fnv1a(&identity))
 }
 
 fn fnv1a(data: &[u8]) -> u64 {
@@ -1149,6 +1390,8 @@ fn request(tool: &Tool, kind: u8) -> io::Result<(u8, Vec<u8>)> {
         }
     };
     s.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
+    s.set_write_timeout(Some(HANDSHAKE_TIMEOUT))?;
+    read_hello(&s)?;
     let mut w: &UnixStream = &s;
     w.write_all(&frame(kind, b""))?;
     read_msg(&s)
@@ -1336,6 +1579,12 @@ fn wait_learned(tool: &Tool) {
 }
 
 fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
+    if native_asked() {
+        return Err(unsupported(&format!("{} is set", NATIVE_ENV)));
+    }
+    if let Some(reason) = untrusted_context() {
+        return Err(unsupported(&reason));
+    }
     ensure_runtime_dir(&tool.dir)?;
     // The interpreter as named (argv[0]), the file to exec, and its options.
     let (named, interp, flags, runtime) = match (&tool.form, &tool.target) {
@@ -2025,9 +2274,24 @@ fn read_shebang(script: &[u8]) -> io::Result<(Vec<u8>, Option<Vec<u8>>, Runtime)
     Ok((interp, flag, runtime))
 }
 
+/// A daemon file found by its place relative to our binary: `../../../server`
+/// from ~/.local/bin is another account's home, /home/server. Ours or root's,
+/// and its directory too, and neither writable by anyone else.
+fn safe_to_run(file: &Path) -> bool {
+    let euid = unsafe { libc::geteuid() };
+    let safe = |path: &Path| std::fs::metadata(path).map_or(false, |meta| {
+        owned_by_us_or_root(&meta, euid) && meta.mode() & 0o022 == 0
+    });
+    match file.canonicalize() {
+        Ok(real) => safe(&real) && real.parent().map_or(false, safe),
+        Err(_) => false,
+    }
+}
+
 /// The runtime's daemon script: next to SPEEDRUNNER_DAEMON (a daemon of any
 /// runtime, for tests), else next to this binary, in ../share/speedrunner, or
-/// in the source tree's server/ when run from client/target/release.
+/// in the source tree's server/ when run from client/target/release; only if
+/// safe_to_run. Otherwise the built-in copy.
 fn locate_daemon(runtime: Runtime, interp: &[u8]) -> io::Result<Vec<u8>> {
     let file = runtime.daemon_file();
     // The Node daemon loads the addon built for its interpreter's libc.
@@ -2046,7 +2310,8 @@ fn locate_daemon(runtime: Runtime, interp: &[u8]) -> io::Result<Vec<u8>> {
     let pinned = env::var_os("SPEEDRUNNER_DAEMON").is_some();
     for dir in dirs {
         let cand = dir.join(file);
-        if cand.is_file() && addon.map_or(true, |a| dir.join(a).is_file()) {
+        let found = cand.is_file() && addon.map_or(true, |a| dir.join(a).is_file());
+        if found && (pinned || (safe_to_run(&cand) && addon.map_or(true, |a| safe_to_run(&dir.join(a))))) {
             return Ok(cand.canonicalize()?.into_os_string().into_vec());
         }
     }
@@ -2095,10 +2360,30 @@ fn extract_daemon(file: &str) -> io::Result<PathBuf> {
     };
     let dir = base.join("speedrunner/daemons").join(format!("{:016x}", fnv1a(&key)));
     let path = dir.join(file);
+    // Created with 0700, whatever the umask: what runs is what we wrote, and
+    // nobody else could have put anything there since.
+    let parent = dir.parent().ok_or_else(|| unsupported("no daemons dir"))?;
+    std::fs::DirBuilder::new().recursive(true).create(parent)?;
+    for d in [parent, &dir] {
+        if let Err(e) = std::fs::DirBuilder::new().mode(0o700).create(d) {
+            if e.kind() != io::ErrorKind::AlreadyExists {
+                return Err(e);
+            }
+        }
+    }
+    let euid = unsafe { libc::geteuid() };
+    for d in [parent, &dir] {
+        let meta = std::fs::symlink_metadata(d)?;
+        if !meta.is_dir() || meta.uid() != euid {
+            return Err(unsupported("the daemons directory is not ours"));
+        }
+        if meta.mode() & 0o022 != 0 {
+            std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
     if std::fs::read(&path).ok().as_deref() == Some(bytes) {
         return Ok(path);
     }
-    std::fs::create_dir_all(&dir)?;
     let tmp = dir.join(format!(".{}.{}", file, process::id()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, &path)?;

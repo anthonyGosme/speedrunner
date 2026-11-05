@@ -77,8 +77,8 @@ IDLE_TIMEOUT_S = float(os.environ.get("SPEEDRUNNER_IDLE_TIMEOUT", 4 * 3600))
 FOLLOW_AFTER_S = float(os.environ.get("SPEEDRUNNER_FOLLOW_AFTER", 30))
 # Env vars read once at interpreter startup: a child cannot honour a client
 # whose values differ from the daemon's, so such requests run natively.
-STARTUP_ENV_PREFIX = "PYTHON"
-STARTUP_ENV_KEYS = ("LC_ALL", "LC_CTYPE", "LANG")
+STARTUP_ENV_PREFIX = ("PYTHON", "LC_")
+STARTUP_ENV_KEYS = ("LANG",)
 # Comma-separated preload levels (brief §3): 1 script imports, 2 learned
 # imports, 3 pre-parsed botocore data files.
 PRELOAD_ENV = "SPEEDRUNNER_PRELOAD"
@@ -97,7 +97,10 @@ LAUNCH_ENV = os.environ.pop("SPEEDRUNNER_LAUNCH_ENV", None) if MACOS else None
 
 
 def log(msg):
-    os.write(LOG_FD, f"speedrunner[{os.getpid()}] {msg}\n".encode(errors="replace"))
+    try:
+        os.write(LOG_FD, f"speedrunner[{os.getpid()}] {msg}\n".encode(errors="replace"))
+    except OSError:
+        pass  # a full disk, a file size limit: not worth losing the daemon
 
 
 # --- platform ----------------------------------------------------------------
@@ -397,6 +400,8 @@ class State:
         self.import_env_changed = {}
         self.import_env_deleted = set()
         self.import_output = (b"", b"")
+        self.tool_signals = {}  # handlers modules set as they loaded, for the children
+        self.daemon_signals = {}  # the daemon's own, once it serves
         self.fingerprint_paths = []
         self.fingerprint_set = set()
         self.watch = None  # FileWatch over the module files
@@ -488,7 +493,8 @@ def shadowed(state, cwd_fd):
     return None
 
 
-PTY_QUIET_S = 0.01
+PTY_MARK = b"\0speedrunner: end of load\0"
+PTY_MARK_WAIT_S = 2.0
 
 
 def capture_fds_during(fn, tty=None):
@@ -501,6 +507,9 @@ def capture_fds_during(fn, tty=None):
     """
     sys.stdout.flush()
     sys.stderr.flush()
+    for fd in (1, 2):
+        if tty is not None and tty.covers(fd):
+            settle_pty(tty.master[fd], tty.slave[fd])
     saved = [os.dup(0), os.dup(1), os.dup(2)]
     memfds = []
     sinks = {}
@@ -516,11 +525,18 @@ def capture_fds_during(fn, tty=None):
         if tty is not None and tty.covers(0):
             os.dup2(tty.slave[0], 0)
         rebind_std_streams()
+        drained = {fd: [] for fd in (1, 2)}
+        ptys = [(fd, sinks[fd]) for fd in (1, 2) if sinks[fd] not in memfds]
         try:
-            fn()
+            with DrainingPtys(ptys, drained):
+                try:
+                    fn()
+                finally:  # what is buffered may fill a pty too
+                    sys.stdout.flush()
+                    sys.stderr.flush()
+                    for fd, _ in ptys:
+                        os.write(tty.slave[fd], PTY_MARK)
         finally:
-            sys.stdout.flush()
-            sys.stderr.flush()
             for fd in (0, 1, 2):
                 os.dup2(saved[fd], fd)
             rebind_std_streams()
@@ -529,19 +545,11 @@ def capture_fds_during(fn, tty=None):
             sink = sinks[fd]
             if sink in memfds:
                 os.lseek(sink, 0, os.SEEK_SET)
+            if sink not in memfds:
+                captured.append(read_to_mark(sink, drained[fd]))
+                continue
             chunks = []
-            while True:
-                # A pty hands what was written to its master a little later
-                # (the kernel's flip buffer): read until it stays quiet, or
-                # the rest would be blamed on the next import.
-                if sink not in memfds and not select.select([sink], [], [], PTY_QUIET_S)[0]:
-                    break
-                try:
-                    chunk = os.read(sink, 65536)
-                except (BlockingIOError, OSError):  # a drained pty
-                    break
-                if not chunk:
-                    break
+            for chunk in iter(lambda: os.read(sink, 65536), b""):
                 chunks.append(chunk)
             captured.append(b"".join(chunks))
         return tuple(captured)
@@ -550,11 +558,78 @@ def capture_fds_during(fn, tty=None):
             os.close(fd)
 
 
+def settle_pty(master, slave):
+    """Nothing left over in a pty stand-in: what a probe wrote and left there, as
+    it stopped at a refused module or was killed, is not the next module's."""
+    try:
+        while os.read(master, 65536):
+            pass
+    except OSError:  # nothing there for now
+        pass
+    os.write(slave, PTY_MARK)
+    read_to_mark(master, [])
+
+
+def read_to_mark(master, chunks):
+    """All that went through a pty stand-in. Its master gets what was written a
+    little later (the kernel's flip buffer), later still on a busy machine: what
+    comes before our own mark, written last, is all of it. The rest would be
+    missing from what each run prints, and blamed on the next import."""
+    data = b"".join(chunks)
+    deadline = time.monotonic() + PTY_MARK_WAIT_S
+    while PTY_MARK not in data:
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([master], [], [], left)[0]:
+            break
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        data += chunk
+    return data.replace(PTY_MARK, b"")
+
+
+class DrainingPtys:
+    """A module that prints as it loads writes to a pty stand-in, which blocks
+    once full (2 KiB on macOS), with nobody reading: read its master on a timer
+    meanwhile, which interrupts the write. No thread: the daemon must fork."""
+    INTERVAL_S = 0.01
+
+    def __init__(self, ptys, drained):
+        self.ptys, self.drained = ptys, drained
+        self.armed = False
+
+    def drain(self, *_):
+        for fd, master in self.ptys:
+            try:
+                while True:
+                    self.drained[fd].append(os.read(master, 65536))
+            except OSError:  # nothing there for now
+                pass
+
+    def __enter__(self):
+        # Not over a tool's own use of the timer.
+        if (self.ptys and signal.getsignal(signal.SIGALRM) == signal.SIG_DFL
+                and signal.getitimer(signal.ITIMER_REAL)[0] == 0):
+            self.handler = self.drain
+            signal.signal(signal.SIGALRM, self.handler)
+            signal.setitimer(signal.ITIMER_REAL, self.INTERVAL_S, self.INTERVAL_S)
+            self.armed = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.armed:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            if signal.getsignal(signal.SIGALRM) == self.handler:
+                signal.signal(signal.SIGALRM, signal.SIG_DFL)
+
+
 class TtyStandIn:
     """One pty per fd of the mask, raw (output bytes unchanged), with the
     client's terminal size. The slave stays blocking, as a terminal is
-    (ansible refuses to start otherwise): a module printing more at import
-    than a pty holds (some 64 KiB) would hang the daemon."""
+    (ansible refuses to start otherwise): see DrainingPtys."""
 
     def __init__(self, mask, rows, cols):
         self.mask = mask
@@ -618,6 +693,11 @@ class TrackedStream(io.TextIOWrapper):
 
     def isatty(self):
         return TtyReads.note(self.sr_fd, super().isatty())
+
+    def __reduce_ex__(self, protocol):
+        # As dill treats CPython's (pylint -j): the stream of the same name
+        # where it is unpickled, where this class does not exist.
+        return eval, (f"__import__('sys').{('stdin', 'stdout', 'stderr')[self.sr_fd]}",)
 
 
 def rebind_std_streams():
@@ -885,6 +965,7 @@ class FileReads:
     keeps its own posix.stat, and its files are the modules', already covered.
     """
     active = None
+    daemon_exiting = False  # past serve(): see audit
     loading = False  # module-level code runs, here or in a probe
     lock_seen = False  # also when the module swallowed what the hook raised
     # Made as modules loaded, see keep_load_state. path -> (kind, mode), in that order.
@@ -916,6 +997,11 @@ class FileReads:
 
     @staticmethod
     def audit(event, args):
+        if FileReads.daemon_exiting and event == "open" and args[2] is not None and args[2] & WRITING:
+            # The atexit handlers of the tool's modules, as the daemon exits, are
+            # for what they made as they loaded, which they remove. One that saves
+            # what it loaded would overwrite what the runs saved.
+            raise PermissionError(f"the daemon writes nothing as it exits: {args[0]}")
         if FileReads.loading and event in FileReads.LOCKS and FileReads.LOCKS[event](args):
             # Raising stops the call: the daemon never holds it, which would
             # refuse every other run, and every child would share it.
@@ -1044,6 +1130,9 @@ def spared(path):
     if state.get(path, (None,))[0] == TEMP_DIR:
         return True
     return CHILD.get("load_exit", False) and (path in state or any(path.startswith(f"{p}/") for p in state))
+
+
+WRITING = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_TRUNC | os.O_APPEND
 
 
 def only_in_the_daemon(func, *args, **kwargs):
@@ -1213,6 +1302,11 @@ class ArgvProbe(list):
     """
     active = False
     read = False
+
+    def __reduce_ex__(self, protocol):
+        # multiprocessing sends sys.argv to a spawned process, where this class
+        # does not exist: a list, as natively.
+        return list, (list(list.__iter__(self)),)
 
     def _note(self):
         if self.active:
@@ -1396,6 +1490,7 @@ def import_in_daemon(state, names):
             except Exception as exc:
                 state.blacklist[name] = f"import failed in the daemon: {exc!r}"
                 continue
+            keep_tool_signals(state)
             keep_file_reads(state, files)
             why = (LOCK_AT_LOAD if FileReads.lock_seen
                    else "printed in the daemon" if output != (b"", b"")
@@ -1792,6 +1887,8 @@ def apply_request(state, req, fds):
     for key in state.import_env_deleted:
         os.environ.pop(key, None)
     os.environ.update(state.import_env_changed)
+    if hasattr(time, "tzset"):
+        time.tzset()  # the C library read TZ once, as the daemon started
 
     # Dispositions a native interpreter would start with: inherited ones,
     # plus CPython's own (SIGINT -> KeyboardInterrupt, SIGPIPE/SIGXFSZ ignored).
@@ -1804,6 +1901,9 @@ def apply_request(state, req, fds):
                 signal.signal(sig, signal.SIG_IGN)
             except (OSError, ValueError):
                 pass  # reserved by libc
+    # What the tool's modules set as they loaded, after what it inherits, as natively.
+    for sig, handler in state.tool_signals.items():
+        signal.signal(sig, handler)
     signal.pthread_sigmask(signal.SIG_SETMASK, [])
 
     # The streams were created for the daemon's fds: CPython line-buffers
@@ -1926,6 +2026,8 @@ def report_exit():
     conn = CHILD["conn"]
     if conn is None:
         return  # the daemon itself
+    if os.getpid() != CHILD["pid"]:
+        return  # a process the tool forked, which ends on its own
     objects = gc.get_objects()
     finalizers = finalizers_pending(objects)
     if finalizers:
@@ -2104,6 +2206,7 @@ def run_tool(state, conn):
     write_all(1, state.import_output[0])
     write_all(2, state.import_output[1])
     CHILD["conn"] = conn
+    CHILD["pid"] = os.getpid()
     try:
         if state.module:
             # As `python -m`: run in a __main__ module of its own, through the
@@ -2178,9 +2281,10 @@ def serve_child(state, conn):
         if uid != os.getuid():
             os._exit(0)
         try:
+            send_msg(conn, b"H")  # now that someone is here to read: see the client
             kind, body, fds = recv_request(conn)
-        except EOFError:
-            os._exit(0)  # a client that only checked we are up
+        except (EOFError, BrokenPipeError):
+            os._exit(0)  # a client that only checked we are up, or gave up on us
         if kind == b"P":
             if is_stale(state):
                 mark_exiting(state)  # before the client starts a fresh daemon
@@ -2276,6 +2380,7 @@ def handle_inline(state, conn):
     """Disabled daemon: answer without forking."""
     try:
         conn.settimeout(0.5)
+        send_msg(conn, b"H")
         kind, _body, fds = recv_request(conn)
         for fd in fds:
             os.close(fd)
@@ -2344,6 +2449,7 @@ class Parent:
         self.spare_failures = 0
         self.last_activity = time.monotonic()
         self.learning = None  # Learning, while apply_learned has steps left
+        self.next_spare = 0.0  # no spare before then: the last fork failed
 
     def fork_spare(self):
         """Returns the child's pid in the parent, 0 in the spare."""
@@ -2353,8 +2459,16 @@ class Parent:
         freeze_heap()  # the children's GC must not walk, and so copy, the inherited heap
         sys.stdout.flush()
         sys.stderr.flush()
-        ctl, ctl_child = socket.socketpair()
-        pid = os.fork()
+        try:
+            ctl, ctl_child = socket.socketpair()
+        except OSError as exc:
+            return self.no_spare(exc)
+        try:
+            pid = os.fork()
+        except OSError as exc:
+            ctl.close()
+            ctl_child.close()
+            return self.no_spare(exc)
         if pid == 0:
             ctl.close()
             self.ctl_child = ctl_child
@@ -2362,6 +2476,12 @@ class Parent:
         ctl_child.close()
         self.spare = self.children[pid] = Child(pid, ctl)
         return pid
+
+    def no_spare(self, exc):
+        """Out of processes or fds for now: clients run natively meanwhile."""
+        log(f"no spare: {exc!r}")
+        self.next_spare = time.monotonic() + 1.0
+        return -1
 
     def inherited_fds(self):
         fds = [fd for fd in self.parent_fds if fd != self.lsock.fileno()]
@@ -2552,6 +2672,22 @@ def without_links(state, key, value):
                                    and os.path.basename(d.rstrip("/")).startswith("bin-")))
 
 
+# The signals the daemon has a use for: a handler a module sets for one of these
+# is not the daemon's to run.
+OWN_SIGNALS = (signal.SIGCHLD, signal.SIGTERM, signal.SIGUSR1, signal.SIGINT)
+
+
+def keep_tool_signals(state):
+    """Handlers modules set as they loaded, for the children to have, and the
+    daemon's own back in place."""
+    for sig in OWN_SIGNALS:
+        handler = signal.getsignal(sig)
+        ours = state.daemon_signals.get(sig, signal.default_int_handler if sig == signal.SIGINT else signal.SIG_DFL)
+        if handler is not ours and handler is not None:  # None: not set from Python
+            state.tool_signals[sig] = handler
+            signal.signal(sig, ours)
+
+
 def mark_exiting(state):
     """Say so in the lock file before letting go of the socket and the lock:
     a would-be daemon then waits for the lock instead of giving up."""
@@ -2632,13 +2768,16 @@ def serve(state):
     os.set_blocking(wake_w, False)
     signal.set_wakeup_fd(wake_w)
     stop = {"why": None}
-    signal.signal(signal.SIGCHLD, lambda *_: None)
-    signal.signal(signal.SIGTERM, lambda *_: stop.update(why="SIGTERM"))
-    signal.signal(signal.SIGUSR1, lambda *_: stop.update(why="stale fingerprint"))
+    keep_tool_signals(state)
+    state.daemon_signals = {signal.SIGCHLD: lambda *_: None,
+                            signal.SIGTERM: lambda *_: stop.update(why="SIGTERM"),
+                            signal.SIGUSR1: lambda *_: stop.update(why="stale fingerprint")}
+    for sig, handler in state.daemon_signals.items():
+        signal.signal(sig, handler)
     parent = Parent(state, lsock, [lsock.fileno(), wake_r, wake_w, lock_fd, dir_fd])
     try:
         while stop["why"] is None:
-            if parent.spare is None and not state.disabled:
+            if parent.spare is None and not state.disabled and time.monotonic() >= parent.next_spare:
                 if parent.fork_spare() == 0:
                     return run_spare(state, lsock, parent.ctl_child, parent.inherited_fds())
             if state.disabled:
@@ -2650,6 +2789,8 @@ def serve(state):
             if state.watch is not None and state.watch.fd >= 0:
                 watch.append(state.watch.fd)  # never read: children must see it too
             timeout = max(1.0, parent.last_activity + IDLE_TIMEOUT_S - time.monotonic())
+            if parent.next_spare > time.monotonic():
+                timeout = 1.0
             if parent.learning is not None and not parent.active():
                 timeout = 0  # its next step, once the spare is replaced
             readable, _, _ = select.select(watch, [], [], timeout)
@@ -2754,7 +2895,11 @@ def main():
     state = State(opts["tool"], opts.get("script"), opts["socket"], lock_fd, opts.get("module"))
     state.origin = opts.get("origin", state.origin)
     state.tty = tty_stand_in(opts.get("tty", "0"))
-    return serve(state)
+    try:
+        return serve(state)
+    finally:
+        if os.getpid() == PARENT_PID:
+            FileReads.daemon_exiting = True
 
 
 if __name__ == "__main__":

@@ -48,7 +48,8 @@ class ShellBase(unittest.TestCase):
         # `speedrunner` on PATH logs each call, so that prewarms can be counted.
         self.calls = d("calls")
         with open(d("bin", "speedrunner"), "w") as f:
-            f.write(f'#!/bin/sh\necho "$*" >> {self.calls}\nexec {HS_BIN} "$@"\n')
+            f.write(f'#!/bin/sh\necho "$*" >> {self.calls}\nps -o ni= -p $$ >> {self.calls}.nice\n'
+                    f'exec {HS_BIN} "$@"\n')
         os.chmod(d("bin", "speedrunner"), 0o755)
         with open(d("zdot", ".zshrc"), "w") as f:
             f.write(f"source {SCRIPT}\nPS1='{PROMPT}'\n")
@@ -165,6 +166,10 @@ class Shell(ShellBase):
         self.wait_for(lambda: self.hs("status", "hstest").stdout.startswith(b"ready"))
         self.type(fd, "gv more words")
         self.assertEqual(len(self.logged("prewarm")), 1)
+        # At the priority of the command line, not a background job's: another
+        # one would be another daemon, not the one the command finds.
+        with open(self.calls + ".nice") as f:
+            self.assertEqual(f.read().split(), [str(os.nice(0))] * len(self.logged("")))
         # Same line, edited: no second prewarm.
         self.type(fd, "\x15hstest argv x")
         self.assertEqual(len(self.logged("prewarm")), 1)
@@ -185,6 +190,17 @@ class Shell(ShellBase):
         self.wait_for(lambda: self.hs("status", "hstest").stdout.startswith(b"ready"))
         self.type(fd, "gv")
         self.assertEqual(self.logged("prewarm"), ["prewarm hstest"])
+
+    def test_forced_native_warms_nothing_up(self):
+        self.hs("enroll", "hstest")
+        fd = self.spawn([ZSH, "-d", "-i"])
+        for text in ("SPEEDRUNNER_NATIVE=1 hstest ar", "\x15A=1 SPEEDRUNNER_NATIVE=1 hstest ar",
+                     "\x15srr --native hstest ar"):
+            self.type(fd, text)
+            self.wait_for(lambda: self.logged("prewarm"), timeout=1, must=False)
+            self.assertEqual(self.logged("prewarm"), [], text)
+        self.type(fd, "\x15hstest ar")  # the same line would warm up without the request
+        self.wait_for(lambda: self.logged("prewarm"))
 
 
 @unittest.skipUnless(OLD_BASH, "needs a bash older than 4.2 (macOS's own)")
@@ -257,6 +273,17 @@ class Bash(ShellBase):
         self.type(fd, "gv")
         self.assertEqual(self.logged("prewarm"), ["prewarm hstest"])
 
+    def test_forced_native_warms_nothing_up(self):
+        self.hs("enroll", "hstest")
+        fd = self.interactive()
+        for text in ("SPEEDRUNNER_NATIVE=1 hstest ar", "\x15A=1 SPEEDRUNNER_NATIVE=1 hstest ar",
+                     "\x15srr --native hstest ar"):
+            self.type(fd, text)
+            self.wait_for(lambda: self.logged("prewarm"), timeout=1, must=False)
+            self.assertEqual(self.logged("prewarm"), [], text)
+        self.type(fd, "\x15hstest ar")  # the same line would warm up without the request
+        self.wait_for(lambda: self.logged("prewarm"))
+
     def test_spaces_land_where_typed(self):
         # The space is inserted by our binding: after multibyte text, and
         # with the cursor moved back, it must land where it was typed.
@@ -266,6 +293,15 @@ class Bash(ShellBase):
         os.write(fd, b"\r")
         self.read_until(fd, PROMPT)
         self.assertEqual(self.logged("run"), ["run hstest -- argv \u00e9t\u00e9 y x"])
+
+    def test_set_e_does_not_close_the_shell(self):
+        # A space that warms nothing up, as any other: a failure in the binding
+        # would end a shell under `set -e`.
+        fd = self.interactive("set -e")
+        self.type(fd, "ls -l x y")
+        self.type(fd, "\x15echo still-\"here\"")
+        os.write(fd, b"\r")
+        self.read_until(fd, "still-here")  # as echo prints it, not as typed
 
     def test_exit_status_kept_for_the_prompt(self):
         fd = self.interactive("PROMPT_COMMAND='echo \"status=$?\"'")

@@ -10,6 +10,7 @@ undo it. For what it gains, see the [README](../README.md); for how it is built,
 - [Scripts: `exec` and `activate`](#scripts-exec-and-activate)
 - [pre-commit and git hooks](#pre-commit-and-git-hooks)
 - [Other commands](#other-commands)
+- [Forcing a native run](#forcing-a-native-run)
 - [Why did a call run natively?](#why-did-a-call-run-natively)
 - [Environment variables](#environment-variables)
 - [Where things live](#where-things-live)
@@ -126,7 +127,8 @@ black --check .
 Both put first on `PATH` a private directory of links named after tools, all
 pointing to the client. `aws` in the script then finds the link, and the client
 serves the real `aws` further down the `PATH`. `PATH` is inherited, so
-subprocesses are covered too: `xargs`, `make`, a script the script runs.
+subprocesses are covered too: `xargs`, `make` (for a recipe marked as
+recursive, see [Known limits](#known-limits)), a script the script runs.
 
 **Auto mode** (no tool named): a link for every Python, Ruby, PHP and Node script
 on your `PATH`, plus `php` itself, for `php script` calls. The directory is
@@ -196,7 +198,7 @@ stops after 4 hours unused, or with the [stop-everything loop](#stopping-every-d
 | `speedrunner prewarm <tool>` | Starts the daemon if none is up, or replaces one the tool's upgrade made stale. Returns at once. | 0, 1 if it cannot start one |
 | `speedrunner enroll [<tool>…]` | Enrolls tools; with no argument, lists them. | 0, 1 or 127 if refused |
 | `speedrunner init zsh\|bash` | Prints the shell hook, for `eval`. | 0 |
-| `speedrunner --version`, `speedrunner version` | Prints `speedrunner 0.4.0`. | 0 |
+| `speedrunner --version`, `speedrunner version` | Prints `speedrunner 0.4.6`. | 0 |
 
 All of them exit with 127 for a tool not found on `PATH`, and 2 on a usage error.
 `status`, `stop` and `prewarm` also take `php <script>`
@@ -238,6 +240,34 @@ leave an object with a finalizer, or fail as they load); `memo`, data files kept
 parsed (botocore); `gen`, how many times the
 preload grew; `tty_read`, which of fds 0 to 2 the tool asked "is this a terminal?"
 as it loaded. `learning=N`, when present, means modules are still being vetted.
+
+## Forcing a native run
+
+When a call matters too much to take any risk, or to rule speedrunner out while
+chasing a bug, ask for the tool itself:
+
+```bash
+srr --native aws s3 rm s3://bucket/key            # this call
+SPEEDRUNNER_NATIVE=1 aws s3 rm s3://bucket/key    # the same, without the prefix
+SPEEDRUNNER_NATIVE=1 ./deploy.sh                  # everything it runs
+```
+
+The client then replaces itself with the tool, as `exec` does: no daemon is asked
+or started, and a launcher is not followed. A daemon already up stays up, and
+unused.
+
+- `--native` goes before the tool's name: after it, it is the tool's own argument.
+  The long form is `speedrunner run --native <tool> -- [args...]`.
+- It covers one process. If that tool calls other tools through the links of
+  `exec` or `activate`, they are served; `SPEEDRUNNER_NATIVE`, inherited, covers them.
+- `srr --native` also works for a tool you enrolled, or that a script's links
+  serve: it finds the real tool past them.
+- A client older than 0.4.6 ignores `SPEEDRUNNER_NATIVE` and serves the call as
+  usual, without a word, while it stops on `--native` (`command not found`) and
+  runs nothing. When it matters and the version is in doubt, use `--native`.
+- Typing either form warms nothing up in zsh or bash.
+- `speedrunner prewarm` refuses to start a daemon under `SPEEDRUNNER_NATIVE`, and
+  `speedrunner demo` ignores the variable, since it measures the gain.
 
 ## Why did a call run natively?
 
@@ -306,6 +336,7 @@ Read by the client, on each call:
 | Variable | Default | Effect |
 |---|---|---|
 | `SPEEDRUNNER_DEBUG` | unset | Any value: say on stderr why a call runs natively, or why a daemon cannot start. |
+| `SPEEDRUNNER_NATIVE` | unset | Any value but empty or `0`: run the tool natively, sub-processes included, and start no daemon. Outranks `SPEEDRUNNER_REQUIRE_FAST`. See [Forcing a native run](#forcing-a-native-run). |
 | `SPEEDRUNNER_REQUIRE_FAST` | unset | `1`: exit with 124 instead of running the tool natively. |
 | `SPEEDRUNNER_NO_AUTOSTART` | unset | Any value: `run`, `srr`, `exec` and `activate` never start a daemon. `prewarm` and `demo` still do. |
 | `SPEEDRUNNER_START_JOBS` | CPUs available | How many daemons `exec` and `activate` let preload at once. |
@@ -325,7 +356,7 @@ To change them, stop the daemon and start it again with the new value:
 SPEEDRUNNER_IDLE_TIMEOUT=600 speedrunner prewarm aws    # this aws daemon exits after 10 idle minutes
 ```
 
-Read by `install.sh`: `SPEEDRUNNER_VERSION` (a tag such as `v0.4.0`; the latest
+Read by `install.sh`: `SPEEDRUNNER_VERSION` (a tag such as `v0.4.6`; the latest
 release by default), `SPEEDRUNNER_BIN_DIR` (where to install),
 `SPEEDRUNNER_NO_MODIFY_PATH=1` (leave your shell's startup files alone) and
 `SPEEDRUNNER_BASE_URL` (where to download from, for tests). When building the
@@ -470,7 +501,39 @@ and none runs a command twice.
   password) fails, where natively it would find the terminal. Node tools get no
   `/dev/tty` at all.
 - **Ctrl-Z** suspends the client, not the tool, which runs on. Ctrl-C, Ctrl-\,
-  `kill`, terminal resizes and SIGHUP reach the tool as they would natively.
+  `kill`, terminal resizes and SIGHUP reach the tool as they would natively. A job
+  already in the background with the terminal on its stdin runs natively.
+- **What a tool makes as it loads is every call's.** A random generator seeded at
+  load (`random.Random()`, Ruby's `Random.new`, a token, numpy's global one) gives
+  the same values to each call; only the runtime's own global generators are
+  reseeded. State read from a file at load is the daemon's copy: a tool that loads
+  a history as it starts and saves it at exit loses what earlier calls added, and
+  the file ends up with the last call's version. A log file opened at load keeps
+  writing to the same file after a rotation. stdin read at load finds nothing.
+- **Interpreter internals show.** Ruby's `Process.argv0`, stack frames of the
+  daemon below the tool's, and a crash's backtrace in Ruby can tell the difference.
+- **Limits only some can follow.** The tool runs in its daemon's cgroup, not the
+  caller's: `systemd-run --scope -p MemoryMax=…` does not apply to it. A Linux
+  Landlock ruleset cannot be seen either. `ulimit`, `nice`, `taskset`, namespaces,
+  capabilities, seccomp and `no_new_privs` are followed: each different one gets a
+  daemon of its own, started in that context, so a one-off `nice -n 19 tool` leaves
+  a daemon idle for up to 4 h. `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, a macOS sandbox
+  and any open file descriptor above 2 (`<(…)`, `3>file`) run natively.
+- **`make -j`, and a recipe marked as recursive.** macOS's make 3.81 gives its
+  jobserver's file descriptors to every recipe under `-j`: those calls are served,
+  without them. A tool there that runs a sub-make through a shell (`os.system`,
+  PHP's `exec`), and would natively share the jobserver, gets `jobserver
+  unavailable: using -j1` on stderr. Python's `subprocess` closes them natively
+  too, so it gets that warning either way. make 4.3 gives them only to a recipe
+  marked as recursive (`+`): such a call runs natively, and only
+  `SPEEDRUNNER_DEBUG=1` says so (`fd 3 is open`). The same goes for any program
+  that leaves another descriptor open for what it starts.
+- **A launcher that execs a setuid program named in a variable** loses its
+  privileges under ptrace: `exec "$SUDO" …`. Named as is (`exec sudo …`), it is not
+  followed.
+- **The environment of the first call stays in the daemon's memory** and its
+  `/proc/<pid>/environ` until it exits, at most 4 h after its last call. Only your
+  own user's processes can read it.
 - **The tool's parent** is the daemon: `getppid()` differs, and the tool leads its
   own process group.
 - **`PYTHONHASHSEED`**: every call of a Python tool shares the daemon's hash seed,

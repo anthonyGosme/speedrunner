@@ -67,6 +67,68 @@ class Outputs(m.Matrix):
         self.assertIn(b"status=", err)
 
 
+class AsNatively(m.Matrix):
+    def test_forked_child_does_not_report_the_end(self):
+        m.served_soon(["rbtest", "argv"])
+        self.assertSame(["rbtest", "fork-exit"])
+
+    def test_time_zone(self):
+        m.served_soon(["rbtest", "argv"])
+        self.assertSame(["rbtest", "tz"], env={"TZ": "Asia/Tokyo"})
+
+    def test_broken_pipe(self):
+        m.served_soon(["rbtest", "argv"])
+        rc, out, err = self.assertSame(["rbtest", "big"], pipe_to="head -1")
+        self.assertIn(b"status=141", err)
+        self.assertNotIn(b"EPIPE", err)
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_daemon_does_not_save_what_it_loaded(self):
+        root = tempfile.mkdtemp(dir=m.ROOT)
+        env = {**m.in_private_daemon_env(root), "HOME": root}
+        m.wait_ready("rbstate", env)
+        self.assertEqual(run("hs", ["rbstate", "from-a-run"], env=env).returncode, 0)
+        time.sleep(0.2)
+        m.stop("rbstate", env)
+        with open(os.path.join(root, "rbstate")) as f:
+            self.assertEqual(f.read(), "from-a-run")
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_printing_more_than_a_pty_holds_as_it_loads(self):
+        env = m.in_private_daemon_env()
+        self.addCleanup(m.stop, "rbnoisy", env)
+        native = run("native", ["rbnoisy"], env=env, tty=True)
+        run("hs", ["rbnoisy"], env=env, tty=True, require_fast=False)
+        deadline = time.monotonic() + 30
+        while True:
+            fast = run("hs", ["rbnoisy"], env=env, tty=True)
+            if fast.returncode != m.EXIT_NOT_FAST or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        self.assertEqual(fast.returncode, native.returncode)
+        self.assertEqual(sorted(fast.stdout.splitlines()), sorted(native.stdout.splitlines()))
+
+    def test_trap_set_as_it_loads(self):
+        results = []
+        for mode in ("native", "hs"):
+            if mode == "hs" and HS_BIN:
+                m.wait_ready("rbsig")
+                self.addCleanup(m.stop, "rbsig")
+            cmd, extra = command(mode, ["rbsig"])
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 env={**m.BASE_ENV, **extra})
+            self.assertEqual(p.stdout.readline(), b"ready\n")
+            time.sleep(0.2)  # out of its print: the handler prints too
+            p.send_signal(signal.SIGTERM)
+            out, err = p.communicate(timeout=20)
+            results.append((p.returncode, out, err))
+        self.assertEqual(results[0], (42, b"clean up\n", b""))
+        self.assertEqual(results[0], results[1])
+        if HS_BIN:  # and the daemon, which loaded it, still obeys its own stop
+            m.stop("rbsig")
+            self.assertEqual(m.status("rbsig"), "down")
+
+
 class Terminal(m.Matrix):
     def test_tty_streams(self):
         self.assertSame(["rbtest", "tty"], tty=True)

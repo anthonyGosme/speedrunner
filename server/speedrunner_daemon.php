@@ -592,6 +592,7 @@ final class Daemon
                 exit(0);
             }
             try {
+                self::sendMsg($conn, 'H'); // now that someone is here to read: see the client
                 [$kind, $body, $fds] = self::recvRequest($conn, $deadline);
             } catch (\UnderflowException $e) {
                 exit(0); // a client that only checked we are up
@@ -727,6 +728,7 @@ final class Daemon
             return null;
         }
         try {
+            self::sendMsg($conn, 'H');
             [$kind, , $fds] = self::recvRequest($conn, self::now() + 0.5);
             foreach ($fds as $fd) {
                 $c->close($fd);
@@ -937,6 +939,11 @@ final class Daemon
                 . ' registers argv whatever register_argc_argv says, and its internal copy was not found';
         } elseif (self::cfUnsafe()) {
             self::$state['disabled'] = 'CoreFoundation used at startup: a forked child would be killed';
+        } elseif (preg_match('/\b(debug_backtrace|get_included_files)\s*\(/', (string) @file_get_contents($script, false, null, 0, 65536))) {
+            // `if (!debug_backtrace()) main();`: included by us, the script would
+            // think it is not the entry point, and do nothing. The start of the
+            // file only: not the library code a phar holds after its stub.
+            self::$state['disabled'] = 'the script may ask whether it is the entry point';
         }
         self::$state['fp_paths'] = self::fingerprintPaths($script);
         self::$state['fp'] = self::fingerprint(self::$state['fp_paths']);

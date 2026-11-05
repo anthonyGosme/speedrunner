@@ -1,0 +1,5 @@
+#!/usr/bin/env ruby
+require "rbtest/sigload"
+puts "ready"
+$stdout.flush
+sleep 30

@@ -15,6 +15,21 @@ module Rbtest
 
     module_function
 
+    def cmd_fork_exit(_args)
+      # The parent's code is the tool's; what the process it forked exits with is not.
+      pid = fork { exit 3 }
+      Process.wait(pid)
+      exit 5
+    end
+
+    def cmd_tz(_args)
+      puts Time.at(0).strftime("%H:%M %Z")
+    end
+
+    def cmd_big(_args)
+      100_000.times { puts "a line" }
+    end
+
     def cmd_echo_stdin(_args)
       $stdout.binmode
       $stdout.write($stdin.binmode.read)

@@ -36,6 +36,7 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import tty from "node:tty";
 import { createRequire, syncBuiltinESMExports } from "node:module";
@@ -138,6 +139,7 @@ const { signals } = require("node:os").constants;
 const SIG = { HUP: signals.SIGHUP, INT: signals.SIGINT, USR1: signals.SIGUSR1, TERM: signals.SIGTERM,
               CHLD: signals.SIGCHLD };
 const CAUGHT = [SIG.CHLD, SIG.TERM, SIG.USR1, SIG.INT, SIG.HUP];
+const TOOL_SIGNALS = ["SIGCHLD", "SIGTERM", "SIGUSR1", "SIGINT", "SIGHUP"];
 const EINTR = -4, EAGAIN = -11;
 // What Node reads at its own start: a client with other values runs natively.
 const STARTUP_ENV = (key) => key.startsWith("NODE_") || ["UV_THREADPOOL_SIZE", "LANG", "LC_ALL", "LC_MESSAGES"].includes(key);
@@ -147,7 +149,11 @@ let logFd = 2;
 const state = {};
 
 function log(msg) {
-  sys.write(logFd, Buffer.from(`speedrunner[${process.pid}] ${msg}\n`));
+  try {
+    sys.write(logFd, Buffer.from(`speedrunner[${process.pid}] ${msg}\n`));
+  } catch {
+    // a full disk, a file size limit: not worth losing the daemon
+  }
 }
 
 // --- fds -------------------------------------------------------------------------
@@ -731,6 +737,13 @@ function applyRequest(req, fds, script) {
   realArgv.splice(0, realArgv.length, process.execPath, script, ...req.argv.slice(1));
   process.execArgv.splice(0, process.execArgv.length);
   reseedMathRandom();
+  // Handlers modules set as they loaded: the signal handling they went through
+  // is the daemon's, so they are set again here.
+  for (const sig of TOOL_SIGNALS) {
+    const listeners = process.rawListeners(sig);
+    process.removeAllListeners(sig);
+    for (const listener of listeners) process.on(sig, listener);
+  }
   sys.unblock();
 }
 
@@ -806,6 +819,7 @@ function serveChild(c) {
   try {
     const cred = sys.peercred(conn);
     if (!Array.isArray(cred) || cred[1] !== process.getuid()) sys.exit(0);
+    sendMsg(conn, "H"); // now that someone is here to read: see the client
     const msg = recvRequest(conn, deadline);
     if (msg === null) sys.exit(0);
     if (msg.kind === "P" || msg.kind === "S") {
@@ -1061,6 +1075,7 @@ async function applyLearned(candidates) {
   }
   state.learning = 0;
   if (added) {
+    sys.catchagain(CAUGHT); // a module's process.on() took them for Node: they are the daemon's
     state.gen++;
     state.importEnv = { ...realEnv };
     watchLoaded();
@@ -1073,9 +1088,43 @@ async function applyLearned(candidates) {
 function takeLearned(payload, pending) {
   try {
     for (const entry of JSON.parse(payload.toString())) {
-      if (!pending.some(([u]) => u === entry[0])) pending.push(entry);
+      if (toolsOwn(entry) && !pending.some(([u]) => u === entry[0])) pending.push(entry);
     }
   } catch {}
+}
+
+// Where the tool's own files live: its node_modules, or else its package (the
+// nearest package.json above its script), or else its script's directory.
+// Never / or the home directory, which would take in every project.
+function toolRoot() {
+  if (state.toolRoot !== undefined) return state.toolRoot;
+  const start = path.dirname(state.scriptReal);
+  const at = start.lastIndexOf(`${path.sep}node_modules${path.sep}`);
+  if (at >= 0) return (state.toolRoot = start.slice(0, at + "/node_modules".length));
+  let home = null;
+  try {
+    home = fs.realpathSync(os.homedir());
+  } catch {}
+  for (let dir = start; dir !== path.sep && dir !== home; dir = path.dirname(dir)) {
+    if (fs.existsSync(path.join(dir, "package.json"))) return (state.toolRoot = dir);
+  }
+  return (state.toolRoot = start === path.sep || start === home ? null : start);
+}
+
+// What a run loaded and may be preloaded for all of them. Not a project's own
+// file (an eslint.config.js): it would run in the daemon, and in the children
+// that serve every other project, with their environment.
+function toolsOwn([url, format]) {
+  if (format === "builtin" || url.startsWith("node:")) return true;
+  if (!url.startsWith("file:")) return false;
+  const root = toolRoot();
+  if (root === null) return false;
+  try {
+    const real = fs.realpathSync(fileURLToPath(url));
+    return real === root || real.startsWith(`${root}${path.sep}`);
+  } catch {
+    return false;
+  }
 }
 
 async function serve(opts) {
@@ -1115,6 +1164,7 @@ async function serve(opts) {
   // on it forever (firebase). Making a TLS context waits for that load.
   require("node:tls").createSecureContext();
   if (sys.cfUnsafe()) state.disabled = "CoreFoundation used at startup: a forked child would be killed";
+  cache.learned = cache.learned.filter(toolsOwn); // an older daemon's list had any file
   if (cache.learned.length) {
     const r = await applyLearned(cache.learned);
     if (r === "child") return null;
@@ -1379,11 +1429,28 @@ async function main() {
   return serve(opts);
 }
 
+// As the daemon exits, the tool's exit listeners are for what they made as they
+// loaded, which they remove. One that saves what it loaded would overwrite what
+// the runs saved. Not a reference to these functions kept since the load.
+function writeNothing() {
+  const refuse = (file) => {
+    throw Object.assign(new Error(`the daemon writes nothing as it exits: ${file}`), { code: "EROFS" });
+  };
+  for (const name of ["writeFileSync", "appendFileSync", "writeFile", "appendFile", "createWriteStream"]) {
+    fs[name] = refuse;
+  }
+  const open = fs.openSync;
+  fs.openSync = (file, flags = "r", ...rest) => (
+    /[wa+]/.test(String(flags)) || (typeof flags === "number" && flags & 0o3) ? refuse(file) : open(file, flags, ...rest));
+  syncBuiltinESMExports();
+}
+
 const code = await main();
 // The parent ends here; a probe or a served child returned to run on. What the
 // tool registered as it loaded runs here too, as in the other daemons: it
 // removes what the tool made then, which children left to it.
 if (code !== null) {
+  writeNothing();
   process._exiting = true; // a listener's process.exit() goes straight to its end
   try {
     process.emit("exit", code);

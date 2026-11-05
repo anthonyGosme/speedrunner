@@ -29,7 +29,8 @@ faster, with no per-tool setup.
 - **Never run twice.** Until a call has started, any problem sends it to the real tool, natively.
   Once it has started, speedrunner never runs it again, whatever dies.
 - **Same output.** Identical to the native run on all 96 commands measured below; what speedrunner
-  cannot serve faithfully runs natively.
+  cannot serve faithfully runs natively. A forked process keeps what its tool made as it loaded, which
+  no check can see in general: [the known limits](docs/GUIDE.md#known-limits) say what follows from that.
 
 ![speedrunner demo: the same bash script, run natively and with speedrunner](bench/speedrunner.gif)
 
@@ -40,6 +41,7 @@ speedrunner exec ./script.sh       # a whole script: every tool it calls, preloa
 eval "$(speedrunner activate)"     # at the top of a script: no prefix needed after
 eval "$(speedrunner init zsh)"     # in ~/.zshrc (or init bash, in ~/.bashrc): daemons warm up while you type
 speedrunner enroll aws             # then plain `aws s3 ls` in zsh or bash
+srr --native aws s3 rm s3://b/k    # this call natively: no daemon, whatever happens
 ```
 
 Every command and option, why a call runs natively, where files live, and how to

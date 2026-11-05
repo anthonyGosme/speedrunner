@@ -84,6 +84,98 @@ class Outputs(m.Matrix):
         self.assertSame(["nodetest", "version"])
 
 
+class AsNatively(m.Matrix):
+    def test_time_zone(self):
+        m.served_soon(["nodetest", "tz"])
+        self.assertSame(["nodetest", "tz"], env={"TZ": "Asia/Tokyo"})
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_daemon_does_not_save_what_it_loaded(self):
+        root = tempfile.mkdtemp(dir=m.ROOT)
+        env = {**m.in_private_daemon_env(root), "HOME": root}
+        self.addCleanup(m.stop, "nodestate", env)
+        # The module reads at load the file its exit listener writes: each run
+        # makes the daemon stale, and it goes. So: runs, until one that started
+        # again has learned lib/stateful.js and loaded it.
+        deadline = time.monotonic() + 30
+        while " learned=0" in m.wait_ready("nodestate", env):
+            self.assertLess(time.monotonic(), deadline)
+            run("hs", ["nodestate", "from-a-run"], env=env, require_fast=False)
+            time.sleep(0.4)
+        m.served_soon(["nodestate", "the-last-run"], env)
+        time.sleep(0.2)
+        m.stop("nodestate", env)
+        with open(os.path.join(root, "nodestate")) as f:
+            self.assertEqual(f.read(), "the-last-run")
+
+    def test_listener_set_as_it_loads(self):
+        results = []
+        for mode in ("native", "hs"):
+            if mode == "hs" and HS_BIN:
+                self.addCleanup(m.stop, "nodesig")
+                # Learned: lib/sigload.js is loaded by the daemon from then on.
+                for _ in range(3):
+                    q = subprocess.Popen(command("hs", ["nodesig"], require_fast=False)[0],
+                                         stdout=subprocess.PIPE, env=m.BASE_ENV)
+                    q.stdout.readline()
+                    q.send_signal(signal.SIGTERM)
+                    q.communicate(timeout=20)
+                    time.sleep(0.5)
+                deadline = time.monotonic() + 20
+                while "learned=0" in m.status("nodesig") or " learning=" in m.status("nodesig"):
+                    if time.monotonic() > deadline:
+                        self.fail(m.status("nodesig"))
+                    time.sleep(0.1)
+            cmd, extra = command(mode, ["nodesig"])
+            p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 env={**m.BASE_ENV, **extra})
+            self.assertEqual(p.stdout.readline(), b"ready\n")
+            time.sleep(0.2)  # out of its print: the handler prints too
+            p.send_signal(signal.SIGTERM)
+            out, err = p.communicate(timeout=20)
+            results.append((p.returncode, out, err))
+        self.assertEqual(results[0], (42, b"clean up\n", b""))
+        self.assertEqual(results[0], results[1])
+        if HS_BIN:  # and the daemon, which loaded it, still obeys its own stop
+            m.stop("nodesig")
+            self.assertEqual(m.status("nodesig"), "down")
+
+    def test_a_projects_file_is_not_learned(self):
+        # As eslint, which requires a project's eslint.config.js: not the tool's
+        # to preload, nor to run with the next project's environment.
+        root = tempfile.mkdtemp(dir=m.ROOT)
+        bin_dir = os.path.join(root, "bin")
+        os.makedirs(bin_dir)
+        tool = os.path.join(bin_dir, "cfgtool")
+        with open(tool, "w") as f:
+            f.write("#!/usr/bin/env node\n"
+                    "const path = require('path');\n"
+                    "try { require(path.resolve('cfg.js')); } catch {}\n"
+                    "console.log('tool ran in', path.basename(process.cwd()));\n")
+        os.chmod(tool, 0o755)
+        marker = os.path.join(root, "cfg-ran")
+        one, two = os.path.join(root, "one"), os.path.join(root, "two")
+        os.makedirs(one)
+        os.makedirs(two)
+        with open(os.path.join(one, "cfg.js"), "w") as f:
+            f.write(f"require('fs').appendFileSync({json.dumps(marker)}, process.env.SECRET + '\\n');\n")
+        env = {"PATH": f"{bin_dir}:{m.BASE_ENV['PATH']}", "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        full = {**m.BASE_ENV, **env}
+        self.addCleanup(lambda: subprocess.run([HS_BIN, "stop", "cfgtool"], env=full, capture_output=True))
+        for _ in range(6):
+            run("hs", ["cfgtool"], cwd=one, env=env, require_fast=False)
+            time.sleep(0.3)
+        open(marker, "w").close()
+        for _ in range(6):
+            run("hs", ["cfgtool"], cwd=two, env={**env, "SECRET": "from-two"}, require_fast=False)
+            time.sleep(0.2)
+        with open(marker) as f:
+            self.assertEqual(f.read(), "")
+        for name in os.listdir(os.path.join(root, "cache", "speedrunner")):
+            with open(os.path.join(root, "cache", "speedrunner", name), errors="replace") as f:
+                self.assertNotIn("cfg.js", f.read())
+
+
 class Terminal(m.Matrix):
     def test_tty_streams(self):
         self.assertSame(["nodetest", "tty"], tty=True)

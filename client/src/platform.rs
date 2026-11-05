@@ -4,6 +4,71 @@
 use std::io;
 use std::path::PathBuf;
 
+/// What a process keeps from whoever started it, and can only take away from
+/// a child, not give back: added to the key of the daemon that serves it.
+#[cfg(target_os = "linux")]
+pub fn context(key: &mut Vec<u8>) {
+    limits_and_priority(key, 16);
+    unsafe {
+        let mut cpus: libc::cpu_set_t = std::mem::zeroed();
+        if libc::sched_getaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &mut cpus) == 0 {
+            key.extend_from_slice(std::slice::from_raw_parts(
+                &cpus as *const _ as *const u8, std::mem::size_of::<libc::cpu_set_t>()));
+        }
+        for option in [libc::PR_GET_NO_NEW_PRIVS, libc::PR_GET_SECCOMP, libc::PR_GET_SECUREBITS] {
+            key.extend_from_slice(&libc::prctl(option, 0, 0, 0, 0).to_le_bytes());
+        }
+        // _LINUX_CAPABILITY_VERSION_3: two sets of three.
+        let mut header = [0x2008_0522u32, 0];
+        let mut caps = [0u32; 6];
+        if libc::syscall(libc::SYS_capget, header.as_mut_ptr(), caps.as_mut_ptr()) == 0 {
+            for c in caps {
+                key.extend_from_slice(&c.to_le_bytes());
+            }
+        }
+    }
+    for link in ["ns/mnt", "ns/net", "ns/pid", "ns/user", "ns/ipc", "ns/uts", "ns/cgroup", "root"] {
+        if let Ok(target) = std::fs::read_link(format!("/proc/self/{}", link)) {
+            use std::os::unix::ffi::OsStrExt;
+            key.extend_from_slice(target.as_os_str().as_bytes());
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub fn context(key: &mut Vec<u8>) {
+    limits_and_priority(key, 9);
+}
+
+fn limits_and_priority(key: &mut Vec<u8>, limits: libc::c_int) {
+    unsafe {
+        for resource in 0..limits {
+            let mut lim: libc::rlimit = std::mem::zeroed();
+            if libc::getrlimit(resource as _, &mut lim) == 0 {
+                key.extend_from_slice(&(lim.rlim_cur as u64).to_le_bytes());
+                key.extend_from_slice(&(lim.rlim_max as u64).to_le_bytes());
+            }
+        }
+        key.extend_from_slice(&libc::getpriority(libc::PRIO_PROCESS as _, 0).to_le_bytes());
+    }
+}
+
+/// Whether a sandbox confines us that a daemon started elsewhere would not
+/// have. Linux: a daemon started in here shares it (seccomp and namespaces are
+/// in `context`).
+#[cfg(target_os = "linux")]
+pub fn sandboxed() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+pub fn sandboxed() -> bool {
+    extern "C" {
+        fn sandbox_check(pid: libc::pid_t, operation: *const libc::c_char, kind: libc::c_int, ...) -> libc::c_int;
+    }
+    unsafe { sandbox_check(libc::getpid(), std::ptr::null(), 0) != 0 }
+}
+
 /// The calling thread's errno, for signal handlers that must keep it.
 #[cfg(target_os = "linux")]
 pub unsafe fn errno() -> *mut libc::c_int {

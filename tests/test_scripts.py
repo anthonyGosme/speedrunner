@@ -284,6 +284,7 @@ def stop_hook_daemons(env):
             with socket.socket(socket.AF_UNIX) as s:
                 s.settimeout(5)
                 s.connect(sock)
+                s.recv(5)  # its hello
                 s.sendall(b"HS1S" + struct.pack("<I", 0))
                 s.recv(1)
         except OSError:
@@ -410,6 +411,18 @@ class PreCommitHook(ScriptCase):
         self.assertEqual(len(self.lines("HSTEST_RUN_LOG")) - runs, 1)
         self.assertEqual(head, subprocess.run(["git", "rev-parse", "-q", "--verify", "HEAD"], cwd=self.repo,
                                               capture_output=True, env={**m.BASE_ENV, **self.env}).stdout)
+
+    def test_forced_native(self):
+        # REQUIRE_FAST stays on: without the request, a hook with no daemon exits with 124.
+        self.install("argv")
+        native = m.outcome(self.commit(False))
+        self.assertEqual(native[0], 0, native)
+        hooks, runs = len(self.lines("HOOK_LOG")), len(self.lines("HSTEST_RUN_LOG"))
+        p = self.call(["git", "commit", "-qm", "edit"], True, SPEEDRUNNER_REQUIRE_FAST="1",
+                      SPEEDRUNNER_NATIVE="1")
+        self.git("reset", "-q", "--soft", "HEAD~1")
+        self.assertEqual(native, m.outcome(p))
+        self.assertEqual((len(self.lines("HOOK_LOG")) - hooks, len(self.lines("HSTEST_RUN_LOG")) - runs), (1, 1))
 
     def test_falls_back_silently(self):
         # No daemon yet (or no ptrace): the hook and its tool run natively, once.
