@@ -636,7 +636,14 @@ module Speedrunner
         yield
       ensure # what is buffered may fill a pty too
         [STDOUT, STDERR].each { |io| io.flush rescue nil }
-        [1, 2].each { |fd| tty.slave[fd].syswrite(PTY_MARK) if tty&.covers?(fd) }
+        [1, 2].each do |fd|
+          next unless tty&.covers?(fd)
+          begin
+            tty.slave[fd].syswrite(PTY_MARK)
+          rescue Errno::EINTR # the drain's timer
+            retry
+          end
+        end
       end
     ensure
       STDIN.reopen(saved[0])

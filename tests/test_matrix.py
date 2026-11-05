@@ -469,7 +469,8 @@ class Concurrency(Matrix):
     def test_ten_parallel(self):
         with concurrent.futures.ThreadPoolExecutor(10) as pool:
             results = list(pool.map(lambda _: run("hs", ["hstest", "random"]), range(10)))
-        self.assertEqual([r.returncode for r in results], [0] * 10, results[0].stderr)
+        if any(r.returncode for r in results):
+            self.fail(f"{[r.returncode for r in results]}: {results[0].stderr!r}\n" + daemon_logs("hstest"))
         uuids = {r.stdout.splitlines()[0] for r in results}
         self.assertEqual(len(uuids), 10)
 
@@ -509,6 +510,17 @@ class Concurrency(Matrix):
             self.assertLess(time.monotonic() - t0, 1.5)
         finally:
             stop("hstest", env)
+
+
+def daemon_logs(tool, env=None):
+    """The last lines of a tool's latest daemons: why it went, in a failure's message."""
+    run_dir = (env or {}).get("XDG_RUNTIME_DIR", BASE_ENV["XDG_RUNTIME_DIR"])
+    logs = sorted(glob.glob(os.path.join(run_dir, "speedrunner", f"{tool}-*.log")), key=os.path.getmtime)[-3:]
+    text = ""
+    for path in logs:
+        with open(path, errors="replace") as f:
+            text += f"--- {os.path.basename(path)}\n" + "".join(f.readlines()[-5:])
+    return text
 
 
 def daemon_roots(root):
