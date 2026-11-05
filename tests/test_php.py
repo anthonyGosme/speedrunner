@@ -120,6 +120,19 @@ class Outputs(m.Matrix):
 
 
 class EntryPoint(m.Matrix):
+    def test_forced_native_of_php_script(self):
+        # `srr --native php script`: php itself gets the script, and no daemon starts.
+        env = m.in_private_daemon_env()
+        argv = ["php", shutil.which("phptest", path=os.environ["HS_PATH"]), "argv", "a"]
+        native = outcome(run("native", argv, env=env))
+        self.assertEqual(native, outcome(run("hs", argv, env={**env, "SPEEDRUNNER_NATIVE": "1"})))
+        if HS_BIN:
+            p = subprocess.run([HS_BIN, "run", "--native", "php", "--", *argv[1:]], capture_output=True,
+                               env={**m.BASE_ENV, **env, "SPEEDRUNNER_REQUIRE_FAST": "1"})
+            self.assertEqual(native, outcome(p))
+            p = subprocess.run([HS_BIN, "status", *argv[:2]], capture_output=True, env={**m.BASE_ENV, **env})
+            self.assertEqual(p.stdout, b"down\n")
+
     def test_script_asking_if_it_is_the_entry_point_runs_natively(self):
         # Included by the daemon, it would think it is not, and do nothing.
         root = tempfile.mkdtemp(dir=m.ROOT)

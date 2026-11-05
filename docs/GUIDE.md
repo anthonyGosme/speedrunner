@@ -10,6 +10,7 @@ undo it. For what it gains, see the [README](../README.md); for how it is built,
 - [Scripts: `exec` and `activate`](#scripts-exec-and-activate)
 - [pre-commit and git hooks](#pre-commit-and-git-hooks)
 - [Other commands](#other-commands)
+- [Forcing a native run](#forcing-a-native-run)
 - [Why did a call run natively?](#why-did-a-call-run-natively)
 - [Environment variables](#environment-variables)
 - [Where things live](#where-things-live)
@@ -239,6 +240,34 @@ parsed (botocore); `gen`, how many times the
 preload grew; `tty_read`, which of fds 0 to 2 the tool asked "is this a terminal?"
 as it loaded. `learning=N`, when present, means modules are still being vetted.
 
+## Forcing a native run
+
+When a call matters too much to take any risk, or to rule speedrunner out while
+chasing a bug, ask for the tool itself:
+
+```bash
+srr --native aws s3 rm s3://bucket/key            # this call
+SPEEDRUNNER_NATIVE=1 aws s3 rm s3://bucket/key    # the same, without the prefix
+SPEEDRUNNER_NATIVE=1 ./deploy.sh                  # everything it runs
+```
+
+The client then replaces itself with the tool, as `exec` does: no daemon is asked
+or started, and a launcher is not followed. A daemon already up stays up, and
+unused.
+
+- `--native` goes before the tool's name: after it, it is the tool's own argument.
+  The long form is `speedrunner run --native <tool> -- [args...]`.
+- It covers one process. If that tool calls other tools through the links of
+  `exec` or `activate`, they are served; `SPEEDRUNNER_NATIVE`, inherited, covers them.
+- `srr --native` also works for a tool you enrolled, or that a script's links
+  serve: it finds the real tool past them.
+- A client older than 0.4.6 ignores `SPEEDRUNNER_NATIVE` and serves the call as
+  usual, without a word, while it stops on `--native` (`command not found`) and
+  runs nothing. When it matters and the version is in doubt, use `--native`.
+- Typing either form warms nothing up in zsh or bash.
+- `speedrunner prewarm` refuses to start a daemon under `SPEEDRUNNER_NATIVE`, and
+  `speedrunner demo` ignores the variable, since it measures the gain.
+
 ## Why did a call run natively?
 
 Ask:
@@ -306,6 +335,7 @@ Read by the client, on each call:
 | Variable | Default | Effect |
 |---|---|---|
 | `SPEEDRUNNER_DEBUG` | unset | Any value: say on stderr why a call runs natively, or why a daemon cannot start. |
+| `SPEEDRUNNER_NATIVE` | unset | Any value but empty or `0`: run the tool natively, sub-processes included, and start no daemon. Outranks `SPEEDRUNNER_REQUIRE_FAST`. See [Forcing a native run](#forcing-a-native-run). |
 | `SPEEDRUNNER_REQUIRE_FAST` | unset | `1`: exit with 124 instead of running the tool natively. |
 | `SPEEDRUNNER_NO_AUTOSTART` | unset | Any value: `run`, `srr`, `exec` and `activate` never start a daemon. `prewarm` and `demo` still do. |
 | `SPEEDRUNNER_START_JOBS` | CPUs available | How many daemons `exec` and `activate` let preload at once. |

@@ -561,7 +561,9 @@ class ScriptPrefix(Matrix):
 
     def test_sr_without_tool(self):
         p = subprocess.run([self.sr], capture_output=True, env=BASE_ENV)
-        self.assertEqual((p.returncode, p.stderr), (2, b"usage: srr <tool> [args...]\n"))
+        self.assertEqual((p.returncode, p.stderr), (2, b"usage: srr [--native] <tool> [args...]\n"))
+        p = subprocess.run([self.sr, "--native"], capture_output=True, env=BASE_ENV)
+        self.assertEqual((p.returncode, p.stderr), (2, b"usage: srr [--native] <tool> [args...]\n"))
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
@@ -811,6 +813,20 @@ class Launchers(Matrix):
         while not status("sh-tool", self.env).startswith("ready"):
             self.assertLess(time.monotonic(), deadline, status("sh-tool", self.env))
             time.sleep(0.1)
+
+    def test_forced_native_is_not_followed(self):
+        # Never traced, whatever the launcher execs: its whole preamble runs, once.
+        env = {**BASE_ENV, **self.env, **in_private_daemon_env(), "SPEEDRUNNER_REQUIRE_FAST": "1"}
+        before = len(self.log())
+        native = outcome(run("native", ["sh-tool", "x"], cwd=self.work, env=self.env))
+        one_run = len(self.log()) - before
+        for argv, extra in (([HS_BIN, "run", "--native", "sh-tool", "--", "x"], {}),
+                            ([HS_BIN, "run", "sh-tool", "--", "x"], {"SPEEDRUNNER_NATIVE": "1"})):
+            before = len(self.log())
+            p = subprocess.run(argv, capture_output=True, cwd=self.work, timeout=60, env={**env, **extra})
+            self.assertEqual(native, outcome(p))
+            self.assertEqual(len(self.log()) - before, one_run)
+        self.assertEqual(status("sh-tool", env), "down")
 
     def test_launcher_that_execs_no_python_runs_natively(self):
         self.assertSame(["cat-tool"], input=b"some input\n", cwd=self.work, env=self.env,
@@ -2392,6 +2408,116 @@ def in_private_daemon_env(root=None):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class ForcedNative(Matrix):
+    """`srr --native` and SPEEDRUNNER_NATIVE: the tool itself, whatever a daemon
+    could do. A tool that prints its pid tells: natively, the client has execed
+    it, so it is the process the test started; served, it is a daemon's child."""
+
+    @classmethod
+    def setUpClass(cls):
+        root = tempfile.mkdtemp(dir=ROOT, prefix="forced-")
+        bin_dir = os.path.join(root, "bin")  # apart: what the daemon makes must not touch the tool's directory
+        os.mkdir(bin_dir)
+        cls.tool = os.path.join(bin_dir, "pidtool")
+        with open(cls.tool, "w") as f:
+            f.write(f"#!{shutil.which('python3', path=os.environ['HS_PATH'])}\n"
+                    "import os, sys\nprint(os.getpid(), *sys.argv[1:])\n")
+        os.chmod(cls.tool, 0o755)
+        cls.srr = os.path.join(root, "srr")
+        os.symlink(HS_BIN, cls.srr)
+        cls.env = {**in_private_daemon_env(root), "PATH": f"{bin_dir}:{BASE_ENV['PATH']}"}
+
+    def setUp(self):
+        self.addCleanup(stop, "pidtool", self.env)
+
+    def call(self, *argv, **env):
+        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             env={**BASE_ENV, **self.env, **env})
+        out, err = p.communicate(timeout=60)
+        self.assertEqual((p.returncode, err), (0, b""))
+        return p.pid, out
+
+    def native(self, *argv, **env):
+        pid, out = self.call(*argv, **env)
+        self.assertEqual(out.split()[0], str(pid).encode())
+        return out.split()[1:]
+
+    def served(self, *argv, **env):
+        pid, out = self.call(*argv, **env, SPEEDRUNNER_REQUIRE_FAST="1")
+        self.assertNotEqual(out.split()[0], str(pid).encode())
+        return out.split()[1:]
+
+    def warm(self):
+        served_soon(["pidtool"], self.env)
+
+    def test_flag_beside_a_warm_daemon(self):
+        self.warm()
+        self.served(self.srr, "pidtool")  # what the flag has to change
+        self.assertEqual(self.native(self.srr, "--native", "pidtool", "a b"), [b"a", b"b"])
+        self.assertEqual(self.native(HS_BIN, "run", "--native", "pidtool", "--", "x"), [b"x"])
+
+    def test_env_beside_a_warm_daemon(self):
+        self.warm()
+        self.assertEqual(self.native(self.srr, "pidtool", "x", SPEEDRUNNER_NATIVE="1"), [b"x"])
+        self.assertEqual(self.native(HS_BIN, "run", "pidtool", "--", "x", SPEEDRUNNER_NATIVE="yes"), [b"x"])
+
+    def test_empty_or_zero_is_not_asking(self):
+        self.warm()
+        for value in ("", "0"):
+            with self.subTest(value=value):
+                self.served(self.srr, "pidtool", SPEEDRUNNER_NATIVE=value)
+
+    def test_outranks_require_fast(self):
+        # No daemon here: without the request, this exits with 124.
+        p = subprocess.run([self.srr, "pidtool"], capture_output=True,
+                           env={**BASE_ENV, **self.env, "SPEEDRUNNER_REQUIRE_FAST": "1",
+                                "SPEEDRUNNER_NO_AUTOSTART": "1"})
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+        self.native(self.srr, "--native", "pidtool", SPEEDRUNNER_REQUIRE_FAST="1")
+        self.native(self.srr, "pidtool", SPEEDRUNNER_REQUIRE_FAST="1", SPEEDRUNNER_NATIVE="1")
+
+    def test_flag_belongs_to_the_tool_after_its_name(self):
+        self.warm()
+        self.assertEqual(self.served(self.srr, "pidtool", "--native"), [b"--native"])
+        self.assertEqual(self.native(self.srr, "--native", "pidtool", "--native"), [b"--native"])
+
+    def test_starts_no_daemon(self):
+        self.native(self.srr, "--native", "pidtool")
+        self.native(self.srr, "pidtool", SPEEDRUNNER_NATIVE="1")
+        p = subprocess.run([HS_BIN, "prewarm", "pidtool"], capture_output=True,
+                           env={**BASE_ENV, **self.env, "SPEEDRUNNER_NATIVE": "1"})
+        self.assertEqual(p.returncode, 1)
+        self.assertIn(b"SPEEDRUNNER_NATIVE is set", p.stderr)
+        p = subprocess.run([HS_BIN, "exec", "--eager", "-t", "pidtool", "true"], capture_output=True,
+                           env={**BASE_ENV, **self.env, "SPEEDRUNNER_NATIVE": "1"})
+        self.assertEqual(p.returncode, 0, p.stderr)
+        time.sleep(1)  # exec's starter is detached
+        self.assertEqual(status("pidtool", self.env), "down")
+
+    def test_past_the_links_of_a_script(self):
+        # Natively, each background job's $! is the tool's pid.
+        self.warm()
+        script = ('"$SRR" --native pidtool flag & echo "$!"; wait\n'
+                  'SPEEDRUNNER_NATIVE=1 pidtool env & echo "$!"; wait\n')
+        p = subprocess.run([HS_BIN, "exec", "-t", "pidtool", "bash", "-c", script], capture_output=True,
+                           timeout=60, env={**BASE_ENV, **self.env, "SRR": self.srr})
+        self.assertEqual((p.returncode, p.stderr), (0, b""))
+        words = sorted(line.split() for line in p.stdout.splitlines())
+        self.assertEqual(len(words), 4, words)
+        self.assertEqual((words[0][0], words[2][0]), (words[1][0], words[3][0]), words)
+
+    def test_sub_processes_under_the_env(self):
+        # exec after exec, down to the tool: all one pid, unless a daemon served it.
+        self.warm()
+        self.native(HS_BIN, "exec", "-t", "pidtool", "bash", "-c", "exec pidtool", SPEEDRUNNER_NATIVE="1")
+
+    def test_a_debug_run_says_so(self):
+        p = subprocess.run([self.srr, "--native", "pidtool"], capture_output=True,
+                           env={**BASE_ENV, **self.env, "SPEEDRUNNER_DEBUG": "1"})
+        self.assertEqual(p.stderr, b"speedrunner: running pidtool natively: asked to\n")
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class CallerContext(Matrix):
     """What a process has from its caller and a daemon started elsewhere
     would not: each is another daemon, or a native run."""
@@ -2775,6 +2901,18 @@ class Distribution(Matrix):
         self.assertRegex(aws, r"\d+ ms +\d+ ms +[\d.]+x  yes$")
         self.assertIn("median gain", out)
         self.assertEqual(status("aws", env), "down")
+
+    def test_demo_measures_under_an_exported_native(self):
+        root = tempfile.mkdtemp(dir=ROOT)
+        env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(stop, "aws", env)
+        if MACOS:
+            env["PATH"] = f"{os.environ['HS_PATH']}:/usr/bin:/bin"
+        p = subprocess.run([HS_BIN, "demo", "--runs", "1"], capture_output=True, timeout=300,
+                           env={**BASE_ENV, **env, "SPEEDRUNNER_NATIVE": "1"})
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("median gain", p.stdout.decode())
 
     def test_init_prints_the_hooks(self):
         for shell in ("zsh", "bash"):

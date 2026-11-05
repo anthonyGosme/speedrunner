@@ -56,6 +56,7 @@ _speedrunner_pre_redraw() {
     [[ $rest == *[[:space:]]* ]] || return 0
     word=${rest%%[[:space:]]*}
     rest=${${rest#*[[:space:]]}##[[:space:]]#}
+    [[ $word == SPEEDRUNNER_NATIVE=* ]] && return 0  # this call uses no daemon
     [[ $word == [[:alpha:]_][[:alnum:]_]#=* ]] && continue
     if (( ! prefixed )) && [[ $word == srr ]]; then
       prefixed=1

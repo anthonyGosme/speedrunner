@@ -191,6 +191,17 @@ class Shell(ShellBase):
         self.type(fd, "gv")
         self.assertEqual(self.logged("prewarm"), ["prewarm hstest"])
 
+    def test_forced_native_warms_nothing_up(self):
+        self.hs("enroll", "hstest")
+        fd = self.spawn([ZSH, "-d", "-i"])
+        for text in ("SPEEDRUNNER_NATIVE=1 hstest ar", "\x15A=1 SPEEDRUNNER_NATIVE=1 hstest ar",
+                     "\x15srr --native hstest ar"):
+            self.type(fd, text)
+            self.wait_for(lambda: self.logged("prewarm"), timeout=1, must=False)
+            self.assertEqual(self.logged("prewarm"), [], text)
+        self.type(fd, "\x15hstest ar")  # the same line would warm up without the request
+        self.wait_for(lambda: self.logged("prewarm"))
+
 
 @unittest.skipUnless(OLD_BASH, "needs a bash older than 4.2 (macOS's own)")
 class OldBash(unittest.TestCase):
@@ -261,6 +272,17 @@ class Bash(ShellBase):
         self.wait_for(lambda: self.hs("status", "hstest").stdout.startswith(b"ready"))
         self.type(fd, "gv")
         self.assertEqual(self.logged("prewarm"), ["prewarm hstest"])
+
+    def test_forced_native_warms_nothing_up(self):
+        self.hs("enroll", "hstest")
+        fd = self.interactive()
+        for text in ("SPEEDRUNNER_NATIVE=1 hstest ar", "\x15A=1 SPEEDRUNNER_NATIVE=1 hstest ar",
+                     "\x15srr --native hstest ar"):
+            self.type(fd, text)
+            self.wait_for(lambda: self.logged("prewarm"), timeout=1, must=False)
+            self.assertEqual(self.logged("prewarm"), [], text)
+        self.type(fd, "\x15hstest ar")  # the same line would warm up without the request
+        self.wait_for(lambda: self.logged("prewarm"))
 
     def test_spaces_land_where_typed(self):
         # The space is inserted by our binding: after multibyte text, and

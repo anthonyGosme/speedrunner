@@ -58,6 +58,8 @@ const EMBEDDED: [(&str, &[u8]); 7] = [
     ("speedrunner_node-musl.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-musl.node"))),
     ("speedrunner_node-darwin.node", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_node-darwin.node"))),
 ];
+const NATIVE_FLAG: &str = "--native";
+const NATIVE_ENV: &str = "SPEEDRUNNER_NATIVE";
 const ZSH_HOOK: &str = include_str!("../../shell/speedrunner.zsh");
 const BASH_HOOK: &str = include_str!("../../shell/speedrunner.bash");
 
@@ -68,13 +70,14 @@ fn main() {
     // nice, that works for any tool without enrolling it. `srr aws s3 ls`
     // is `speedrunner run aws -- s3 ls`.
     if invoked == b"srr" {
-        if args.len() < 2 {
-            eprintln!("usage: srr <tool> [args...]");
+        let at = if args.get(1).map_or(false, |a| a == NATIVE_FLAG) { 2 } else { 1 };
+        if args.len() <= at {
+            eprintln!("usage: srr [{}] <tool> [args...]", NATIVE_FLAG);
             process::exit(2);
         }
-        let rest: Vec<OsString> = [args[1].clone(), OsString::from("--")]
-            .into_iter()
-            .chain(args[2..].iter().cloned())
+        let rest: Vec<OsString> = args[1..=at].iter().cloned()
+            .chain(std::iter::once(OsString::from("--")))
+            .chain(args[at + 1..].iter().cloned())
             .collect();
         process::exit(cmd_run(&rest));
     }
@@ -115,7 +118,7 @@ fn main() {
 
 fn usage() {
     eprintln!(
-        "usage: speedrunner run <tool> -- [args...]   (or: srr <tool> [args...])\n       \
+        "usage: speedrunner run [--native] <tool> -- [args...]   (or: srr [--native] <tool> [args...])\n       \
          eval \"$(speedrunner activate [--eager] [<tool>...])\"     (in a script: no prefix needed)\n       \
          speedrunner exec [--eager] [-t <tool>]... [--] <command> [args...]\n       \
          speedrunner enroll [<tool>...]\n       \
@@ -142,6 +145,8 @@ const DEMO_ARGS: &[&str] = &["--version"];
 /// fallback is reported, not counted), and whether both print the same.
 /// Daemons it started are stopped after; those already running are left.
 fn cmd_demo(rest: &[OsString]) -> i32 {
+    // Asking for the gain is asking for the fast path, whatever the shell exports.
+    env::remove_var(NATIVE_ENV);
     let runs = match rest {
         [] => Some(3),
         [flag, n] if flag == "--runs" => n.to_str().and_then(|n| n.parse::<usize>().ok()).filter(|n| *n > 0),
@@ -500,6 +505,8 @@ fn cmd_run(rest: &[OsString]) -> i32 {
 /// daemon up, only a tool's second call starts one, so that a tool called
 /// once costs nothing.
 fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
+    let flagged = rest.first().map_or(false, |a| a == NATIVE_FLAG);
+    let rest = if flagged { &rest[1..] } else { rest };
     if rest.len() < 2 || rest[1] != "--" {
         usage();
         return 2;
@@ -512,6 +519,13 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
             return 127;
         }
     };
+    if flagged || native_asked() {
+        // Not fall_back: the caller's choice outranks SPEEDRUNNER_REQUIRE_FAST.
+        if env::var_os("SPEEDRUNNER_DEBUG").is_some() {
+            eprintln!("speedrunner: running {} natively: asked to", tool.display());
+        }
+        exec_native(&tool, args);
+    }
     if let Some(reason) = only_native() {
         fall_back(&tool, args, &reason);
     }
@@ -524,6 +538,12 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
         fall_back(&tool, args, "not a script of a runtime speedrunner serves");
     }
     serve(&tool, args, lazy)
+}
+
+/// SPEEDRUNNER_NATIVE: everything run under it is the tool itself, sub-processes
+/// included, and starts no daemon. Its forms that read as "no" do not count.
+fn native_asked() -> bool {
+    env::var_os(NATIVE_ENV).map_or(false, |v| !v.is_empty() && v != "0")
 }
 
 /// Why this very call must run natively, and start no daemon either.
@@ -636,7 +656,7 @@ fn run_as_bash(args: &[OsString]) -> i32 {
     let hook = args.first().map_or(false, |a| {
         !a.as_bytes().starts_with(b"-") && launcher::is_precommit_hook(a.as_bytes())
     });
-    if !hook {
+    if !hook || native_asked() {
         exec_native(&bash, args);
     }
     run_launcher(&bash, OsStr::new("pre-commit"), args, lazy_counter(b"pre-commit").as_deref())
@@ -1531,6 +1551,9 @@ fn wait_learned(tool: &Tool) {
 }
 
 fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
+    if native_asked() {
+        return Err(unsupported(&format!("{} is set", NATIVE_ENV)));
+    }
     if let Some(reason) = untrusted_context() {
         return Err(unsupported(&reason));
     }

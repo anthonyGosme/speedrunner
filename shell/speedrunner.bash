@@ -63,6 +63,7 @@ _speedrunner_space() {
     word=${rest%%[[:space:]]*}
     rest=${rest#*[[:space:]]}
     rest=${rest#"${rest%%[![:space:]]*}"}
+    [[ $word == SPEEDRUNNER_NATIVE=* ]] && return 0  # this call uses no daemon
     [[ $word =~ ^[[:alpha:]_][[:alnum:]_]*= ]] && continue
     if (( ! prefixed )) && [[ $word == srr ]]; then
       prefixed=1

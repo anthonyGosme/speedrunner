@@ -41,6 +41,7 @@ speedrunner exec ./script.sh       # a whole script: every tool it calls, preloa
 eval "$(speedrunner activate)"     # at the top of a script: no prefix needed after
 eval "$(speedrunner init zsh)"     # in ~/.zshrc (or init bash, in ~/.bashrc): daemons warm up while you type
 speedrunner enroll aws             # then plain `aws s3 ls` in zsh or bash
+srr --native aws s3 rm s3://b/k    # this call natively: no daemon, whatever happens
 ```
 
 Every command and option, why a call runs natively, where files live, and how to
