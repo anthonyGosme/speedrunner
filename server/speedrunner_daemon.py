@@ -493,7 +493,8 @@ def shadowed(state, cwd_fd):
     return None
 
 
-PTY_QUIET_S = 0.01
+PTY_MARK = b"\0speedrunner: end of load\0"
+PTY_MARK_WAIT_S = 2.0
 
 
 def capture_fds_during(fn, tty=None):
@@ -530,6 +531,8 @@ def capture_fds_during(fn, tty=None):
                 finally:  # what is buffered may fill a pty too
                     sys.stdout.flush()
                     sys.stderr.flush()
+                    for fd, _ in ptys:
+                        os.write(tty.slave[fd], PTY_MARK)
         finally:
             for fd in (0, 1, 2):
                 os.dup2(saved[fd], fd)
@@ -539,25 +542,38 @@ def capture_fds_during(fn, tty=None):
             sink = sinks[fd]
             if sink in memfds:
                 os.lseek(sink, 0, os.SEEK_SET)
-            chunks = drained[fd]
-            while True:
-                # A pty hands what was written to its master a little later
-                # (the kernel's flip buffer): read until it stays quiet, or
-                # the rest would be blamed on the next import.
-                if sink not in memfds and not select.select([sink], [], [], PTY_QUIET_S)[0]:
-                    break
-                try:
-                    chunk = os.read(sink, 65536)
-                except (BlockingIOError, OSError):  # a drained pty
-                    break
-                if not chunk:
-                    break
+            if sink not in memfds:
+                captured.append(read_to_mark(sink, drained[fd]))
+                continue
+            chunks = []
+            for chunk in iter(lambda: os.read(sink, 65536), b""):
                 chunks.append(chunk)
             captured.append(b"".join(chunks))
         return tuple(captured)
     finally:
         for fd in saved + memfds:
             os.close(fd)
+
+
+def read_to_mark(master, chunks):
+    """All that went through a pty stand-in. Its master gets what was written a
+    little later (the kernel's flip buffer), later still on a busy machine: what
+    comes before our own mark, written last, is all of it. The rest would be
+    missing from what each run prints, and blamed on the next import."""
+    data = b"".join(chunks)
+    deadline = time.monotonic() + PTY_MARK_WAIT_S
+    while PTY_MARK not in data:
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([master], [], [], left)[0]:
+            break
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        data += chunk
+    return data.replace(PTY_MARK, b"")
 
 
 class DrainingPtys:

@@ -635,6 +635,7 @@ module Speedrunner
         yield
       ensure # what is buffered may fill a pty too
         [STDOUT, STDERR].each { |io| io.flush rescue nil }
+        [1, 2].each { |fd| tty.slave[fd].syswrite(PTY_MARK) if tty&.covers?(fd) }
       end
     ensure
       STDIN.reopen(saved[0])
@@ -642,7 +643,7 @@ module Speedrunner
       STDERR.reopen(saved[2])
       STDOUT.sync, STDERR.sync = syncs
     end
-    sinks.map { |f| f.is_a?(File) ? (f.rewind; f.read.b) : drained[f] + drain(f) }
+    sinks.map { |f| f.is_a?(File) ? (f.rewind; f.read.b) : read_to_mark(f, drained[f]) }
   ensure
     (saved || []).each(&:close)
     (sinks || []).each { |f| f.close if f.is_a?(File) }
@@ -687,22 +688,25 @@ module Speedrunner
     @setitimer.call(0, [0, microseconds, 0, microseconds].pack("q l x4 q l x4"), nil)
   end
 
-  # A pty hands what was written to its master a little later (the
-  # kernel's flip buffer): read until it stays quiet, or the rest would be
-  # blamed on the next file loaded.
-  PTY_QUIET_S = 0.01
+  PTY_MARK = "\0speedrunner: end of load\0".b
+  PTY_MARK_WAIT_S = 2.0
 
-  def self.drain(master)
-    data = "".b
-    loop do
-      break unless IO.select([master], nil, nil, PTY_QUIET_S)
+  # All that went through a pty stand-in. Its master gets what was written a
+  # little later (the kernel's flip buffer), later still on a busy machine:
+  # what comes before our own mark, written last, is all of it. The rest would
+  # be missing from what each run prints, and blamed on the next file loaded.
+  def self.read_to_mark(master, data)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + PTY_MARK_WAIT_S
+    until data.include?(PTY_MARK)
+      left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      break if left <= 0 || !IO.select([master], nil, nil, left)
       chunk = master.read_nonblock(65_536, exception: false)
       break if chunk.nil? || chunk == :wait_readable
       data << chunk
     end
-    data
+    data.gsub(PTY_MARK, "")
   rescue Errno::EIO
-    data
+    data.gsub(PTY_MARK, "")
   end
 
   # One pty per fd of the mask, raw (output bytes unchanged), with the
