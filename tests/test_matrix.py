@@ -447,9 +447,18 @@ class Randomness(Matrix):
 
 class Concurrency(Matrix):
     def test_ten_parallel(self):
-        with concurrent.futures.ThreadPoolExecutor(10) as pool:
-            results = list(pool.map(lambda _: run("hs", ["hstest", "random"]), range(10)))
-        self.assertEqual([r.returncode for r in results], [0] * 10)
+        # Again if the fast path refused: a daemon just started may go at that
+        # instant (CI: all ten at 124), as served_soon says. It would stay refused
+        # if ten at once were the problem.
+        deadline = time.monotonic() + 30
+        while True:
+            with concurrent.futures.ThreadPoolExecutor(10) as pool:
+                results = list(pool.map(lambda _: run("hs", ["hstest", "random"]), range(10)))
+            codes = [r.returncode for r in results]
+            if EXIT_NOT_FAST not in codes or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
+        self.assertEqual(codes, [0] * 10, results[0].stderr)
         uuids = {r.stdout.splitlines()[0] for r in results}
         self.assertEqual(len(uuids), 10)
 

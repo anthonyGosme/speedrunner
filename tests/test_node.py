@@ -94,14 +94,15 @@ class AsNatively(m.Matrix):
         root = tempfile.mkdtemp(dir=m.ROOT)
         env = {**m.in_private_daemon_env(root), "HOME": root}
         self.addCleanup(m.stop, "nodestate", env)
-        for _ in range(4):  # until the daemon loaded lib/stateful.js
+        # The module reads at load the file its exit listener writes: each run
+        # makes the daemon stale, and it goes. So: runs, until one that started
+        # again has learned lib/stateful.js and loaded it.
+        deadline = time.monotonic() + 30
+        while " learned=0" in m.wait_ready("nodestate", env):
+            self.assertLess(time.monotonic(), deadline)
             run("hs", ["nodestate", "from-a-run"], env=env, require_fast=False)
             time.sleep(0.4)
-        deadline = time.monotonic() + 20
-        while not m.status("nodestate", env).startswith("ready") or " learned=0" in m.status("nodestate", env):
-            self.assertLess(time.monotonic(), deadline, m.status("nodestate", env))
-            time.sleep(0.1)
-        self.assertEqual(run("hs", ["nodestate", "the-last-run"], env=env).returncode, 0)
+        m.served_soon(["nodestate", "the-last-run"], env)
         time.sleep(0.2)
         m.stop("nodestate", env)
         with open(os.path.join(root, "nodestate")) as f:
