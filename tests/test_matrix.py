@@ -2685,6 +2685,96 @@ class CallerContext(Matrix):
         self.assertEqual(p.returncode, EXIT_NOT_FAST)
         self.assertIn(b"fd 3", p.stderr)
 
+    def with_pipes(self, makeflags, *fds, env=None):
+        """The client, with these fds open and MAKEFLAGS naming the first two."""
+        cmd = command("hs", ["hstest", "argv", "x"])[0]
+        return subprocess.run(cmd, capture_output=True, timeout=30, pass_fds=fds,
+                              env={**BASE_ENV, **(env or {}), "SPEEDRUNNER_REQUIRE_FAST": "1",
+                                   "MAKEFLAGS": makeflags % fds[:2]})
+
+    def pipe(self):
+        r, w = os.pipe()
+        self.addCleanup(os.close, r)
+        self.addCleanup(os.close, w)
+        return r, w
+
+    def test_jobserver_of_a_make_that_gives_it_to_every_recipe(self):
+        # As macOS's make 3.81 does: it hands every recipe under -j its jobserver,
+        # and a dup of the read end.
+        wait_ready("hstest")
+        r, w = self.pipe()
+        dup = os.dup(r)
+        self.addCleanup(os.close, dup)
+        p = self.with_pipes(" --jobserver-fds=%d,%d -j", r, w, dup)
+        native = run("native", ["hstest", "argv", "x"], env={"MAKEFLAGS": " --jobserver-fds=%d,%d -j" % (r, w)})
+        self.assertEqual((p.returncode, p.stdout), (0, native.stdout), p.stderr)
+
+    def test_jobserver_of_a_recipe_marked_recursive_runs_natively(self):
+        wait_ready("hstest")
+        p = self.with_pipes(" -j --jobserver-auth=%d,%d", *self.pipe())
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+        self.assertRegex(p.stderr, rb"fd \d+ is open")
+
+    def test_other_pipe_beside_a_jobserver_runs_natively(self):
+        wait_ready("hstest")
+        p = self.with_pipes(" --jobserver-fds=%d,%d -j", *self.pipe(), self.pipe()[0])
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+
+    def test_makeflags_that_name_a_file_run_natively(self):
+        wait_ready("hstest")
+        with open(os.devnull) as f, tempfile.TemporaryFile() as g:
+            p = self.with_pipes(" --jobserver-fds=%d,%d -j", f.fileno(), g.fileno())
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+        with open(os.devnull) as f:
+            p = self.with_pipes(" --jobserver-fds=%d,%d -j", self.pipe()[0], f.fileno())
+        self.assertEqual(p.returncode, EXIT_NOT_FAST)
+
+    def test_daemon_started_under_make_does_not_keep_its_jobserver(self):
+        # A write end kept open forever would be a daemon holding on to make's pipe.
+        env = in_private_daemon_env()
+        self.addCleanup(stop, "hstest", env)
+        r, w = os.pipe()
+        self.addCleanup(os.close, r)
+        cmd, _ = command("hs", ["hstest", "argv"], require_fast=False)
+        subprocess.run(cmd, capture_output=True, timeout=30, pass_fds=(r, w),
+                       env={**BASE_ENV, **env, "MAKEFLAGS": f" --jobserver-fds={r},{w} -j"})
+        os.close(w)
+        wait_ready("hstest", env)
+        ready, _, _ = select.select([r], [], [], 5)
+        self.assertEqual(ready, [r], "something still holds the write end")
+        self.assertEqual(os.read(r, 1), b"")
+
+    @unittest.skipUnless(shutil.which("make"), "needs make")
+    def test_real_make_j(self):
+        version = subprocess.run(["make", "--version"], capture_output=True, text=True).stdout
+        found = re.match(r"GNU Make (\d+)\.(\d+)", version)
+        if not found:
+            self.skipTest("not GNU make")
+        wait_ready("hstest")
+        root = tempfile.mkdtemp(dir=ROOT)
+        client = shlex.join(command("hs", ["hstest", "exit", "int:0"])[0])
+        with open(os.path.join(root, "Makefile"), "w") as f:
+            f.write(f"all: a b\na:\n\t@{client}\nb:\n\t@{client}\n"
+                    f"marked:\n\t+@{client}\n"
+                    f"start:\n\t@{shlex.quote(HS_BIN)} prewarm hstest\n"
+                    f"stop:\n\t@{shlex.quote(HS_BIN)} stop hstest\n")
+        def make(*args):
+            return subprocess.run(["make", "-s", "-j2", *args], cwd=root, capture_output=True, timeout=60,
+                                  env={**BASE_ENV, "SPEEDRUNNER_REQUIRE_FAST": "1"})
+        # make 3.81 changes its recipes' stack limit: a context, so a daemon, of their own.
+        self.addCleanup(make, "stop")
+        self.assertEqual(make("start").returncode, 0)
+        deadline = time.monotonic() + 30
+        while (p := make()).returncode != 0 and time.monotonic() < deadline:
+            time.sleep(0.1)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        p = make("marked")
+        if tuple(map(int, found.groups())) >= (4, 2):  # --jobserver-auth: the author asks for it
+            self.assertNotEqual(p.returncode, 0)
+            self.assertRegex(p.stderr, rb"fd \d+ is open")
+        else:
+            self.assertEqual(p.returncode, 0, p.stderr)
+
     def test_background_job_on_a_terminal_runs_natively(self):
         # An interactive shell: the job is in a group of its own, not the terminal's.
         cmd = shlex.join(command("hs", ["hstest", "argv"])[0])

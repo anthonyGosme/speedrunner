@@ -127,8 +127,8 @@ black --check .
 Both put first on `PATH` a private directory of links named after tools, all
 pointing to the client. `aws` in the script then finds the link, and the client
 serves the real `aws` further down the `PATH`. `PATH` is inherited, so
-subprocesses are covered too: `xargs`, `make` (not always with `-j`, see
-[Known limits](#known-limits)), a script the script runs.
+subprocesses are covered too: `xargs`, `make` (for a recipe marked as
+recursive, see [Known limits](#known-limits)), a script the script runs.
 
 **Auto mode** (no tool named): a link for every Python, Ruby, PHP and Node script
 on your `PATH`, plus `php` itself, for `php script` calls. The directory is
@@ -519,11 +519,15 @@ and none runs a command twice.
   daemon of its own, started in that context, so a one-off `nice -n 19 tool` leaves
   a daemon idle for up to 4 h. `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, a macOS sandbox
   and any open file descriptor above 2 (`<(…)`, `3>file`) run natively.
-- **`make -j` can lose the gain.** make passes its jobserver's file descriptors
-  to recipes: macOS's make 3.81 to every recipe under `-j`, make 4.3 to a recipe
-  marked `+`. Those calls run natively: the output is right, the speedup is gone,
-  and only `SPEEDRUNNER_DEBUG=1` says so (`fd 3 is open`). The same goes for any
-  program that leaves a descriptor open for what it starts.
+- **`make -j`, and a recipe marked as recursive.** macOS's make 3.81 gives its
+  jobserver's file descriptors to every recipe under `-j`: those calls are served,
+  without them. A tool there that runs a sub-make through a shell (`os.system`,
+  PHP's `exec`), and would natively share the jobserver, gets `jobserver
+  unavailable: using -j1` on stderr. Python's `subprocess` closes them natively
+  too, so it gets that warning either way. make 4.3 gives them only to a recipe
+  marked as recursive (`+`): such a call runs natively, and only
+  `SPEEDRUNNER_DEBUG=1` says so (`fd 3 is open`). The same goes for any program
+  that leaves another descriptor open for what it starts.
 - **A launcher that execs a setuid program named in a variable** loses its
   privileges under ptrace: `exec "$SUDO" …`. Named as is (`exec sudo …`), it is not
   followed.

@@ -600,9 +600,10 @@ fn owned_by_us_or_root(meta: &std::fs::Metadata, euid: libc::uid_t) -> bool {
 /// An fd above 2 that the tool would inherit natively: `<(...)`, `3>file`. Only
 /// 0, 1 and 2 are handed over, and the child's own low fds are not the caller's.
 fn inherited_fd() -> Option<RawFd> {
+    let jobserver = legacy_jobserver();
     let inherited = |fd: RawFd| fd > 2 && {
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-        flags >= 0 && flags & libc::FD_CLOEXEC == 0
+        flags >= 0 && flags & libc::FD_CLOEXEC == 0 && !jobserver.contains(&pipe_id(fd))
     };
     match std::fs::read_dir("/dev/fd") {
         // The directory's own fd is close-on-exec.
@@ -611,6 +612,33 @@ fn inherited_fd() -> Option<RawFd> {
             .find(|fd| inherited(*fd)),
         Err(_) => (3..256).find(|fd| inherited(*fd)),
     }
+}
+
+/// The pipes of a make that hands its jobserver to every recipe under -j, whether
+/// the recipe runs a sub-make or not: `--jobserver-fds=R,W` in MAKEFLAGS, as
+/// macOS's 3.81 does. Not an fd the tool asked for, unlike `--jobserver-auth=R,W`,
+/// which make 4.3 gives only to a recipe marked as recursive: that one stays
+/// native. Nothing here unless both are pipes.
+fn legacy_jobserver() -> Vec<Option<(u64, u64)>> {
+    let flags = env::var_os("MAKEFLAGS").unwrap_or_default();
+    let named = flags.as_bytes().split(|b| *b == b' ')
+        .find_map(|word| word.strip_prefix(&b"--jobserver-fds="[..]))
+        .and_then(|fds| std::str::from_utf8(fds).ok())
+        .and_then(|fds| fds.split_once(','))
+        .and_then(|(r, w)| Some((r.parse::<RawFd>().ok()?, w.parse::<RawFd>().ok()?)));
+    match named {
+        Some((r, w)) if pipe_id(r).is_some() && pipe_id(w).is_some() => vec![pipe_id(r), pipe_id(w)],
+        _ => Vec::new(),
+    }
+}
+
+/// Which pipe an fd is, if it is one: make keeps a dup of the read end too.
+fn pipe_id(fd: RawFd) -> Option<(u64, u64)> {
+    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::fstat(fd, &mut st) } != 0 || st.st_mode & libc::S_IFMT != libc::S_IFIFO {
+        return None;
+    }
+    Some((st.st_dev as u64, st.st_ino as u64))
 }
 
 /// Run a launcher natively until it execs the interpreter, then serve that,
