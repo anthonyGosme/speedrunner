@@ -412,6 +412,26 @@ class Context(Matrix):
         self.assertEqual(out, b"autorun: ['a', 'b']\n")
 
     @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_refused_module_that_printed_from_a_terminal(self):
+        # A daemon started from a terminal loads with a pty. What a refused
+        # module printed there, the probe that refused it did not read: it must
+        # not be taken for what the next module prints, which stops the daemon.
+        env = in_private_daemon_env()
+        self.addCleanup(stop, "hsrun", env)
+        # The first daemon refuses hstest.autorun and goes; the next one stays.
+        deadline = time.monotonic() + 30
+        while not (text := status("hsrun", env)).startswith("ready"):
+            self.assertLess(time.monotonic(), deadline, text)
+            if text == "down":
+                pty_transcript([HS_BIN, "prewarm", "hsrun"], {**BASE_ENV, **env}, [])
+            time.sleep(0.05)
+        pid = status_field(status("hsrun", env), "pid")
+        self.assertEqual(run("hs", ["hsrun", "warm"], env=env).returncode, 0)  # teaches the next imports
+        time.sleep(1.5)  # they are vetted, then imported
+        self.assertEqual(status_field(status("hsrun", env), "pid"), pid, status("hsrun", env))
+        self.assertEqual(run("hs", ["hsrun", "again"], env=env).returncode, 0)
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
     def test_module_that_starts_a_thread_at_import(self):
         # Forking would lose the thread: the daemon skips the module, and
         # still serves the tool.

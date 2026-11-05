@@ -617,6 +617,7 @@ module Speedrunner
   # terminal finds what the client that started us has.
   def self.capture_fds(tty = nil)
     [STDOUT, STDERR].each(&:flush)
+    [1, 2].each { |fd| settle_pty(tty.master[fd], tty.slave[fd]) if tty&.covers?(fd) }
     syncs = [STDOUT.sync, STDERR.sync]
     saved = [STDIN.dup, STDOUT.dup, STDERR.dup]
     sinks = [1, 2].map do |fd|
@@ -690,6 +691,21 @@ module Speedrunner
 
   PTY_MARK = "\0speedrunner: end of load\0".b
   PTY_MARK_WAIT_S = 2.0
+
+  # Nothing left over in a pty stand-in: what a probe wrote and left there, as
+  # it stopped at a refused file or was killed, is not the next file's.
+  def self.settle_pty(master, slave)
+    begin
+      loop do
+        chunk = master.read_nonblock(65_536, exception: false)
+        break if chunk.nil? || chunk == :wait_readable
+      end
+    rescue Errno::EIO
+      nil
+    end
+    slave.syswrite(PTY_MARK)
+    read_to_mark(master, "".b)
+  end
 
   # All that went through a pty stand-in. Its master gets what was written a
   # little later (the kernel's flip buffer), later still on a busy machine:

@@ -507,6 +507,9 @@ def capture_fds_during(fn, tty=None):
     """
     sys.stdout.flush()
     sys.stderr.flush()
+    for fd in (1, 2):
+        if tty is not None and tty.covers(fd):
+            settle_pty(tty.master[fd], tty.slave[fd])
     saved = [os.dup(0), os.dup(1), os.dup(2)]
     memfds = []
     sinks = {}
@@ -553,6 +556,18 @@ def capture_fds_during(fn, tty=None):
     finally:
         for fd in saved + memfds:
             os.close(fd)
+
+
+def settle_pty(master, slave):
+    """Nothing left over in a pty stand-in: what a probe wrote and left there, as
+    it stopped at a refused module or was killed, is not the next module's."""
+    try:
+        while os.read(master, 65536):
+            pass
+    except OSError:  # nothing there for now
+        pass
+    os.write(slave, PTY_MARK)
+    read_to_mark(master, [])
 
 
 def read_to_mark(master, chunks):
