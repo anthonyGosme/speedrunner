@@ -2926,6 +2926,9 @@ def pty_transcript(argv, env, answers, timeout=30):
     """Run argv on a pty, answering each prompt; return (status, transcript)."""
     pid, fd = pty.fork()
     if pid == 0:
+        # As subprocess does, and unlike pty.fork: what this process inherited
+        # (fd 131, on GitHub's macOS runners) would send every call native.
+        os.closerange(3, 4096)
         os.execvpe(argv[0], argv, env)
     out = b""
     deadline = time.monotonic() + timeout
