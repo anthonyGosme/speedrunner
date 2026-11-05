@@ -527,7 +527,8 @@ and none runs a command twice.
   too, so it gets that warning either way. make 4.3 gives them only to a recipe
   marked as recursive (`+`): such a call runs natively, and only
   `SPEEDRUNNER_DEBUG=1` says so (`fd 3 is open`). The same goes for any program
-  that leaves another descriptor open for what it starts.
+  that leaves another descriptor open for what it starts. make 4.4.1 uses a named
+  pipe, with no descriptor to inherit: its calls are served.
 - **A launcher that execs a setuid program named in a variable** loses its
   privileges under ptrace: `exec "$SUDO" …`. Named as is (`exec sudo …`), it is not
   followed.

@@ -2556,7 +2556,11 @@ class CallerContext(Matrix):
 
     @classmethod
     def tearDownClass(cls):
-        wait_ready("hstest")  # the tests' own, which some of them stopped
+        # The tests' own, which some of them stopped. Their stop returns before
+        # the daemon goes: until then it says ready, and the next test finds no
+        # socket. test_ten_parallel did, in CI: "exiting: SIGTERM", nothing after.
+        stop("hstest")
+        wait_ready("hstest")
 
     def served(self, argv, env=None, preexec=None, cwd=None):
         """Same outcome as natively, served, in this context."""
@@ -2621,7 +2625,8 @@ class CallerContext(Matrix):
         self.assertEqual(p.returncode, EXIT_NOT_FAST, p.stderr)
 
     def test_time_zone(self):
-        out = self.served(["hstest", "tz"], env={"TZ": "Asia/Tokyo"})
+        # A POSIX spec, not a name: Alpine's image has no time zone files.
+        out = self.served(["hstest", "tz"], env={"TZ": "JST-9"})
         self.assertIn(b"09:00 JST", out)
 
     def test_locale_variable_runs_natively(self):
@@ -2769,10 +2774,10 @@ class CallerContext(Matrix):
             time.sleep(0.1)
         self.assertEqual(p.returncode, 0, p.stderr)
         p = make("marked")
-        if tuple(map(int, found.groups())) >= (4, 2):  # --jobserver-auth: the author asks for it
+        if (4, 2) <= tuple(map(int, found.groups())) < (4, 4):  # --jobserver-auth: the author asks for it
             self.assertNotEqual(p.returncode, 0)
             self.assertRegex(p.stderr, rb"fd \d+ is open")
-        else:
+        else:  # 3.81: --jobserver-fds. 4.4: a fifo, by its path: no fd to inherit
             self.assertEqual(p.returncode, 0, p.stderr)
 
     def test_background_job_on_a_terminal_runs_natively(self):
