@@ -16,6 +16,7 @@ Measured on a laptop (Intel i7-9750H, macOS 26.7.2, GNU Make 3.81): 8 recipes of
 |---|---|---|
 | 3.81 (macOS) | 3, 4 and a dup of the read end, 5, on every recipe | `--jobserver-fds=3,4` |
 | 4.3 (Debian) | 3, 4, only on a recipe marked `+` | `--jobserver-auth=3,4` |
+| 4.4.1 (Fedora, Alpine) | none, even on a recipe marked `+` (served, per `test_real_make_j`) | not read |
 
 ## The rule
 
@@ -32,4 +33,4 @@ A tool under such a make that starts a sub-make with its fds left open (`os.syst
 
 make 3.81 changes its recipes' stack limit, so its recipes get a daemon of their own (the socket's name covers limits). The first call under make is native, even when a daemon is up for the same tool outside make.
 
-Not measured: any make other than 3.81 and 4.3. Which versions use which flag, and which give the fds to every recipe, was not checked; the rule goes by the flag. make 4.4's fifo jobserver should pass no fd: not checked either. A `$(MAKE)` recipe was not run: only `+`.
+Not measured: the time under any make other than 3.81. Which other versions use which flag, and which give the fds to every recipe, was not checked; the rule goes by the flag. A `$(MAKE)` recipe was not run: only `+`.
