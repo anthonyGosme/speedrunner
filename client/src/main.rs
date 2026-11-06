@@ -70,6 +70,10 @@ fn main() {
     // nice, that works for any tool without enrolling it. `srr aws s3 ls`
     // is `speedrunner run aws -- s3 ls`.
     if invoked == b"srr" {
+        // No tool has these names, and they are what one tries first.
+        if let Some(code) = args.get(1).and_then(|a| own_flag(a.as_bytes())) {
+            process::exit(code);
+        }
         let at = if args.get(1).map_or(false, |a| a == NATIVE_FLAG) { 2 } else { 1 };
         if args.len() <= at {
             eprintln!("usage: srr [{}] <tool> [args...]", NATIVE_FLAG);
@@ -94,6 +98,9 @@ fn main() {
             .collect();
         process::exit(cmd_run_with(&rest, lazy.as_deref()));
     }
+    if let Some(code) = args.get(1).and_then(|a| own_flag(a.as_bytes())) {
+        process::exit(code);
+    }
     let code = match args.get(1).map(|a| a.as_bytes()) {
         Some(b"run") => cmd_run(&args[2..]),
         Some(b"activate") => cmd_activate(&args[2..]),
@@ -104,30 +111,35 @@ fn main() {
         Some(b"stop") => with_tool(&args[2..], |t| control(t, b'S')),
         Some(b"init") => cmd_init(&args[2..]),
         Some(b"demo") => cmd_demo(&args[2..]),
-        Some(b"--version") | Some(b"version") => {
-            println!("speedrunner {}", env!("CARGO_PKG_VERSION"));
-            0
-        }
+        Some(b"version") => own_flag(b"--version").unwrap_or(0),
+        Some(b"help") => own_flag(b"--help").unwrap_or(0),
         _ => {
-            usage();
+            eprintln!("{}", USAGE);
             2
         }
     };
     process::exit(code);
 }
 
-fn usage() {
-    eprintln!(
-        "usage: speedrunner run [--native] <tool> -- [args...]   (or: srr [--native] <tool> [args...])\n       \
-         eval \"$(speedrunner activate [--eager] [<tool>...])\"     (in a script: no prefix needed)\n       \
-         speedrunner exec [--eager] [-t <tool>]... [--] <command> [args...]\n       \
-         speedrunner enroll [<tool>...]\n       \
-         speedrunner prewarm|status|stop <tool>   (or: php <script>)\n       \
-         eval \"$(speedrunner init zsh|bash)\"     (in ~/.zshrc or ~/.bashrc: wrappers, warm-up while typing)\n       \
-         speedrunner demo [--runs N]     (the gain on this machine, with the tools it has)\n       \
-         speedrunner --version"
-    );
+/// What speedrunner and srr answer themselves: the exit code, or None.
+fn own_flag(flag: &[u8]) -> Option<i32> {
+    match flag {
+        b"--version" | b"-V" => println!("speedrunner {}", env!("CARGO_PKG_VERSION")),
+        b"--help" | b"-h" => println!("{}", USAGE),
+        _ => return None,
+    }
+    Some(0)
 }
+
+const USAGE: &str =
+    "usage: speedrunner run [--native] <tool> -- [args...]   (or: srr [--native] <tool> [args...])\n       \
+     eval \"$(speedrunner activate [--eager] [<tool>...])\"     (in a script: no prefix needed)\n       \
+     speedrunner exec [--eager] [-t <tool>]... [--] <command> [args...]\n       \
+     speedrunner enroll [<tool>...]\n       \
+     speedrunner prewarm|status|stop <tool>   (or: php <script>)\n       \
+     eval \"$(speedrunner init zsh|bash)\"     (in ~/.zshrc or ~/.bashrc: wrappers, warm-up while typing)\n       \
+     speedrunner demo [--runs N]     (the gain on this machine, with the tools it has)\n       \
+     speedrunner --version|--help";
 
 /// Well-known tools and a command of theirs with no side effect, for
 /// `speedrunner demo`: only these run, never whatever else is on PATH.
@@ -466,7 +478,7 @@ impl<'a> Tool<'a> {
 /// `<tool>`, or `php <script>` for a script's own daemon.
 fn with_tool(rest: &[OsString], f: impl Fn(&Tool) -> i32) -> i32 {
     if rest.is_empty() || rest.len() > 2 {
-        usage();
+        eprintln!("{}", USAGE);
         return 2;
     }
     let tool = match Tool::resolve(&rest[0]) {
@@ -508,7 +520,7 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
     let flagged = rest.first().map_or(false, |a| a == NATIVE_FLAG);
     let rest = if flagged { &rest[1..] } else { rest };
     if rest.len() < 2 || rest[1] != "--" {
-        usage();
+        eprintln!("{}", USAGE);
         return 2;
     }
     let mut args = &rest[2..];
@@ -2073,7 +2085,7 @@ fn cmd_exec(rest: &[OsString]) -> i32 {
     let command = match rest.get(i) {
         Some(c) => c,
         None => {
-            usage();
+            eprintln!("{}", USAGE);
             return 2;
         }
     };
