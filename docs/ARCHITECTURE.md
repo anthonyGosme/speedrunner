@@ -193,6 +193,7 @@ Little-endian, on the Unix socket. Every frame: `kind (1 byte) + u32 length + pa
 | child → client | `X(code i32)` | exit code, sent from the last `atexit`; the client exits with it |
 | child → client | `T(code i32)` | instead of X, when teardown still has the tool's code to run: wait for W, or for the end of the connection |
 | parent → client | `W(kind u8, value i32)` | wait status (0 = exited, 1 = killed by a signal), when X did not come |
+| parent → client | `C` | sent when the client's connection turns readable during a run. If this write fails, the client is gone and the tool is killed, as natively. If it succeeds, the tool goes on. A read alone says too little |
 
 Body of an `R`: argv list (u32 count, then u32+bytes blobs; argv[0] = script path), env list (`KEY=value`), u32 umask, u64 mask of inherited ignored signals, groups (u32 count + one u32 each). Fds: 0, 1, 2, an `O_PATH` of the cwd, and `/dev/tty` if the client has a controlling terminal.
 

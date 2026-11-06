@@ -2525,29 +2525,34 @@ class Parent:
             child.ctl = None
 
     def on_client_gone(self, child):
-        """The client sends nothing after its go: readable should mean end of
-        file. Killed (kill -9): the tool dies with it, as natively. An E already
-        sent means the client left normally. Anything else readable is not a
-        client that left: the tool goes on, and the log says so."""
+        """The client sends nothing after its go: readable should mean it left.
+        Killed (kill -9): the tool dies with it, as natively. An E already sent
+        means the client left normally. A read says too little to kill on: a
+        tool came back as -9 from this code, rarely, on macOS. So it takes a
+        write that fails. Whatever else this was, the tool goes on, the log says
+        so, and its client is watched no more: what is there stays readable."""
         while child.ctl is not None and select.select([child.ctl], [], [], 0)[0]:
             self.on_ctl(child)
         if child.running:
             try:
                 data = child.conn.recv(1, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+                seen = "data" if data else "end of file"
             except BlockingIOError:
                 log(f"child {child.pid}: its client's connection looked readable; nothing there")
                 return
-            except OSError:
-                data = b""
-            child.running = False  # and no more watching: what is there stays readable
-            if data:
-                log(f"child {child.pid}: its client sent something after its go; left running")
-                return
-            log(f"child {child.pid}: client gone, SIGKILL")
+            except OSError as exc:
+                seen = repr(exc)
+            child.running = False
             try:
-                os.kill(child.pid, signal.SIGKILL)
-            except OSError:
-                pass
+                send_msg(child.conn, b"C")
+            except OSError as exc:
+                log(f"child {child.pid}: {seen}, then {exc!r}: client gone, SIGKILL")
+                try:
+                    os.kill(child.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+                return
+            log(f"child {child.pid}: {seen} from its client, which is still there; left running")
 
     def learn(self, payload):
         try:

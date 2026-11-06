@@ -516,6 +516,10 @@ class Failures(m.Matrix):
         finally:
             m.stop("nodetest", env)
 
+    def test_client_that_closed_its_side_is_not_taken_for_gone(self):
+        m.check_client_closed_its_side_only(self, "nodetest", m.ROOT)
+        self.assertIn(b"still there", m.open_log(m.tool_socket("nodetest")))
+
     def test_daemon_killed_mid_run(self):
         root, env = m.private_daemon("nodetest")
         try:
