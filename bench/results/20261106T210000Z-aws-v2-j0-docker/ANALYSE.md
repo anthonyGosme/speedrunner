@@ -2,7 +2,9 @@
 
 Machine: MacBook (Intel i7-9750H), Docker Desktop, a throwaway `linux/amd64` Debian 12 container (`machine.txt`). AWS CLI 2.39.5, installed from AWS's own zip, on its own Python 3.14.8. No network: requests go to a local server that answers anything. Protocol: [bench/aws_v2/](../../aws_v2/).
 
-## Result: served, x4 to x12
+## Result: served
+
+The numbers to quote are those of the [VPS](../20261106T220000Z-aws-v1-v2-vps/ANALYSE.md), x4.6 to x9.7, beside v1. Here, in a container on a laptop, everything is about twice as slow, and the ratios higher.
 
 The real client, the built-in daemon, 21 interleaved runs, medians (`served.log`):
 
@@ -19,7 +21,7 @@ The real client, the built-in daemon, 21 interleaved runs, medians (`served.log`
 
 Stdout, stderr and the exit code match the native run on all of them, but for `aws s3 cp`, whose bytes vary between any two runs, natively too. It prints its speed, then blanks that line with spaces, as many as the speed took characters: under 10 MiB/s, one less. Over 60 native runs, the 3 under 10 MiB/s took 33 spaces and the 57 others 34. Served, it takes the same two forms: 4 of 30 runs the shorter one, against 3 of 30 natively. So that command is compared without the speed and those spaces. A real link adds the same time to both columns, so the ratio drops and the time saved stays.
 
-**Memory and the first call.** The daemon takes 51 MB of PSS (89 MB of RSS), with 12 data files cached. The first call runs natively (981 ms), and the daemon is ready about 100 ms after it returns.
+**Memory and the first call.** The daemon takes 51 MB of PSS (89 MB of RSS) with 12 data files cached, its parent alone. With its spare, as the panel counts it, 90 to 145 MB on the VPS, against 43 to 119 MB for v1. The first call runs natively (981 ms), and the daemon is ready about 100 ms after it returns.
 
 **Not measured:** a real network, aarch64, a system with a glibc older than the container's. Nothing else built with PyInstaller is served.
 

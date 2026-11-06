@@ -455,8 +455,8 @@ modules start threads as they load (vite) is slower served.
 ## aws v2
 
 AWS's official install is a PyInstaller bundle: an executable, with the Python inside it.
-speedrunner serves it like any Python tool, with nothing to set up, on Linux: x4 to x12
-([measured](../bench/results/20261106T210000Z-aws-v2-j0-docker/ANALYSE.md)). A small launcher,
+speedrunner serves it like any Python tool, with nothing to set up, on Linux: x4.6 to x9.7
+([measured](../bench/results/20261106T220000Z-aws-v1-v2-vps/ANALYSE.md)). A small launcher,
 built into `speedrunner`, starts the daemon on the bundle's own Python.
 
 - Only an executable named `aws`, from a bundle in one directory. Other PyInstaller tools
