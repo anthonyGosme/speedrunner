@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.4.6"
+  version "0.4.7"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "b8795fec603161549e90ce4d21563c69800bd8919024b0832da7a41de4de804a"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "5eb15f020d10dc685af327504b231ca57287044ace50465cd5124411e33ed22f"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "b8795fec603161549e90ce4d21563c69800bd8919024b0832da7a41de4de804a"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "5eb15f020d10dc685af327504b231ca57287044ace50465cd5124411e33ed22f"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "d18d2e8f5e8660277cf85066301add5e4e543e7a97dcf7331f93943f42c19e99"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "20d83a6ba1a032aee512fdd211ca556485065ada9722073662923a606991929b"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "ca9a7dd250bdbdaf22396fcb82cecfc60b175d2e6ab8731869c02de97054555e"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "b43bc0ffdd0a6e80fe0b9b696112e8342e863a77e2f3ad78a94b3b23af2a2a6e"
     end
   end
 
