@@ -449,6 +449,33 @@ Node tools run in a daemon started with `--single-threaded`, so that V8 can be
 forked: a tool that computes a lot can be slower than natively, and a tool whose
 modules start threads as they load (vite) is slower served.
 
+## Java and the JVM
+
+Tools that run on the JVM are not served, and speedrunner does nothing to them:
+it runs them natively. The JVM cannot fork, which is what the speedups rest on,
+and what is left falls short of the x3 this project aims for. Measured on 49
+commands from 33 CLIs, on JDK 25: the JDK's AOT cache gives a median of x1.58 and
+none reaches x3; CRaC gives x1.69, and x3.31 at best, on a special JDK.
+[The analysis](../bench/results/20261106T190000Z-jvm-j0-docker/ANALYSE.md) has
+every command.
+
+You can use the AOT cache yourself, on JDK 24 or later. Run the command once to
+train it, which takes a few seconds more, then pass the cache:
+
+```bash
+java -XX:AOTCacheOutput=tool.aot -jar tool.jar --version
+java -XX:AOTCache=tool.aot -jar tool.jar --version
+```
+
+- It suits the JDK's own tools best (`javac`, `jshell`: about x2.3) and build
+  tools least (about x1.2). Some gain nothing: `pmd` here.
+- If the jar moves or changes, the tool still runs, but the JVM prints errors on
+  stderr: train it again.
+- For a tool behind a launcher script, `JAVA_TOOL_OPTIONS` takes the same options,
+  and the JVM then prints `Picked up JAVA_TOOL_OPTIONS` on stderr.
+- A launcher may pass options that exclude the cache. JRuby's does, and the JVM
+  then refuses to start: remove the options if that happens.
+
 ## Launchers: az, gcloud
 
 Some tools are a script that prepares an environment, then `exec`s Python on the
