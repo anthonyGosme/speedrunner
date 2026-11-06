@@ -1929,9 +1929,11 @@ module Speedrunner
           end
         end
         children.each_value { |c| on_ctl.call(c) if c.ctl && readable.include?(c.ctl) }
-        # The client sends nothing after its go: readable means end of file.
+        # The client sends nothing after its go: readable should mean it left.
         # Killed (kill -9): the tool dies with it, as natively. An E already
-        # sent means the client left normally.
+        # sent means the client left normally. A read says too little to kill
+        # on, so it takes a write that fails; otherwise the tool goes on, and
+        # its client is watched no more: what is there stays readable.
         children.each_value do |c|
           next unless c.running && readable.include?(c.conn)
 
@@ -1939,6 +1941,13 @@ module Speedrunner
           next unless c.running
 
           c.running = false
+          begin
+            send_msg(c.conn, "C")
+            log("child #{c.pid}: readable from its client, which is still there; left running")
+            next
+          rescue SystemCallError, IOError => e
+            log("child #{c.pid}: #{e.class}: client gone, SIGKILL")
+          end
           begin
             Process.kill("KILL", c.pid)
           rescue SystemCallError

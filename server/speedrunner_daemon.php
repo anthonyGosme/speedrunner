@@ -1082,12 +1082,21 @@ final class Daemon
                 if ($r > 0 && $pfds[$i]->revents !== 0 && $pid === 'listen') {
                     $stop ??= self::handleInline($lsock);
                 } elseif ($r > 0 && $pfds[$i]->revents !== 0 && is_string($pid)) {
-                    // The client sends nothing after its go: readable means end
-                    // of file. Killed (kill -9): the tool dies with it, as natively.
+                    // The client sends nothing after its go: readable should mean
+                    // it left. Killed (kill -9): the tool dies with it, as natively.
+                    // A read says too little to kill on, so it takes a write that
+                    // fails; otherwise the tool goes on, and its client is watched
+                    // no more: what is there stays readable.
                     $child = (int) substr($pid, 6);
                     if (isset($children[$child])) {
                         $children[$child]['running'] = false;
-                        posix_kill($child, SIGKILL);
+                        try {
+                            self::sendMsg($fd, 'C');
+                            self::log("child $child: readable from its client, which is still there; left running");
+                        } catch (\Throwable $e) {
+                            self::log("child $child: client gone, SIGKILL");
+                            posix_kill($child, SIGKILL);
+                        }
                     }
                 } elseif ($r > 0 && $pfds[$i]->revents !== 0) {
                     [$kind, , $fds] = self::readCtl($fd);

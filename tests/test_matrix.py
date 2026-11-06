@@ -79,7 +79,7 @@ def report_sigkill(argv):
         with open(path, errors="replace") as f:
             lines += [f"{os.path.basename(path)}: {line.rstrip()}" for line in f
                       if "SIGKILL" in line or "died of signal" in line or "after its go" in line
-                      or "looked readable" in line]
+                      or "looked readable" in line or "still there" in line]
     sys.stderr.write(f"\n{argv}: -9. Daemon logs:\n  " + ("\n  ".join(lines[-12:]) or "(nothing)") + "\n")
 
 
@@ -1390,8 +1390,15 @@ class Failures(Matrix):
         sock, _ = ask_to_run("hstest", "hold", "0.3", mark)
         with sock:
             sock.sendall(b"Gx")
+            kind, payload = read_frame(sock)
+            self.assertEqual(kind, b"C")  # the daemon checks it is still there
             self.assertEqual(read_frame(sock), (b"X", struct.pack("<i", 0)))
         self.assertEqual(read_lines(mark), ["start", "done"])
+
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_client_that_closed_its_side_is_not_taken_for_gone(self):
+        check_client_closed_its_side_only(self, "hstest", ROOT)
+        self.assertIn(b"still there", open_log(tool_socket("hstest")))
 
     def test_stale_after_module_edit(self):
         # A tool whose module is edited in place, as an upgrade or a
@@ -2184,6 +2191,21 @@ def check_client_killed(case, tool, start_hold, root, env):
         case.fail("the tool outlived its client")
     case.assertEqual(read_lines(marker), ["start"])
     case.assertTrue(status(tool, env).startswith("ready"))
+
+
+def check_client_closed_its_side_only(case, tool, root):
+    """A connection that reads as ended, with its client still there: only a
+    write that fails shows a client gone. The tool ends as it would have."""
+    mark = os.path.join(root, f"{tool}-half-closed")
+    sock, _ = ask_to_run(tool, "hold", "0.5", mark)
+    with sock:
+        sock.sendall(b"G")
+        sock.shutdown(socket.SHUT_WR)
+        kind, payload = read_frame(sock)
+        while kind in (b"C", b"T"):
+            kind, payload = read_frame(sock)
+    case.assertIn((kind, payload), [(b"X", struct.pack("<i", 0)), (b"W", b"\0" + struct.pack("<i", 0))])
+    case.assertEqual(read_lines(mark), ["start", "done"])
 
 
 def daemon_socket(env):

@@ -1274,9 +1274,11 @@ async function serve(opts) {
           ch.ctl = null;
         }
       }
-      // The client sends nothing after its go: readable means end of file.
+      // The client sends nothing after its go: readable should mean it left.
       // Killed (kill -9): the tool dies with it, as natively. An E already
-      // sent means the client left normally.
+      // sent means the client left normally. A read says too little to kill
+      // on, so it takes a write that fails; otherwise the tool goes on, and
+      // its client is watched no more: what is there stays readable.
       for (const [pid, ch] of children) {
         const i = ch.running && ch.conn !== null ? watch.indexOf(ch.conn) : -1;
         if (i < 0 || r[i] === 0) continue;
@@ -1293,8 +1295,14 @@ async function serve(opts) {
         if (ch.running) {
           ch.running = false;
           try {
-            process.kill(pid, "SIGKILL");
-          } catch {}
+            sendMsg(ch.conn, "C");
+            log(`child ${pid}: readable from its client, which is still there; left running`);
+          } catch {
+            log(`child ${pid}: client gone, SIGKILL`);
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {}
+          }
         }
       }
       if (r[0] !== 0) {

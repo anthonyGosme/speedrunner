@@ -793,6 +793,8 @@ fn wait_for_child(sock: &UnixStream, tool: &Tool, args: &[OsString], pid: i32) -
             Ok((b'N', reason)) => fall_back(tool, args, &String::from_utf8_lossy(&reason)),
             // Sent once nothing visible is left: the child tears down after we exit.
             Ok((b'X', p)) if p.len() == 4 => i32::from_le_bytes([p[0], p[1], p[2], p[3]]),
+            // The daemon checks we are here: being able to send it is the answer.
+            Ok((b'C', _)) => continue,
             // The tool's code still runs in its teardown: wait for it to end.
             Ok((b'T', p)) if p.len() == 4 => {
                 in_teardown = Some(i32::from_le_bytes([p[0], p[1], p[2], p[3]]));
