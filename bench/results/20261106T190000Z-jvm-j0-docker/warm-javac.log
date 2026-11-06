@@ -1,0 +1,5 @@
+javac Hello.java, native 809 ms
+    0 compiles before the checkpoint: 861 ms, x0.94, image 24 MB
+    1 compiles before the checkpoint: 296 ms, x2.74, image 44 MB
+   10 compiles before the checkpoint: 434 ms, x1.86, image 75 MB
+   50 compiles before the checkpoint: 429 ms, x1.89, image 93 MB

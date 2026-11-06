@@ -46,6 +46,8 @@ Possible reference targets: `rubocop --version`, `bundle --version`, `pod --vers
 
 ### JVM: the cache is simple on paper, injecting it is not
 
+**Measured (2026-11-06): no-go.** On 49 commands from 33 CLIs, the AOT cache gives a median of x1.58 and none reaches x3; CRaC with the classes initialised, x1.69 and x3.31 at best. Worth redoing if a stock JDK ships compiled code in its AOT cache. See [the analysis](../bench/results/20261106T190000Z-jvm-j0-docker/ANALYSE.md). What follows is the proposal as it stood.
+
 1. **AOT or CDS cache**: options must be added to the `java` command line. The `JAVA_TOOL_OPTIONS` and `JDK_JAVA_OPTIONS` variables allow it, but the JVM then prints `Picked up …` on stderr, which violates "zero output difference". The call to `java` would have to be rewritten instead, while JVM tools (gradle, mvn, sbt…) often go through their own shell scripts. Doable tool by tool, not with zero configuration.
 2. **CRaC**: restoring a snapshot taken after initialisation. It is the most spectacular gain, but it needs a CRaC JDK (not Debian's JDK) and a tool that supports restoring: files and sockets open at snapshot time.
 

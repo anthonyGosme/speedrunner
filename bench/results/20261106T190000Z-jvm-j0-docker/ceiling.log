@@ -1,0 +1,17 @@
+(restore floor) Noop           rc=0    native     45 | load    128 x 0.35 same 11 | init     89 x 0.50 same 11 | classes 3 image 24.6
+checkstyle --version           rc=0    native    498 | load    421 x 1.18 same 11 | init    308 x 1.62 same 11 | classes 372 image 36.3
+checkstyle Hello.java          rc=4    native   1474 | load   1460 x 1.01 same 11 | init   1125 x 1.31 same 11 | classes 1376 image 45.3
+openapi-generator version      rc=0    native    377 | load    328 x 1.15 same 11 | init    203 x 1.86 same 11 | classes 315 image 44.8
+openapi-generator validate     rc=0    native   1246 | load    961 x 1.30 same 11 | init    376 x 3.31 same 11 | classes 1921 image 57.2
+swagger-codegen version        rc=0    native   1167 | load    867 x 1.35 same 11 | init    374 x 3.12 same 11 | classes 1821 image 54.0
+plantuml -version              rc=16   native    309 | load    275 x 1.13 same 11 | init    150 x 2.06 same 11 | classes 397 image 38.1
+plantuml sample.puml           rc=0    native    950 | load    762 x 1.25 same 11 | init    498 x 1.91 same 11 | classes 1452 image 46.8
+closure-compiler --version     rc=0    native    465 | load    363 x 1.28 same 11 | init    266 x 1.75 same 11 | classes 541 image 38.1
+bfg --version                  rc=0    native    504 | load    325 x 1.55 same 11 | init    152 x 3.31 same 11 | classes 451 image 41.0
+detekt --version               rc=0    native    316 | load    255 x 1.24 same 11 | init    237 x 1.33 same 11 | classes 253 image 38.5
+quarkus --version              rc=0    native   1819 | load   1539 x 1.18 same 11 | init   1119 x 1.63 same 11 | classes 2207 image 55.1
+trino --version                rc=0    native    607 | load    466 x 1.30 same 11 | init    385 x 1.58 same 11 | classes 512 image 37.3
+clojure -e                     rc=0    native   1042 | load    846 x 1.23 same 11 | init    162 x 6.44 same  0 | classes 2002 image 48.7
+jython -c                      rc=0    native   2144 | load   1922 x 1.12 same 11 | init    230 x 9.31 same  0 | classes 2819 image 91.4
+javac Hello.java               rc=0    native    795 | load    787 x 1.01 same 11 | init    677 x 1.18 same 11 | classes 1234 image 42.3
+pmd check Hello.java           rc=4    native   4514 | load   3954 x 1.14 same 11 | init   3682 x 1.23 same 11 | classes 3081 image 116.9
