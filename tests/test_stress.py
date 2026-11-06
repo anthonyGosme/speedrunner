@@ -19,12 +19,14 @@ STRESS_SECONDS (default 90), STRESS_WORKERS (default 8), STRESS_SEED.
 Run: python3 tests/test_stress.py -v
 """
 import collections
+import glob
 import os
 import random
 import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import unittest
@@ -81,6 +83,18 @@ def installed():
         if path and runnable(path):
             tools[tool] = (os.path.realpath(path), commands)
     return tools
+
+
+def report_daemons(failures):
+    """What the daemons of the tools that failed said: an occurrence is rare,
+    and the directory that holds it goes with the run."""
+    tools = {f.split()[0] for f in failures}
+    for tool in sorted(tools):
+        for path in glob.glob(os.path.join(m.ROOT, "**", "speedrunner", f"{tool}-*.log"), recursive=True):
+            with open(path, errors="replace") as f:
+                lines = f.readlines()
+            sys.stderr.write(f"\n{os.path.basename(path)}, last of {len(lines)} lines:\n  "
+                             + "  ".join(lines[-40:]))
 
 
 def daemon_pid(tool):
@@ -168,6 +182,8 @@ class Stress(unittest.TestCase):
         for t in threads:
             t.join()
         print("stress: " + ", ".join(f"{k} {v}" for k, v in sorted(calls.items())), flush=True)
+        if failures:
+            report_daemons(failures)
         self.assertEqual(failures, [], f"seed {SEED}")
 
 

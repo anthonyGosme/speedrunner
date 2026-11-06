@@ -580,6 +580,43 @@ class Failures(m.Matrix):
         finally:
             m.stop("rbtest", env)
 
+    def test_output_at_load_not_read_in_time(self):
+        m.check_output_not_read_in_time(self, "rbnoisy", ["rbnoisy"])
+
+    def test_read_to_mark(self):
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        code = r"""
+          require "io/console"
+          require "pty"
+          src = File.read(ARGV[0])
+          eval(src[0...src.rindex("at_exit { Speedrunner.report_exit }")])
+          S = Speedrunner
+          master, slave = PTY.open
+          slave.raw!
+          master.nonblock = true if master.respond_to?(:nonblock=)
+          old, mine = S.new_pty_mark, S.new_pty_mark
+          raise "same" if old == mine
+          slave.syswrite(old)
+          writer = fork { sleep 0.1; slave.syswrite("late" + mine); exit!(0) }
+          got = S.read_to_mark(master, "".b, mine)
+          Process.wait(writer)
+          raise got.inspect unless got == "late"
+          slave.syswrite("part")
+          S.send(:remove_const, :PTY_MARK_WAIT_S)
+          S.const_set(:PTY_MARK_WAIT_S, 0.1)
+          begin
+            S.read_to_mark(master, "".b, S.new_pty_mark)
+            raise "no OutputLost"
+          rescue S::OutputLost
+            puts "ok"
+          end
+        """
+        with open(shutil.which("rbtest", path=m.BASE_ENV["PATH"])) as f:
+            ruby = f.readline()[2:].split()  # the tool's, not the first on PATH
+        p = subprocess.run([*ruby, "-e", code, os.path.join(repo, "server", "speedrunner_daemon.rb")],
+                           capture_output=True, env=m.BASE_ENV, timeout=30)
+        self.assertEqual((p.stdout, p.stderr), (b"ok\n", b""))
+
     def test_client_that_closed_its_side_is_not_taken_for_gone(self):
         m.check_client_closed_its_side_only(self, "rbtest", m.ROOT)
         self.assertIn(b"still there", m.open_log(m.tool_socket("rbtest")))

@@ -54,6 +54,7 @@ import itertools
 import json
 import os
 import posix
+import re
 import runpy
 import select
 import signal
@@ -493,8 +494,19 @@ def shadowed(state, cwd_fd):
     return None
 
 
-PTY_MARK = b"\0speedrunner: end of load\0"
-PTY_MARK_WAIT_S = 2.0
+PTY_MARK = re.compile(rb"\0speedrunner: end of load \d+\.\d+\0")
+PTY_MARK_WAIT_S = float(os.environ.get("SPEEDRUNNER_PTY_WAIT", 2.0))
+PTY_MARKS = itertools.count()
+
+
+def new_pty_mark():
+    """Each its own: one left in the pty must not end a later read."""
+    return b"\0speedrunner: end of load %d.%d\0" % (os.getpid(), next(PTY_MARKS))
+
+
+class OutputLost(Exception):
+    """What a load printed could not be read to its end. It is printed on every
+    run, so without it nothing can be served."""
 
 
 def capture_fds_during(fn, tty=None):
@@ -526,6 +538,7 @@ def capture_fds_during(fn, tty=None):
             os.dup2(tty.slave[0], 0)
         rebind_std_streams()
         drained = {fd: [] for fd in (1, 2)}
+        marks = {fd: new_pty_mark() for fd in (1, 2)}
         ptys = [(fd, sinks[fd]) for fd in (1, 2) if sinks[fd] not in memfds]
         try:
             with DrainingPtys(ptys, drained):
@@ -535,7 +548,7 @@ def capture_fds_during(fn, tty=None):
                     sys.stdout.flush()
                     sys.stderr.flush()
                     for fd, _ in ptys:
-                        os.write(tty.slave[fd], PTY_MARK)
+                        os.write(tty.slave[fd], marks[fd])
         finally:
             for fd in (0, 1, 2):
                 os.dup2(saved[fd], fd)
@@ -546,7 +559,7 @@ def capture_fds_during(fn, tty=None):
             if sink in memfds:
                 os.lseek(sink, 0, os.SEEK_SET)
             if sink not in memfds:
-                captured.append(read_to_mark(sink, drained[fd]))
+                captured.append(read_to_mark(sink, drained[fd], marks[fd]))
                 continue
             chunks = []
             for chunk in iter(lambda: os.read(sink, 65536), b""):
@@ -566,29 +579,35 @@ def settle_pty(master, slave):
             pass
     except OSError:  # nothing there for now
         pass
-    os.write(slave, PTY_MARK)
-    read_to_mark(master, [])
+    mark = new_pty_mark()
+    os.write(slave, mark)
+    try:
+        read_to_mark(master, [], mark)
+    except OutputLost as exc:  # the next read has a mark of its own
+        log(f"settling a pty: {exc}")
 
 
-def read_to_mark(master, chunks):
+def read_to_mark(master, chunks, mark):
     """All that went through a pty stand-in. Its master gets what was written a
     little later (the kernel's flip buffer), later still on a busy machine: what
-    comes before our own mark, written last, is all of it. The rest would be
-    missing from what each run prints, and blamed on the next import."""
+    comes before our own mark, written last, is all of it. Without that mark we
+    cannot know, and a part would be missing from what each run prints."""
     data = b"".join(chunks)
     deadline = time.monotonic() + PTY_MARK_WAIT_S
-    while PTY_MARK not in data:
+    while mark not in data:
         left = deadline - time.monotonic()
         if left <= 0 or not select.select([master], [], [], left)[0]:
-            break
+            raise OutputLost(f"what a load printed was not read in {PTY_MARK_WAIT_S} s")
         try:
             chunk = os.read(master, 65536)
-        except OSError:
-            break
+        except BlockingIOError:
+            continue
+        except OSError as exc:
+            raise OutputLost(f"what a load printed could not be read: {exc!r}") from None
         if not chunk:
-            break
+            raise OutputLost("what a load printed could not be read: end of file")
         data += chunk
-    return data.replace(PTY_MARK, b"")
+    return PTY_MARK.sub(b"", data)
 
 
 class DrainingPtys:
@@ -1416,6 +1435,8 @@ def preload(state):
             state.import_output = capture_fds_during(do_imports, state.tty)
         state.import_env_read = reads.keys
         state.import_tty_read = ttys.seen
+    except OutputLost as exc:
+        state.restart = str(exc)  # a fresh daemon may read it: natively meanwhile
     except BaseException as exc:  # keep serving, so clients stop respawning us
         state.disabled = f"preload failed: {exc!r}"
         log(state.disabled)
@@ -1484,6 +1505,8 @@ def import_in_daemon(state, names):
                       FileReads(state) as files):
                     output, argv_read = reads_argv(
                         lambda: capture_fds_during(lambda: importlib.import_module(name), state.tty))
+            except OutputLost as exc:  # cannot be undone, but says nothing of the module
+                return f"{name}: {exc}"
             except Refused as exc:
                 state.blacklist[name] = str(exc)
                 return f"{name} {exc}"
@@ -1581,6 +1604,8 @@ def probe_imports(names, tty=None, paths=(), origins=None, refused=(), each=Fals
                            else "uses CoreFoundation at import" if each and cf_unsafe()
                            else FINALIZER_AT_IMPORT if freeze_heap()
                            else None)
+                except OutputLost:
+                    break  # says nothing of this module: later children bring it back
                 except Refused as exc:
                     why = str(exc)
                 except BaseException as exc:
@@ -2766,7 +2791,8 @@ def serve(state):
         unlink_socket(state)
         return 0
     log(f"preloaded {state.tool} in {state.preload_s * 1000:.0f} ms, started by "
-        f"{state.origin}; {status_text(state)}")
+        f"{state.origin}; printed {len(state.import_output[0])}+{len(state.import_output[1])} bytes; "
+        f"{status_text(state)}")
 
     wake_r, wake_w = os.pipe()
     os.set_blocking(wake_r, False)

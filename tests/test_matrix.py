@@ -13,6 +13,7 @@ import concurrent.futures
 import ctypes
 import glob
 import gzip
+import importlib.util
 import json
 import os
 import pty
@@ -29,6 +30,7 @@ import sys
 import tempfile
 import threading
 import time
+import tty
 import unittest
 import zipfile
 
@@ -1400,6 +1402,34 @@ class Failures(Matrix):
         check_client_closed_its_side_only(self, "hstest", ROOT)
         self.assertIn(b"still there", open_log(tool_socket("hstest")))
 
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_output_at_load_not_read_in_time(self):
+        check_output_not_read_in_time(self, "hsnoisy", ["hsnoisy"])
+
+    def test_read_to_mark(self):
+        spec = importlib.util.spec_from_file_location(
+            "daemon_under_test", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                              "server", "speedrunner_daemon.py"))
+        daemon = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(daemon)
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+        tty.setraw(slave)
+        old, mine = daemon.new_pty_mark(), daemon.new_pty_mark()
+        self.assertNotEqual(old, mine)
+        # A mark left behind ends nothing; what comes after it is kept.
+        os.write(slave, old)
+        timer = threading.Timer(0.1, lambda: os.write(slave, b"late" + mine))
+        timer.start()
+        self.addCleanup(timer.join)
+        self.assertEqual(daemon.read_to_mark(master, [], mine), b"late")
+        # Without its mark, what was read is not taken for all of it.
+        os.write(slave, b"part")
+        daemon.PTY_MARK_WAIT_S = 0.1
+        with self.assertRaises(daemon.OutputLost):
+            daemon.read_to_mark(master, [], daemon.new_pty_mark())
+
     def test_stale_after_module_edit(self):
         # A tool whose module is edited in place, as an upgrade or a
         # developer would: same size, same inode, same directory mtime.
@@ -2206,6 +2236,32 @@ def check_client_closed_its_side_only(case, tool, root):
             kind, payload = read_frame(sock)
     case.assertIn((kind, payload), [(b"X", struct.pack("<i", 0)), (b"W", b"\0" + struct.pack("<i", 0))])
     case.assertEqual(read_lines(mark), ["start", "done"])
+
+
+def check_output_not_read_in_time(case, tool, argv):
+    """What a load printed comes on every run: a daemon that cannot read it to
+    the end must not serve without it. Time up at once: most often it restarts,
+    and the client runs natively. Either way the output is whole."""
+    root = tempfile.mkdtemp(dir=ROOT)
+    env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache"),
+           "SPEEDRUNNER_PTY_WAIT": "0"}
+    os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+    case.addCleanup(stop, tool, env)
+    native = outcome(run("native", argv, env=env, tty=True))
+
+    def logs():  # the socket goes as the daemon restarts, its log stays
+        said = b""
+        for path in glob.glob(os.path.join(env["XDG_RUNTIME_DIR"], "speedrunner", f"{tool}-*.log")):
+            with open(path, "rb") as f:
+                said += f.read()
+        return said
+
+    for _ in range(40):
+        case.assertEqual(outcome(run("hs", argv, env=env, tty=True, require_fast=False)), native)
+        if b"was not read in" in logs():
+            return
+        time.sleep(0.1)
+    case.fail(logs())
 
 
 def daemon_socket(env):
