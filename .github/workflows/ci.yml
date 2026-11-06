@@ -1,4 +1,4 @@
-# On every push: the client's unit tests, its static (musl) build as
+# On every push to a branch: the client's unit tests, its static (musl) build as
 # releases make it, the five regression suites in the Debian image of
 # docker/, as they run on the dev VPS, the Node suite (glibc and musl), the
 # stress suite (races) and ShellCheck.
@@ -7,6 +7,7 @@ name: ci
 
 on:
   push:
+    branches: ["**"]  # not on tags: release.yml has its own gates
   pull_request:
 
 permissions:
