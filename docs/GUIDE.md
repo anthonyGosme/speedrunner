@@ -16,6 +16,7 @@ undo it. For what it gains, see the [README](../README.md); for how it is built,
 - [Where things live](#where-things-live)
 - [Platforms and runtimes](#platforms-and-runtimes)
 - [aws v2](#aws-v2)
+- [Java and the JVM](#java-and-the-jvm)
 - [Launchers: az, gcloud](#launchers-az-gcloud)
 - [Known limits](#known-limits)
 - [Stopping every daemon](#stopping-every-daemon)
@@ -199,7 +200,8 @@ stops after 4 hours unused, or with the [stop-everything loop](#stopping-every-d
 | `speedrunner prewarm <tool>` | Starts the daemon if none is up, or replaces one the tool's upgrade made stale. Returns at once. | 0, 1 if it cannot start one |
 | `speedrunner enroll [<tool>…]` | Enrolls tools; with no argument, lists them. | 0, 1 or 127 if refused |
 | `speedrunner init zsh\|bash` | Prints the shell hook, for `eval`. | 0 |
-| `speedrunner --version`, `speedrunner version` | Prints `speedrunner 0.4.6`. | 0 |
+| `speedrunner --version`, `speedrunner version`, `-V`, `srr --version` | Prints the version, as `speedrunner 0.4.7`. | 0 |
+| `speedrunner --help`, `speedrunner help`, `-h`, `srr --help` | Prints the usage. | 0 |
 
 All of them exit with 127 for a tool not found on `PATH`, and 2 on a usage error.
 `status`, `stop` and `prewarm` also take `php <script>`
@@ -463,6 +465,33 @@ built into `speedrunner`, starts the daemon on the bundle's own Python.
 - If the launcher cannot run (a data directory mounted `noexec`, a libc it does not suit),
   aws runs natively.
 - The daemon's Python starts with `-S -B`, so `sys.flags` can differ from a native run's.
+
+## Java and the JVM
+
+Tools that run on the JVM are not served, and speedrunner does nothing to them:
+it runs them natively. The JVM cannot fork, which is what the speedups rest on,
+and what is left falls short of the x3 this project aims for. Measured on 49
+commands from 33 CLIs, on JDK 25: the JDK's AOT cache gives a median of x1.58 and
+none reaches x3; CRaC gives x1.69, and x3.31 at best, on a special JDK.
+[The analysis](../bench/results/20261106T190000Z-jvm-j0-docker/ANALYSE.md) has
+every command.
+
+You can use the AOT cache yourself, on JDK 24 or later. Run the command once to
+train it, which takes a few seconds more, then pass the cache:
+
+```bash
+java -XX:AOTCacheOutput=tool.aot -jar tool.jar --version
+java -XX:AOTCache=tool.aot -jar tool.jar --version
+```
+
+- It suits the JDK's own tools best (`javac`, `jshell`: about x2.3) and build
+  tools least (about x1.2). Some gain nothing: `pmd` here.
+- If the jar moves or changes, the tool still runs, but the JVM prints errors on
+  stderr: train it again.
+- For a tool behind a launcher script, `JAVA_TOOL_OPTIONS` takes the same options,
+  and the JVM then prints `Picked up JAVA_TOOL_OPTIONS` on stderr.
+- A launcher may pass options that exclude the cache. JRuby's does, and the JVM
+  then refuses to start: remove the options if that happens.
 
 ## Launchers: az, gcloud
 

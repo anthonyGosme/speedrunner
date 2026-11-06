@@ -325,6 +325,10 @@ mypy on a changed file, 1.11 s → 0.31 s per commit, same output
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
 learn what a tool loads.
 
+**Java?** Not served, and on purpose. The JVM cannot fork, and on 49 commands from 33 CLIs its AOT cache gives
+a median of x1.58, with none at x3; CRaC gives x1.69, on a special JDK. Tools on the JVM simply run natively.
+[The guide](docs/GUIDE.md#java-and-the-jvm) shows how to turn the cache on yourself.
+
 **macOS, Windows?** macOS 11 or later, Intel and Apple Silicon, since 0.4.0: one universal
 binary, which `install.sh` picks. Python, Ruby, PHP and Node are served, launchers (az, gcloud) followed; the bash
 hook needs bash 4.2 or later (zsh, the default shell, has no such limit). Linux: x86_64 or aarch64, any
