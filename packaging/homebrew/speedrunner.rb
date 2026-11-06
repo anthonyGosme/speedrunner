@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.4.5"
+  version "0.4.6"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.5/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "939e6df516bce3a3bc906140d297667b1c34f7732841baa361c53864cf24ea17"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "b8795fec603161549e90ce4d21563c69800bd8919024b0832da7a41de4de804a"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.5/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "939e6df516bce3a3bc906140d297667b1c34f7732841baa361c53864cf24ea17"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "b8795fec603161549e90ce4d21563c69800bd8919024b0832da7a41de4de804a"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.5/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "e0231716712f5eabfab15ba5f16a04ee94d01e51d3dbced8cd0966084739e785"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "d18d2e8f5e8660277cf85066301add5e4e543e7a97dcf7331f93943f42c19e99"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.5/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "aa270fe4e09736f761e16a7a8cdd1094e67a89070d37b2959c0328d18b673ba1"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.6/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "ca9a7dd250bdbdaf22396fcb82cecfc60b175d2e6ab8731869c02de97054555e"
     end
   end
 
