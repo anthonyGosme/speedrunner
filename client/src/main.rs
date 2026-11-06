@@ -13,7 +13,7 @@ mod script;
 use std::env;
 use std::ffi::{CString, OsStr, OsString};
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::mem;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
@@ -49,8 +49,10 @@ static CHILD_PIDFD: AtomicI32 = AtomicI32::new(-1);
 
 // The daemons and the shell hooks, built in: a release is this one file. The
 // Node daemon's addon comes per libc, as build.rs made it (empty if not).
-const EMBEDDED: [(&str, &[u8]); 7] = [
+const EMBEDDED: [(&str, &[u8]); 9] = [
     ("speedrunner_daemon.py", include_bytes!("../../server/speedrunner_daemon.py")),
+    ("speedrunner_pyi_boot.py", include_bytes!("../../server/speedrunner_pyi_boot.py")),
+    ("speedrunner_pyi", include_bytes!(concat!(env!("OUT_DIR"), "/speedrunner_pyi"))),
     ("speedrunner_daemon.rb", include_bytes!("../../server/speedrunner_daemon.rb")),
     ("speedrunner_daemon.php", include_bytes!("../../server/speedrunner_daemon.php")),
     ("speedrunner_daemon.mjs", include_bytes!("../../server/speedrunner_daemon.mjs")),
@@ -1599,6 +1601,16 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
         }
     };
     let daemon = locate_daemon(runtime, &interp)?;
+    // A bundle has no interpreter to run: the launcher, the bundle, then its first script.
+    let (named, interp, flags) = if matches!(runtime, Runtime::Bundle) {
+        let launcher = extract_daemon("speedrunner_pyi")?;
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700))?;
+        let boot = extract_daemon("speedrunner_pyi_boot.py")?.into_os_string().into_vec();
+        let launcher = launcher.into_os_string().into_vec();
+        (launcher.clone(), launcher, vec![tool.path.clone(), boot])
+    } else {
+        (named, interp, flags)
+    };
     let lock = lock_path(tool);
     let awaited = match lock_state(&lock)? {
         LockState::Free => None,
@@ -1636,7 +1648,7 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     if cfg!(target_os = "macos") {
         let mut given = env.take().unwrap_or_else(environ);
         let extra = match runtime {
-            Runtime::Python => platform::launch_env_var(&given).into_iter().collect(),
+            Runtime::Python | Runtime::Bundle => platform::launch_env_var(&given).into_iter().collect(),
             Runtime::Ruby | Runtime::Node => platform::objc_fork_env(&given),
             _ => Vec::new(),
         };
@@ -2203,6 +2215,8 @@ fn unsupported(why: &str) -> io::Error {
 #[derive(Clone, Copy)]
 enum Runtime {
     Python,
+    /// A PyInstaller bundle (aws v2): Python, started by speedrunner_pyi.
+    Bundle,
     Ruby,
     Php,
     Node,
@@ -2226,7 +2240,7 @@ impl Runtime {
 
     fn daemon_file(self) -> &'static str {
         match self {
-            Runtime::Python => "speedrunner_daemon.py",
+            Runtime::Python | Runtime::Bundle => "speedrunner_daemon.py",
             Runtime::Ruby => "speedrunner_daemon.rb",
             Runtime::Php => "speedrunner_daemon.php",
             Runtime::Node => "speedrunner_daemon.mjs",
@@ -2250,6 +2264,35 @@ impl Runtime {
     }
 }
 
+/// aws v2: a PyInstaller bundle in one directory, with the library the launcher
+/// loads beside it. By name for now: nothing else has been compared to its native run.
+/// Linux only, where this build has a launcher.
+fn is_bundle(script: &[u8]) -> bool {
+    if !cfg!(target_os = "linux") || !EMBEDDED.iter().any(|(n, b)| *n == "speedrunner_pyi" && !b.is_empty()) {
+        return false;
+    }
+    bundle_library(script).map_or(false, |lib| lib.is_file())
+}
+
+/// The library named in the archive's cookie, beside the executable, if `script` is an
+/// executable called aws with such an archive at its end.
+fn bundle_library(script: &[u8]) -> Option<PathBuf> {
+    const COOKIE: &[u8] = b"MEI\x0c\x0b\x0a\x0b\x0e";
+    let real = std::fs::canonicalize(OsStr::from_bytes(script)).ok()?;
+    if real.file_name()? != "aws" {
+        return None;
+    }
+    let mut file = File::open(&real).ok()?;
+    let size = file.seek(SeekFrom::End(0)).ok()?;
+    file.seek(SeekFrom::Start(size.saturating_sub(8192))).ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    let at = tail.windows(COOKIE.len()).rposition(|w| w == COOKIE)?;
+    let name = tail.get(at + 24..at + 88)?;
+    let name = &name[..name.iter().position(|b| *b == 0).unwrap_or(name.len())];
+    Some(real.parent()?.join(OsStr::from_bytes(name)))
+}
+
 /// Interpreter and optional flag from the script's shebang, as the kernel
 /// would run it, and the runtime that interpreter belongs to.
 fn read_shebang(script: &[u8]) -> io::Result<(Vec<u8>, Option<Vec<u8>>, Runtime)> {
@@ -2257,6 +2300,9 @@ fn read_shebang(script: &[u8]) -> io::Result<(Vec<u8>, Option<Vec<u8>>, Runtime)
     let n = File::open(OsStr::from_bytes(script))?.read(&mut buf)?;
     let head = &buf[..n];
     if !head.starts_with(b"#!") {
+        if is_bundle(script) {
+            return Ok((script.to_vec(), None, Runtime::Bundle));
+        }
         return Err(unsupported("no shebang"));
     }
     let end = head.iter().position(|b| *b == b'\n').ok_or_else(|| unsupported("shebang too long"))?;

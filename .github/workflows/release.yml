@@ -53,7 +53,7 @@ jobs:
           if ldd "$bin" 2>/dev/null | grep -q '=>'; then echo "not static"; exit 1; fi
           "$bin" --version
           "$bin" init zsh > /dev/null
-          for f in node-addons/*.node; do test -s "$f"; done  # both addons built
+          for f in node-addons/*.node node-addons/speedrunner_pyi; do test -s "$f"; done  # both addons and the launcher built
       - name: Package
         run: |
           name=speedrunner-$TARGET

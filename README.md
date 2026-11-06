@@ -254,6 +254,26 @@ Outputs identical to native. Against AWS itself, your latency adds the same time
 the 0.2 s saved per call stays, the ratio drops (`aws s3 ls` with 100 ms of round trips: about
 0.42 → 0.17 s). [Protocol and every run](bench/results/20261103T180000Z-s3-vps/ANALYSE.md).
 
+### aws v2, the official install
+
+AWS's own installer gives a PyInstaller bundle, slower than v1 at about a second per call. speedrunner
+serves it on Linux, with the Python inside it, and nothing to set up. Measured in a container on a laptop,
+requests to a local server, 21 interleaved runs:
+
+| Command | Native | speedrunner | Saved per call | Speedup |
+|---|---:|---:|---:|---:|
+| `aws --version` | 895 ms | 74 ms | 821 ms | **x12.0** |
+| `aws configure list` | 970 ms | 102 ms | 868 ms | **x9.5** |
+| `aws s3 ls` | 1157 ms | 199 ms | 958 ms | **x5.8** |
+| `aws sts get-caller-identity` | 1140 ms | 213 ms | 927 ms | **x5.3** |
+| `aws s3api list-buckets` | 1130 ms | 223 ms | 907 ms | **x5.1** |
+| `aws ec2 run-instances --generate-cli-skeleton` | 1156 ms | 271 ms | 885 ms | **x4.3** |
+| `aws s3 cp`, a small file | 1275 ms | 302 ms | 973 ms | **x4.2** |
+
+Outputs identical to native, but for the speed `aws s3 cp` prints and the spaces after it, which vary natively
+too. Not on macOS yet, where it runs natively.
+[Protocol and analysis](bench/results/20261106T210000Z-aws-v2-j0-docker/ANALYSE.md).
+
 ### Against the tools' own daemons
 
 Some tools ship a daemon of their own because they start too slowly. The case
@@ -291,7 +311,7 @@ starts the daemon as you type the tool's name, so that even the first call is fa
 
 **When does it not help?** When the command's own work or the network dominates (`phpstan analyse`,
 `aws s3 ls` on a slow link), for tools that start threads as they load (vite), and for native binaries:
-there is nothing to preload.
+there is nothing to preload. Of the tools packed into one binary, only aws v2 is served so far.
 
 **pre-commit, git hooks?** Commit with `speedrunner exec git commit`. git runs pre-commit's hook by its
 path, but the hook's `#!/usr/bin/env bash` looks bash up on PATH: next to pre-commit's link, `exec` puts a

@@ -15,6 +15,7 @@ undo it. For what it gains, see the [README](../README.md); for how it is built,
 - [Environment variables](#environment-variables)
 - [Where things live](#where-things-live)
 - [Platforms and runtimes](#platforms-and-runtimes)
+- [aws v2](#aws-v2)
 - [Launchers: az, gcloud](#launchers-az-gcloud)
 - [Known limits](#known-limits)
 - [Stopping every daemon](#stopping-every-daemon)
@@ -448,6 +449,20 @@ names: nothing else to install.
 Node tools run in a daemon started with `--single-threaded`, so that V8 can be
 forked: a tool that computes a lot can be slower than natively, and a tool whose
 modules start threads as they load (vite) is slower served.
+
+## aws v2
+
+AWS's official install is a PyInstaller bundle: an executable, with the Python inside it.
+speedrunner serves it like any Python tool, with nothing to set up, on Linux: x4 to x12
+([measured](../bench/results/20261106T210000Z-aws-v2-j0-docker/ANALYSE.md)). A small launcher,
+built into `speedrunner`, starts the daemon on the bundle's own Python.
+
+- Only an executable named `aws`, from a bundle in one directory. Other PyInstaller tools
+  run natively: they have not been compared with their native run.
+- Not on macOS yet, where it runs natively.
+- If the launcher cannot run (a data directory mounted `noexec`, a libc it does not suit),
+  aws runs natively.
+- The daemon's Python starts with `-S -B`, so `sys.flags` can differ from a native run's.
 
 ## Launchers: az, gcloud
 

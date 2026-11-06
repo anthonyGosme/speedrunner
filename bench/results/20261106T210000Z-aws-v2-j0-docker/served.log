@@ -1,0 +1,14 @@
+aws --version                                      native    895 ms served     74 ms x12.04 same 21 rc 0/0
+aws configure list                                 native    970 ms served    102 ms x 9.54 same 21 rc 0/0
+aws ec2 run-instances --generate-cli-skeleton      native   1156 ms served    271 ms x 4.27 same 21 rc 0/0
+aws s3api list-buckets --endpoint-url http://127.0 native   1130 ms served    223 ms x 5.08 same 21 rc 0/0
+aws s3 ls --endpoint-url http://127.0.0.1:9000     native   1157 ms served    199 ms x 5.82 same 21 rc 0/0
+aws s3 cp /tmp/up.bin s3://b/up.bin --endpoint-url native   1275 ms served    302 ms x 4.23 same 14 rc 0/0
+aws nosuchcommand                                  native    875 ms served     75 ms x11.68 same 21 rc 252/252
+aws s3 ls --nosuchoption                           native    952 ms served     96 ms x 9.87 same 21 rc 252/252
+aws envdump                                        native    918 ms served    104 ms x 8.87 same 0 rc 0/0
+aws argdump a b c                                  native    926 ms served     98 ms x 9.47 same 21 rc 0/0
+aws configure get region                           native    960 ms served    106 ms x 9.08 same 21 rc 1/1
+aws sts get-caller-identity --region us-east-1 --e native   1140 ms served    213 ms x 5.34 same 21 rc 255/255
+status: ready pid=781 preload_ms=558 modules=688 levels=1,2,3 learned=100 blacklisted=0 memo=16 gen=6 tty_read=-
+CACHE aws-fe5e1ed49cda1adf.json learned 100 paths []

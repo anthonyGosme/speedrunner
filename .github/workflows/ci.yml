@@ -61,6 +61,24 @@ jobs:
       - uses: actions/checkout@v7
       - run: STRESS_SECONDS=120 docker/test-all.sh stress stress-node
 
+  aws-v2:  # the official bundle, served, each output compared with its native run
+    # Not again on main for a merged pull request: it passed on the pull request.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - run: cargo build --release --locked --manifest-path client/Cargo.toml
+      - name: Install aws v2 from AWS's zip
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/aws.zip" https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+          unzip -q "$RUNNER_TEMP/aws.zip" -d "$RUNNER_TEMP"
+          "$RUNNER_TEMP/aws/install" -i "$RUNNER_TEMP/aws-i" -b "$RUNNER_TEMP/aws-bin"
+      - run: python3 tests/test_aws_v2.py -v
+        env:
+          HS_BIN: ${{ github.workspace }}/client/target/release/speedrunner
+          HS_PATH: ${{ runner.temp }}/aws-bin
+
   suites:
     # Not again on main for a merged pull request: it passed on the pull request.
     if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request')) }}

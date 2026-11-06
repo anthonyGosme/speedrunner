@@ -108,6 +108,18 @@ A launcher prepares an environment, then runs the interpreter on the real tool. 
 - **Only the tool's own files are learned**, in Python and in Ruby: a module, a file or a `sys.path` entry is learned only under the load path the tool was preloaded with (its script's directory, the interpreter's, site-packages, the gem directories), never under the client's cwd that `python -m` puts first, `/` or the home directory. See §11, a project's modules.
 - **What module-level code reads is tracked**, in Python, Ruby and Node, for every level: files opened for reading, files and directories it looks for, directories it lists, the cwd. Python by audit hook (`open`, `os.listdir`, `os.scandir`) and by wrapping `os.stat`, `os.lstat`, `os.access`, `os.getcwd` for the load only; Ruby and Node by wrapping their file functions for the load only. It now runs in the cwd of the client that started the daemon, as natively. An absolute path joins the fingerprint (a watch for a file, a stat for a listing or a missing file; a directory it only looked for only has to stay one, since its mtime moves with its entries). A relative path is compared in each client's cwd: a difference there is stale where the daemon started, natively elsewhere. A read of the cwd itself serves only clients in that directory, apart from a few modules that do not keep it or that a child sets again (adapters: multiprocessing, rich, tempfile, rspec, ansible). PHP has nothing to track: its daemon runs none of the tool. See §11, config files frozen at load.
 
+## 2 quater. aws v2, a PyInstaller bundle
+
+Not a script: an executable with an archive at its end, and `libpython` beside it. On Linux, an executable named `aws` with that archive is a `Runtime::Bundle` (`is_bundle`). There is no `python` to run, so:
+
+- `server/speedrunner_pyi.c` does what the bootloader does: sets `LD_LIBRARY_PATH`, execs itself, loads the library, calls `Py_BytesMain`. Built into the client on Ubuntu 20.04 (`docker/node-addons.sh`).
+- `server/speedrunner_pyi_boot.py` runs PyInstaller's own modules and runtime hooks from the archive, in its order, and keeps the tool's script as a code object in `sys._speedrunner_pyi`. Then it runs the daemon.
+- In the daemon, `BUNDLE` is that script. Its imports come from the code's `IMPORT_NAME`s; it runs in a `__main__` of its own; modules with no file on disk stay out of the file watch, as the executable's fingerprint covers them; `pyimod02_importers` counts as a standard loader.
+- `bundle_env()` puts back what the bootloader leaves in the env, compared whole by `test_env_as_natively`.
+- `hold_crt_logging()`: `awscli.logger` starts the CRT's `AwsLogger` thread as it loads. The parent holds the call back, each child makes it, and the parent has one thread at the fork. The daemon still counts threads: if this ever stops working, it refuses.
+
+Tests: `tests/test_aws_v2.py`, on the real bundle, in its own CI job. Analysis: `bench/results/20261106T210000Z-aws-v2-j0-docker/ANALYSE.md`.
+
 ## 2 quinquies. macOS (M1: Python and the client; M2: Ruby and PHP; M3: Node)
 
 Same product, same protocol; only the system's mechanisms change. On the client side, they are grouped in [client/src/platform.rs](../client/src/platform.rs) (`cfg(target_os)`); on the daemon side, in a "platform" section (`MACOS`) of the Python and Ruby daemons, and in `libc()` of the PHP daemon. Linux keeps exactly its behaviour.
