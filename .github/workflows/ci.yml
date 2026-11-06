@@ -1,4 +1,4 @@
-# On every push to a branch: the client's unit tests, its static (musl) build as
+# On each pull request and each direct push to main: the client's unit tests, its static (musl) build as
 # releases make it, the five regression suites in the Debian image of
 # docker/, as they run on the dev VPS, the Node suite (glibc and musl), the
 # stress suite (races) and ShellCheck.
@@ -7,7 +7,7 @@ name: ci
 
 on:
   push:
-    branches: ["**"]  # not on tags: release.yml has its own gates
+    branches: [main]  # a branch's run comes with its pull request; tags: release.yml has its own gates
   pull_request:
 
 permissions:
@@ -15,6 +15,8 @@ permissions:
 
 jobs:
   unit:
+    # Not again on main for a merged pull request: it passed on the pull request.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request')) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -30,6 +32,8 @@ jobs:
           -S warning install.sh shell/speedrunner.bash packaging/deb.sh packaging/update.sh packaging/apt.sh docker/node-addons.sh docker/run.sh docker/test-all.sh client/macos-universal.sh
 
   musl:
+    # Not again on main for a merged pull request: it passed on the pull request.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request')) }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -38,6 +42,8 @@ jobs:
           'apk add -q musl-dev && cargo build --locked --release && ./target/release/speedrunner --version'
 
   node:
+    # Not again on main for a merged pull request: it passed on the pull request.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -52,6 +58,8 @@ jobs:
       - run: STRESS_SECONDS=120 docker/test-all.sh stress stress-node
 
   suites:
+    # Not again on main for a merged pull request: it passed on the pull request.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:

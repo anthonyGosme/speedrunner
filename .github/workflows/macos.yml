@@ -2,20 +2,25 @@
 # publishes it, built once; then on each runner the client's unit tests, the
 # Python matrix, the shell, script, Ruby and stress suites, with the runner's
 # own Python and Ruby and the Node of nodejs.org, and PHP in a job of its own.
-# Also before every release (release.yml).
+# On each pull request, each direct push to main, every night, and before every
+# release (release.yml).
 name: macos
 
 on:
   push:
-    branches: ["**"]  # not on tags: release.yml has its own gates
+    branches: [main]  # a branch's run comes with its pull request; tags: release.yml has its own gates
   pull_request:
   workflow_call:
+  schedule:
+    - cron: "47 3 * * *"  # rare failures show up over many runs
 
 permissions:
   contents: read  # the jobs only read the repository
 
 jobs:
   universal:
+    # Not again on main for a merged pull request: it passed on the pull request.
+    if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'Merge pull request')) }}
     runs-on: macos-26
     timeout-minutes: 20
     steps:
