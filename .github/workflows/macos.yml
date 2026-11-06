@@ -7,6 +7,7 @@ name: macos
 
 on:
   push:
+    branches: ["**"]  # not on tags: release.yml has its own gates
   pull_request:
   workflow_call:
 
