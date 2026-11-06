@@ -628,6 +628,7 @@ module Speedrunner
       end
     end
     drained = { sinks[0] => "".b, sinks[1] => "".b }
+    marks = { 1 => new_pty_mark, 2 => new_pty_mark }
     begin
       STDIN.reopen(tty.slave[0]) if tty&.covers?(0)
       STDOUT.reopen(tty&.covers?(1) ? tty.slave[1] : sinks[0])
@@ -639,7 +640,7 @@ module Speedrunner
         [1, 2].each do |fd|
           next unless tty&.covers?(fd)
           begin
-            tty.slave[fd].syswrite(PTY_MARK)
+            tty.slave[fd].syswrite(marks[fd])
           rescue Errno::EINTR # the drain's timer
             retry
           end
@@ -651,7 +652,9 @@ module Speedrunner
       STDERR.reopen(saved[2])
       STDOUT.sync, STDERR.sync = syncs
     end
-    sinks.map { |f| f.is_a?(File) ? (f.rewind; f.read.b) : read_to_mark(f, drained[f]) }
+    sinks.each_with_index.map do |f, i|
+      f.is_a?(File) ? (f.rewind; f.read.b) : read_to_mark(f, drained[f], marks[i + 1])
+    end
   ensure
     (saved || []).each(&:close)
     (sinks || []).each { |f| f.close if f.is_a?(File) }
@@ -696,8 +699,18 @@ module Speedrunner
     @setitimer.call(0, [0, microseconds, 0, microseconds].pack("q l x4 q l x4"), nil)
   end
 
-  PTY_MARK = "\0speedrunner: end of load\0".b
-  PTY_MARK_WAIT_S = 2.0
+  PTY_MARK = /\0speedrunner: end of load \d+\.\d+\0/n
+  PTY_MARK_WAIT_S = Float(ENV.fetch("SPEEDRUNNER_PTY_WAIT", 2.0))
+
+  # What a load printed could not be read to its end. It is printed on every
+  # run, so without it nothing can be served.
+  class OutputLost < StandardError; end
+
+  # Each its own: one left in the pty must not end a later read.
+  def self.new_pty_mark
+    @pty_marks = (@pty_marks || 0) + 1
+    "\0speedrunner: end of load #{Process.pid}.#{@pty_marks}\0".b
+  end
 
   # Nothing left over in a pty stand-in: what a probe wrote and left there, as
   # it stopped at a refused file or was killed, is not the next file's.
@@ -710,26 +723,35 @@ module Speedrunner
     rescue Errno::EIO
       nil
     end
-    slave.syswrite(PTY_MARK)
-    read_to_mark(master, "".b)
+    mark = new_pty_mark
+    slave.syswrite(mark)
+    begin
+      read_to_mark(master, "".b, mark)
+    rescue OutputLost => e # the next read has a mark of its own
+      log("settling a pty: #{e.message}")
+    end
   end
 
   # All that went through a pty stand-in. Its master gets what was written a
   # little later (the kernel's flip buffer), later still on a busy machine:
-  # what comes before our own mark, written last, is all of it. The rest would
-  # be missing from what each run prints, and blamed on the next file loaded.
-  def self.read_to_mark(master, data)
+  # what comes before our own mark, written last, is all of it. Without that
+  # mark we cannot know, and a part would be missing from what each run prints.
+  def self.read_to_mark(master, data, mark)
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + PTY_MARK_WAIT_S
-    until data.include?(PTY_MARK)
+    until data.include?(mark)
       left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      break if left <= 0 || !IO.select([master], nil, nil, left)
+      if left <= 0 || !IO.select([master], nil, nil, left)
+        raise OutputLost, "what a load printed was not read in #{PTY_MARK_WAIT_S} s"
+      end
       chunk = master.read_nonblock(65_536, exception: false)
-      break if chunk.nil? || chunk == :wait_readable
+      next if chunk == :wait_readable
+      raise OutputLost, "what a load printed could not be read: end of file" if chunk.nil?
+
       data << chunk
     end
     data.gsub(PTY_MARK, "")
-  rescue Errno::EIO
-    data.gsub(PTY_MARK, "")
+  rescue Errno::EIO => e
+    raise OutputLost, "what a load printed could not be read: #{e.message}"
   end
 
   # One pty per fd of the mask, raw (output bytes unchanged), with the
@@ -899,6 +921,8 @@ module Speedrunner
           end
         end
       end }
+    rescue OutputLost => e
+      state.restart = e.message # a fresh daemon may read it: natively meanwhile
     rescue Exception => e # rubocop:disable Lint/RescueException
       state.disabled = "preload failed: #{e.inspect}"
       log(state.disabled)
@@ -959,6 +983,8 @@ module Speedrunner
           TtyReads::ON[0] = true
           output, argv_read = reads_argv { reading_files(state) { capture_fds(state.tty) { require file } } }
           keep_tool_traps(state)
+        rescue OutputLost => e # cannot be undone, but says nothing of the file
+          return "#{file}: #{e.message}"
         rescue Refused => e
           state.blacklist[file] = e.message
           return "#{file} #{e.message}"
@@ -1117,6 +1143,8 @@ module Speedrunner
           elsif (m = mismatch.call(file)) then m
           elsif each && cf_unsafe? then "uses CoreFoundation at load"
           end
+        rescue OutputLost
+          break # says nothing of this file: later children bring it back
         rescue Refused => e
           e.message
         rescue Exception => e # rubocop:disable Lint/RescueException
@@ -1147,13 +1175,17 @@ module Speedrunner
     in_child({}) do
       traces = Hash.new { |h, k| h[k] = [] }
       failed = {}
-      capture_fds(state.tty) do
-        namespace_tracer(traces).enable
-        files.each do |f|
-          require f
-        rescue Exception # rubocop:disable Lint/RescueException
-          failed[f] = true
+      begin
+        capture_fds(state.tty) do
+          namespace_tracer(traces).enable
+          files.each do |f|
+            require f
+          rescue Exception # rubocop:disable Lint/RescueException
+            failed[f] = true
+          end
         end
+      rescue OutputLost
+        nil # only the namespaces count here
       end
       files.to_h { |f| [f, failed[f] ? ["(fails)"] : traces[f]] }
     end
@@ -1826,7 +1858,8 @@ module Speedrunner
       return
     end
     log("preloaded #{state.tool} in #{(state.preload_s * 1000).round} ms, started by " \
-        "#{state.origin}; #{status_text(state)}")
+        "#{state.origin}; printed #{state.import_output[0].bytesize}+#{state.import_output[1].bytesize} bytes; " \
+        "#{status_text(state)}")
 
     wake_r, wake_w = IO.pipe
     stop = [nil]

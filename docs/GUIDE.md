@@ -349,6 +349,7 @@ To change them, stop the daemon and start it again with the new value:
 |---|---|---|
 | `SPEEDRUNNER_FOLLOW_AFTER` | `30` | Seconds the daemon's directory must go unused before it follows a client elsewhere, for a tool that keeps the current directory it loaded in. |
 | `SPEEDRUNNER_IDLE_TIMEOUT` | `14400` (4 h) | Seconds without a call before the daemon exits. All runtimes. |
+| `SPEEDRUNNER_PTY_WAIT` | `2` | Seconds to wait for what a tool printed as it loaded, when the daemon stands in a pty for a terminal. Past that, it restarts and calls run natively. Python and Ruby. |
 | `SPEEDRUNNER_PRELOAD` | `1,2,3` | Preload levels. 1: the modules the tool's script imports. 2: the modules earlier calls loaded later on, learned. 3: botocore's data files, kept parsed. Python reads all three, Ruby 1 and 2. PHP and Node have no levels. |
 | `SPEEDRUNNER_MEMO_MB` | `16` | Python, level 3: megabytes of source JSON kept parsed. |
 
