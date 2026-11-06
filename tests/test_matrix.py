@@ -1430,6 +1430,26 @@ class Failures(Matrix):
         with self.assertRaises(daemon.OutputLost):
             daemon.read_to_mark(master, [], daemon.new_pty_mark())
 
+    @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+    def test_own_flags(self):
+        # Under either name, and only as the first word: after a tool, they are the tool's.
+        link = os.path.join(tempfile.mkdtemp(dir=ROOT), "srr")
+        os.symlink(HS_BIN, link)
+        version = subprocess.run([HS_BIN, "--version"], capture_output=True, text=True).stdout
+        self.assertRegex(version, r"^speedrunner \d+\.\d+\.\d+\n$")
+        for name in (HS_BIN, link):
+            for flag in ("--version", "-V"):
+                p = subprocess.run([name, flag], capture_output=True, text=True)
+                self.assertEqual((p.returncode, p.stdout, p.stderr), (0, version, ""), (name, flag))
+            for flag in ("--help", "-h"):
+                p = subprocess.run([name, flag], capture_output=True, text=True)
+                self.assertEqual((p.returncode, p.stderr), (0, ""), (name, flag))
+                self.assertIn("srr [--native] <tool>", p.stdout)
+        tool = subprocess.run([link, "hstest", "argv", "--version"], env=BASE_ENV, capture_output=True, text=True)
+        self.assertEqual(tool.returncode, 0, tool.stderr)
+        self.assertIn("--version", tool.stdout)
+        self.assertNotIn("speedrunner ", tool.stdout)
+
     def test_stale_after_module_edit(self):
         # A tool whose module is edited in place, as an upgrade or a
         # developer would: same size, same inode, same directory mtime.
