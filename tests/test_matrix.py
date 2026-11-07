@@ -609,7 +609,11 @@ def check_failed_load_is_retried(test, write_tool):
     fails to load, natively too, while flag exists."""
     root = tempfile.mkdtemp(dir=ROOT)
     flag = os.path.join(root, "half-installed")
-    tool = write_tool(root, flag)
+    # Away from the flag and the daemon's files: a change in the tool's own
+    # directory makes its daemon stale.
+    tool_dir = os.path.join(root, "tool")
+    os.mkdir(tool_dir)
+    tool = write_tool(tool_dir, flag)
     env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache"),
            "SPEEDRUNNER_PRELOAD_RETRY": "1"}
     os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
