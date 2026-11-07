@@ -200,7 +200,7 @@ stops after 4 hours unused, or with the [stop-everything loop](#stopping-every-d
 | `speedrunner prewarm <tool>` | Starts the daemon if none is up, or replaces one the tool's upgrade made stale. Returns at once. | 0, 1 if it cannot start one |
 | `speedrunner enroll [<tool>…]` | Enrolls tools; with no argument, lists them. | 0, 1 or 127 if refused |
 | `speedrunner init zsh\|bash` | Prints the shell hook, for `eval`. | 0 |
-| `speedrunner --version`, `speedrunner version`, `-V`, `srr --version` | Prints the version, as `speedrunner 0.4.8`. | 0 |
+| `speedrunner --version`, `speedrunner version`, `-V`, `srr --version` | Prints the version, as `speedrunner 0.4.9`. | 0 |
 | `speedrunner --help`, `speedrunner help`, `-h`, `srr --help` | Prints the usage. | 0 |
 
 All of them exit with 127 for a tool not found on `PATH`, and 2 on a usage error.
