@@ -581,7 +581,8 @@ class Failures(m.Matrix):
             m.stop("rbtest", env)
 
     def test_failed_load_is_retried(self):
-        ruby = shutil.which("ruby", path=m.BASE_ENV["PATH"])
+        # The job's, as rbtest's: BASE_ENV's PATH may find macOS's old system Ruby.
+        ruby = shutil.which("ruby")
 
         def write_tool(root, flag):
             lib = os.path.join(root, "flaky_lib.rb")
