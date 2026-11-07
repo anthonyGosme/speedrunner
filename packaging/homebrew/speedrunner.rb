@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.4.7"
+  version "0.4.8"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "5eb15f020d10dc685af327504b231ca57287044ace50465cd5124411e33ed22f"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "1b0b6e31d84ff71026b03e38941d9465482fb2a037c09636e882afa2d6c486b8"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "5eb15f020d10dc685af327504b231ca57287044ace50465cd5124411e33ed22f"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "1b0b6e31d84ff71026b03e38941d9465482fb2a037c09636e882afa2d6c486b8"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "20d83a6ba1a032aee512fdd211ca556485065ada9722073662923a606991929b"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "9286736411737f75a0bfcccedc3b3c933f3008c31f3ba04b56bcdc2484fa45f8"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.7/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "b43bc0ffdd0a6e80fe0b9b696112e8342e863a77e2f3ad78a94b3b23af2a2a6e"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "227c2c38091a40c54d537ec6b4bc24d9587ef7576f6b2d70884accf289a06c1a"
     end
   end
 
