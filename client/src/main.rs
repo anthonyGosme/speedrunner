@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::mem;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -37,6 +37,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 const LOCK_WAIT: Duration = Duration::from_secs(3);
 // How long the launcher waits for one daemon to be ready before the next.
 const START_WAIT: Duration = Duration::from_secs(20);
+// How long an interpreter may take to print its version, the first time.
+const PROBE_WAIT: Duration = Duration::from_secs(10);
 const MAX_MSG: usize = 1 << 20;
 // Relayed to the child. Terminal-generated ones go to its whole process group,
 // as the terminal would have sent them to the native tool's group.
@@ -1441,7 +1443,10 @@ fn control(tool: &Tool, kind: u8) -> i32 {
             1
         }
         Err(_) => {
-            println!("down");
+            match known_too_old(tool) {
+                Some(why) => println!("down: {}", why),
+                None => println!("down"),
+            }
             1
         }
     }
@@ -1594,6 +1599,26 @@ fn wait_learned(tool: &Tool) {
     }
 }
 
+/// The interpreter of a tool's daemon, as named (argv[0]), the file to exec,
+/// its options, and its runtime.
+fn interpreter_of(tool: &Tool) -> io::Result<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>, Runtime)> {
+    Ok(match (&tool.form, &tool.target) {
+        (Some(f), _) => (f.interp.clone(), f.interp.clone(), vec![], Runtime::Php),
+        (None, Some(t)) => (t.launch.argv[0].clone(), t.launch.exe.clone(), t.flags.clone(),
+                            Runtime::Python),
+        (None, None) => {
+            let (interp, flag, runtime) = read_shebang(&tool.path)?;
+            (interp.clone(), interp, flag.into_iter().collect(), runtime)
+        }
+    })
+}
+
+/// Why the tool's interpreter cannot run its daemon, if a first start found so.
+fn known_too_old(tool: &Tool) -> Option<String> {
+    let (_, interp, _, runtime) = interpreter_of(tool).ok()?;
+    runtime.too_old(&noted_version(&interp_identity(&interp)?)?)
+}
+
 fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     if native_asked() {
         return Err(unsupported(&format!("{} is set", NATIVE_ENV)));
@@ -1602,16 +1627,14 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
         return Err(unsupported(&reason));
     }
     ensure_runtime_dir(&tool.dir)?;
-    // The interpreter as named (argv[0]), the file to exec, and its options.
-    let (named, interp, flags, runtime) = match (&tool.form, &tool.target) {
-        (Some(f), _) => (f.interp.clone(), f.interp.clone(), vec![], Runtime::Php),
-        (None, Some(t)) => (t.launch.argv[0].clone(), t.launch.exe.clone(), t.flags.clone(),
-                            Runtime::Python),
-        (None, None) => {
-            let (interp, flag, runtime) = read_shebang(&tool.path)?;
-            (interp.clone(), interp, flag.into_iter().collect(), runtime)
-        }
-    };
+    let (named, interp, flags, runtime) = interpreter_of(tool)?;
+    // An interpreter too old for its daemon starts nothing, once we know it.
+    let identity = runtime.oldest().and_then(|_| interp_identity(&interp));
+    let noted = identity.as_deref().and_then(noted_version);
+    if let Some(why) = noted.as_deref().and_then(|v| runtime.too_old(v)) {
+        return Err(unsupported(&why));
+    }
+    let probe = identity.filter(|_| noted.is_none()); // first start on it: ask
     let daemon = locate_daemon(runtime, &interp)?;
     // A bundle has no interpreter to run: the launcher, the bundle, then its first script.
     let (named, interp, flags) = if matches!(runtime, Runtime::Bundle) {
@@ -1673,6 +1696,10 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
     let log = cstring(tool.sock.with_extension("log").as_os_str().as_bytes());
     let devnull = cstring(b"/dev/null");
     let polls = (LOCK_WAIT.as_millis() / 10) as u32;
+    let probe_argv: Vec<CString> = std::iter::once(cstring(&named))
+        .chain(runtime.version_probe().iter().map(|a| cstring(a.as_bytes()))).collect();
+    let mut probe_p: Vec<*const libc::c_char> = probe_argv.iter().map(|c| c.as_ptr()).collect();
+    probe_p.push(ptr::null());
     unsafe {
         // Double fork: the daemon is reparented to init, not left to the tool
         // we are about to exec.
@@ -1719,6 +1746,20 @@ fn spawn_daemon_with(tool: &Tool, origin: &str, tty: &str) -> io::Result<()> {
                 libc::close(fd);
             }
             libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+            // First start on this interpreter: its version, noted for every
+            // later client, before it is asked to compile a daemon it may not
+            // parse. Under the lock: one probe however many clients race.
+            if let Some(identity) = &probe {
+                let envp = envp.as_ref().map(|_| &envp_p[..]);
+                if let Some(version) = ask_version(&interp, &probe_p, envp) {
+                    note_version(identity, &version);
+                    if let Some(why) = runtime.too_old(&version) {
+                        eprintln!("speedrunner[{}] {}: not started, {} runs natively",
+                                  libc::getpid(), why, tool.display());
+                        libc::_exit(0);
+                    }
+                }
+            }
             if envp.is_some() {
                 libc::execve(interp.as_ptr(), ptrs.as_ptr(), envp_p.as_ptr());
             } else {
@@ -2132,23 +2173,104 @@ fn cmd_exec(rest: &[OsString]) -> i32 {
 /// binary: real path, size, mtime): its daemon then starts without
 /// --no-lazy, which would rename frames in its stacks.
 fn node_without_code_cache(interp: &[u8]) -> bool {
+    match (std::fs::read(cache_dir().join("node-no-code-cache")), interp_identity(interp)) {
+        (Ok(noted), Some(line)) => noted.split(|b| *b == b'\n').any(|l| l == &line[..]),
+        _ => false,
+    }
+}
+
+/// $XDG_CACHE_HOME/speedrunner, where the daemons keep what they learned.
+fn cache_dir() -> PathBuf {
     let base = match env::var_os("XDG_CACHE_HOME") {
         Some(d) if !d.is_empty() => PathBuf::from(d),
         _ => Path::new(&env::var_os("HOME").unwrap_or_default()).join(".cache"),
     };
-    let noted = match std::fs::read(base.join("speedrunner").join("node-no-code-cache")) {
-        Ok(noted) => noted,
-        Err(_) => return false,
-    };
-    let line = match std::fs::canonicalize(OsStr::from_bytes(interp)) {
-        Ok(real) => match std::fs::metadata(&real) {
-            Ok(meta) => [real.as_os_str().as_bytes(),
-                         format!("\t{}\t{}", meta.len(), meta.mtime()).as_bytes()].concat(),
-            Err(_) => return false,
-        },
-        Err(_) => return false,
-    };
-    noted.split(|b| *b == b'\n').any(|l| l == &line[..])
+    base.join("speedrunner")
+}
+
+/// An interpreter as the cache files name it: real path, size, mtime. An
+/// upgrade in place (a venv recreated, a new Ruby) is another interpreter.
+fn interp_identity(interp: &[u8]) -> Option<Vec<u8>> {
+    let real = std::fs::canonicalize(OsStr::from_bytes(interp)).ok()?;
+    let meta = std::fs::metadata(&real).ok()?;
+    Some([real.as_os_str().as_bytes(), format!("\t{}\t{}", meta.len(), meta.mtime()).as_bytes()].concat())
+}
+
+/// The version an interpreter gave when its first daemon was about to start
+/// ($XDG_CACHE_HOME/speedrunner/interpreters, one line each: identity, version).
+fn noted_version(identity: &[u8]) -> Option<Vec<u8>> {
+    let noted = std::fs::read(cache_dir().join("interpreters")).ok()?;
+    noted.split(|b| *b == b'\n')
+        .filter_map(|l| l.strip_prefix(identity)?.strip_prefix(b"\t"))
+        .last().map(<[u8]>::to_vec)
+}
+
+/// One line, appended in one write: clients racing to note never mix lines.
+fn note_version(identity: &[u8], version: &[u8]) {
+    let dir = cache_dir();
+    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&dir);
+    let line = [identity, b"\t", version, b"\n"].concat();
+    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).mode(0o600)
+        .open(dir.join("interpreters")) {
+        let _ = f.write_all(&line);
+    }
+}
+
+/// Run `interp` with its runtime's version probe (argv), with the env the
+/// daemon would get: what it prints, if it exits with 0 within PROBE_WAIT.
+/// In the grandchild: fd 3 is the startup lock, which the probe must not keep.
+unsafe fn ask_version(interp: &CString, argv: &[*const libc::c_char],
+                      envp: Option<&[*const libc::c_char]>) -> Option<Vec<u8>> {
+    let mut fds = [0 as libc::c_int; 2];
+    if libc::pipe(fds.as_mut_ptr()) != 0 {
+        return None;
+    }
+    let pid = libc::fork();
+    if pid == 0 {
+        libc::dup2(fds[1], 1);
+        libc::close(fds[0]);
+        libc::close(fds[1]);
+        libc::close(3);
+        match envp {
+            Some(envp) => libc::execve(interp.as_ptr(), argv.as_ptr(), envp.as_ptr()),
+            None => libc::execv(interp.as_ptr(), argv.as_ptr()),
+        };
+        libc::_exit(127);
+    }
+    libc::close(fds[1]);
+    let deadline = Instant::now() + PROBE_WAIT;
+    let mut out = Vec::new();
+    let mut whole = false;
+    while pid > 0 {
+        let left = deadline.saturating_duration_since(Instant::now()).as_millis() as libc::c_int;
+        let mut pfd = libc::pollfd { fd: fds[0], events: libc::POLLIN, revents: 0 };
+        if left == 0 || libc::poll(&mut pfd, 1, left) != 1 {
+            break;
+        }
+        let mut buf = [0u8; 64];
+        let n = libc::read(fds[0], buf.as_mut_ptr() as *mut libc::c_void, buf.len());
+        if n <= 0 {
+            whole = n == 0;
+            break;
+        }
+        out.extend_from_slice(&buf[..n as usize]);
+        if out.len() > 256 {
+            break;
+        }
+    }
+    libc::close(fds[0]);
+    if pid < 0 {
+        return None;
+    }
+    if !whole {
+        libc::kill(pid, libc::SIGKILL);
+    }
+    let mut status = 0;
+    libc::waitpid(pid, &mut status, 0);
+    let version = trim(&out);
+    let fine = whole && libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0;
+    (fine && !version.is_empty() && !version.contains(&b'\n') && !version.contains(&b'\t'))
+        .then(|| version.to_vec())
 }
 
 fn tools_file() -> PathBuf {
@@ -2248,6 +2370,54 @@ impl Runtime {
         } else {
             None
         }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Runtime::Python | Runtime::Bundle => "python",
+            Runtime::Ruby => "ruby",
+            Runtime::Php => "php",
+            Runtime::Node => "node",
+        }
+    }
+
+    /// The oldest version its daemon runs on: the oldest the test suites run
+    /// on, and older ones cannot even parse the daemon (Python 3.8, Ruby 2.7,
+    /// PHP 8.0). A bundle brings its own Python, checked by its builder.
+    fn oldest(self) -> Option<(u32, u32)> {
+        match self {
+            Runtime::Python => Some((3, 9)),
+            Runtime::Bundle => None,
+            Runtime::Ruby => Some((3, 0)),
+            Runtime::Php => Some((8, 1)),
+            Runtime::Node => Some((22, 0)),
+        }
+    }
+
+    /// Interpreter arguments that print its version, quickly: no site,
+    /// gems or ini files to load (none of them changes the version).
+    fn version_probe(self) -> &'static [&'static str] {
+        match self {
+            Runtime::Python | Runtime::Bundle => &["-S", "-c", "import sys; print('%d.%d' % sys.version_info[:2])"],
+            Runtime::Ruby => &["--disable-gems", "-e", "print RUBY_VERSION"],
+            Runtime::Php => &["-n", "-r", "echo PHP_VERSION;"],
+            Runtime::Node => &["-e", "process.stdout.write(process.versions.node)"],
+        }
+    }
+
+    /// Why an interpreter of `version` (as its probe printed it) cannot run
+    /// this runtime's daemon, if it cannot. A version we cannot read: try.
+    fn too_old(self, version: &[u8]) -> Option<String> {
+        let oldest = self.oldest()?;
+        let text = std::str::from_utf8(version).ok()?;
+        let mut parts = text.split('.');
+        let number = |p: Option<&str>| -> Option<u32> {
+            let p = p?;
+            p[..p.find(|c: char| !c.is_ascii_digit()).unwrap_or(p.len())].parse().ok()
+        };
+        let found = (number(parts.next())?, number(parts.next())?);
+        (found < oldest).then(|| format!("{} {} is older than {}.{}, the oldest speedrunner serves",
+                                         self.name(), text, oldest.0, oldest.1))
     }
 
     fn daemon_file(self) -> &'static str {
@@ -2517,4 +2687,33 @@ fn trim(b: &[u8]) -> &[u8] {
 
 fn basename(path: &[u8]) -> &[u8] {
     path.rsplit(|b| *b == b'/').next().unwrap_or(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Runtime;
+
+    #[test]
+    fn too_old_reads_what_each_probe_prints() {
+        let old = |rt: Runtime, v: &str| rt.too_old(v.as_bytes()).is_some();
+        assert!(old(Runtime::Python, "3.7"));
+        assert!(old(Runtime::Python, "3.8"));
+        assert!(!old(Runtime::Python, "3.9"));
+        assert!(!old(Runtime::Python, "3.14"));
+        assert!(old(Runtime::Python, "2.7"));
+        assert!(old(Runtime::Ruby, "2.6.10"));
+        assert!(!old(Runtime::Ruby, "3.0.7"));
+        assert!(!old(Runtime::Ruby, "3.5.0preview1"));
+        assert!(old(Runtime::Php, "8.0.30"));
+        assert!(!old(Runtime::Php, "8.2.29-1~deb12u1"));
+        assert!(!old(Runtime::Php, "8.5.0RC2"));
+        assert!(old(Runtime::Node, "20.19.5"));
+        assert!(!old(Runtime::Node, "22.15.0"));
+        assert!(!old(Runtime::Bundle, "2.7"));
+        // Unreadable: no verdict, the daemon starts as before.
+        assert!(!old(Runtime::Python, "Python"));
+        assert!(!old(Runtime::Python, "3"));
+        assert_eq!(Runtime::Python.too_old(b"3.7").unwrap(),
+                   "python 3.7 is older than 3.9, the oldest speedrunner serves");
+    }
 }

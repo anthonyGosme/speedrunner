@@ -430,7 +430,7 @@ PHP and Node tools are served, and launchers are followed. What differs:
   call, so that tool gains less;
 - module files are watched with kqueue, which misses a change of attributes alone
   (`touch`, `chmod`); a change of content is seen;
-- macOS's own Ruby 2.6 is not served; Homebrew's or another Ruby 3 is;
+- macOS's own Ruby 2.6 is not served (its tools run natively, see below); Homebrew's or another Ruby 3 is;
 - a Node built without its internal code cache (Homebrew's `node@22`) is served,
   with a smaller gain;
 - the bash hook needs bash 4.2 or later (Homebrew's bash); macOS's bash 3.2 gets
@@ -447,6 +447,19 @@ names: nothing else to install.
 | Ruby | 3.0 or later (3.0 to 3.4 tested) | Levels 1 and 2. A binstub's `_x.y.z_` version argument runs natively. |
 | PHP | 8.1 or later (8.1 to 8.5 tested) | Needs the FFI, pcntl and posix extensions; uses OPcache. Without them, tools run natively. |
 | Node | 22 and 24 tested | Experimental. Learning what a tool loads needs Node 22.15 or later; before that, only Node's own start is saved. |
+
+**An older interpreter** cannot run its daemon: its tools simply run natively,
+as without speedrunner. The first call asks the interpreter its version, in the
+background, and notes it in `~/.cache/speedrunner/interpreters` (per interpreter
+file: a new one is asked again); later calls start nothing. To see why a tool
+is not served:
+
+```bash
+speedrunner status mytool
+# down: python 3.7 is older than 3.9, the oldest speedrunner serves
+```
+
+`SPEEDRUNNER_DEBUG=1` prints the same reason on each call.
 
 Node tools run in a daemon started with `--single-threaded`, so that V8 can be
 forked: a tool that computes a lot can be slower than natively, and a tool whose
