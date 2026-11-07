@@ -707,5 +707,12 @@ class Security(m.Matrix):
         m.check_daemon_refuses_bad_dir(self, "rbtest")
 
 
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class TooOld(m.TooOldChecks, m.Matrix):
+    runtime, version, oldest, probe_mark = "ruby", "2.6.10", "3.0", "RUBY_VERSION"
+    real = shutil.which("ruby", path=m.BASE_ENV["PATH"])
+    code = 'puts ARGV.join(" ")\n'
+
+
 if __name__ == "__main__":
     unittest.main()

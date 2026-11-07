@@ -87,9 +87,10 @@ package; it will be on the AUR as `speedrunner-bin` once registration reopens.
 After v0.3.0, each archive and .deb also comes with a signed build provenance:
 `gh attestation verify <archive> --repo anthonyGosme/speedrunner` checks that this
 repository's release workflow built it from the tagged commit.
-Each tool's daemon runs on that tool's own interpreter: nothing else to install
-(PHP tools need PHP's FFI extension, and Node tools Node 22.15 or later for the daemon to learn what
-they load; otherwise they gain less, or simply run natively).
+Each tool's daemon runs on that tool's own interpreter: nothing else to install.
+That interpreter must be Python 3.9, Ruby 3.0, PHP 8.1 or Node 22 or later; the tools of an older one
+(macOS's own Ruby 2.6) simply run natively. PHP tools also need PHP's FFI extension, and Node tools
+Node 22.15 or later for the daemon to learn what they load; otherwise they gain less.
 
 Tested, with the whole regression suite, on Debian 12, Ubuntu 22.04 and 24.04,
 Alpine 3.20 and Fedora 42, with Python 3.9 to 3.14, Ruby 3.0 to 3.4, PHP 8.1

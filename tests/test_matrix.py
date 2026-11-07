@@ -2731,6 +2731,87 @@ def in_private_daemon_env(root=None):
     return env
 
 
+FAKE_OLD_INTERPRETER = """#!/bin/sh
+case "$*" in
+  *speedrunner_daemon*) echo daemon >> {log}; echo "SyntaxError: invalid syntax" >&2; exit 1 ;;
+  *{probe_mark}*) echo probe >> {log}; echo {version}; exit 0 ;;
+esac
+exec {real} "$@"
+"""
+
+
+class TooOldChecks:
+    """A tool whose interpreter is older than its daemon needs (macOS's own
+    Ruby 2.6, a Python 3.7): it runs natively, and its daemon is not started
+    again on each call. The interpreter here pretends: it gives the client's
+    probe an old version and fails on the daemon as that version would, and
+    runs anything else on the real interpreter."""
+    runtime = version = probe_mark = real = code = None
+
+    def setUp(self):
+        root = tempfile.mkdtemp(dir=ROOT, prefix="too-old-")
+        bin_dir = os.path.join(root, "bin")
+        os.mkdir(bin_dir)
+        self.log = os.path.join(root, "calls")
+        name = f"{self.runtime}{self.version}"
+        for path, text in ((os.path.join(bin_dir, name), FAKE_OLD_INTERPRETER.format(
+                                log=shlex.quote(self.log), probe_mark=self.probe_mark,
+                                version=self.version, real=shlex.quote(self.real))),
+                           (os.path.join(bin_dir, "oldtool"), f"#!/usr/bin/env {name}\n{self.code}")):
+            with open(path, "w") as f:
+                f.write(text)
+            os.chmod(path, 0o755)
+        self.env = {**in_private_daemon_env(root), "PATH": f"{bin_dir}:{BASE_ENV['PATH']}"}
+
+    def calls(self):
+        try:
+            with open(self.log) as f:
+                return f.read().split()
+        except FileNotFoundError:
+            return []
+
+    def same(self, n):
+        for i in range(n):
+            rc, out, _ = self.assertSame(["oldtool", "a b", str(i)], env=self.env, require_fast=False)
+            self.assertEqual((rc, out.split()[-1]), (0, str(i).encode()))
+
+    def judged(self):
+        """Until the first start, in the background, has asked the version."""
+        deadline = time.monotonic() + 15
+        while not status("oldtool", self.env).startswith("down:") and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+    def test_runs_natively_and_starts_nothing_again(self):
+        self.same(3)
+        self.judged()
+        self.same(5)
+        time.sleep(0.5)  # what a start would do, it does in the background
+        self.assertEqual(self.calls(), ["probe"])
+        self.assertEqual(status("oldtool", self.env),
+                         f"down: {self.runtime} {self.version} is older than {self.oldest},"
+                         " the oldest speedrunner serves")
+
+    def test_says_why_when_asked(self):
+        self.same(1)
+        self.judged()
+        p = subprocess.run([HS_BIN, "run", "oldtool", "--", "x"], capture_output=True,
+                           env={**BASE_ENV, **self.env, "SPEEDRUNNER_DEBUG": "1"}, timeout=60)
+        self.assertEqual(p.returncode, 0)
+        self.assertIn(f"{self.runtime} {self.version} is older than {self.oldest}".encode(), p.stderr)
+        p = subprocess.run([HS_BIN, "prewarm", "oldtool"], capture_output=True,
+                           env={**BASE_ENV, **self.env}, timeout=60)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn(b"the oldest speedrunner serves", p.stderr)
+        self.assertNotIn("daemon", self.calls())
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class TooOld(TooOldChecks, Matrix):
+    runtime, version, oldest, probe_mark = "python", "3.7", "3.9", "version_info"
+    real = shutil.which("python3", path=os.environ["HS_PATH"])
+    code = "import sys\nprint(*sys.argv[1:])\n"
+
+
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
 class ForcedNative(Matrix):
     """`srr --native` and SPEEDRUNNER_NATIVE: the tool itself, whatever a daemon
