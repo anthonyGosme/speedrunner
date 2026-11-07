@@ -1,4 +1,6 @@
-<img src="resources/speedrunner-icon.png" alt="speedrunner icon" width="96">
+<p align="center">
+  <img src="resources/speedrunner-icon.png" alt="speedrunner icon" width="96">
+</p>
 
 ```text
  ____                      _ ____                               __   __  
