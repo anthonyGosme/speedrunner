@@ -31,6 +31,9 @@ module Speedrunner
   # A tool that depends on the cwd it loaded in: how long its directory must
   # have gone unused before the daemon follows a client elsewhere.
   FOLLOW_AFTER_S = Float(ENV.fetch("SPEEDRUNNER_FOLLOW_AFTER", 30))
+  # A load that failed may work next time (a gem being reinstalled has a file
+  # missing for a moment): how long before this daemon leaves for a fresh one.
+  PRELOAD_RETRY_S = Float(ENV.fetch("SPEEDRUNNER_PRELOAD_RETRY", 60))
   # Read once at interpreter startup (RubyGems is loaded at boot): a child
   # cannot honour a client whose values differ from the daemon's.
   STARTUP_ENV_PREFIXES = %w[RUBY GEM_].freeze
@@ -204,7 +207,7 @@ module Speedrunner
   # --- daemon state --------------------------------------------------------
 
   class State
-    attr_accessor :tool_traps, :daemon_traps, :tool, :script, :sock_path, :lock_fd, :origin, :disabled, :start_env,
+    attr_accessor :load_failed_at, :tool_traps, :daemon_traps, :tool, :script, :sock_path, :lock_fd, :origin, :disabled, :start_env,
                   :pre_import_env, :import_env_changed, :import_env_deleted, :import_env_read,
                   :start_cwd, :start_cwd_id, :runtime_dir, :pending_reads, :import_cwd_read,
                   :import_cwd_files, :import_dirs, :load_dirs,
@@ -925,6 +928,7 @@ module Speedrunner
       state.restart = e.message # a fresh daemon may read it: natively meanwhile
     rescue Exception => e # rubocop:disable Lint/RescueException
       state.disabled = "preload failed: #{e.inspect}"
+      state.load_failed_at = now
       log(state.disabled)
     ensure
       EnvReads::ON[0] = false
@@ -1924,6 +1928,7 @@ module Speedrunner
         timeout = [1.0, last_activity + IDLE_TIMEOUT_S - now].max
         # Its next step, once the spare is replaced.
         timeout = 0 if state.learning && !children.values.any?(&:conn)
+        timeout = [timeout, [state.load_failed_at + PRELOAD_RETRY_S - now, 0.05].max].min if state.load_failed_at
         timeout = 0.05 if exiting
         readable, = IO.select(watch, nil, nil, timeout)
         readable ||= []
@@ -2039,6 +2044,9 @@ module Speedrunner
           end
         end
         stop[0] ||= "idle timeout" if !active && now >= last_activity + IDLE_TIMEOUT_S
+        if state.load_failed_at && !active && now >= state.load_failed_at + PRELOAD_RETRY_S
+          stop[0] ||= "its load failed: the next client starts a fresh daemon"
+        end
       end
     ensure
       if Process.pid == PARENT_PID && !lock.closed?
