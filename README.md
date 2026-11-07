@@ -1,6 +1,3 @@
-<p align="center">
-  <img src="resources/speedrunner-icon.png" alt="speedrunner icon" width="96">
-</p>
 
 ```text
  ____                      _ ____                               __   __  
@@ -10,6 +7,9 @@
 |____/| .__/ \___|\___|\__,_|_| \_\\__,_|_| |_|_| |_|\___|_|    /_/  /_/ Speed up CLIs
       |_|                                                                 
 ```
+<p align="center">
+  <img src="resources/speedrunner-icon.png" alt="speedrunner icon" width="96">
+</p>
 
 
 aws, az, gcloud, ansible, black, pytest, rubocop, rspec, composer, artisan, eslint, npm:
