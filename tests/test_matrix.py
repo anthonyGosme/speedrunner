@@ -9,6 +9,7 @@ Env:
 
 Run: python3 tests/test_matrix.py -v
 """
+import ast
 import concurrent.futures
 import ctypes
 import glob
@@ -1924,7 +1925,145 @@ class LoadDirChecks:
         self.assert_dirs_empty(env)
 
 
+class CwdKeptToItself(unittest.TestCase):
+    """The daemon trusts tempfile, multiprocessing.process and rich (CWD_KEPT_TO_ITSELF) to
+    give the cwd they ask for to nobody: a file read under it elsewhere is then not read through
+    it. A new version doing otherwise would freeze the wrong file, with no error. Fails here
+    first, on each Python the nightly run has: read what changed, and take it out of the list."""
+
+    def calls(self, path):
+        """(enclosing function or None, source line) of each call of getcwd in a module."""
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+        lines, found = source.split("\n"), []
+
+        def walk(node, within):
+            for child in ast.iter_child_nodes(node):
+                inner = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else within
+                if isinstance(child, ast.Call) and getattr(child.func, "attr", getattr(child.func, "id", "")) in ("getcwd", "getcwdb", "cwd"):
+                    found.append((within, lines[child.lineno - 1].strip()))
+                walk(child, inner)
+
+        walk(ast.parse(source), None)
+        return found
+
+    def test_tempfile_only_as_its_last_candidate(self):
+        import tempfile as module
+        self.assertEqual([within for within, _ in self.calls(module.__file__)], ["_candidate_tempdir_list"])
+
+    def test_multiprocessing_only_for_its_own_children(self):
+        import multiprocessing.process as module
+        found = self.calls(module.__file__)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("ORIGINAL_DIR", found[0][1])
+
+    def test_rich_only_to_shorten_its_tracebacks(self):
+        try:
+            import pip._vendor.rich as module
+        except ImportError:
+            self.skipTest("no pip here")
+        root = os.path.dirname(module.__file__)
+        users = {}
+        for path in glob.glob(os.path.join(root, "**", "*.py"), recursive=True):
+            name = os.path.relpath(path, root)
+            with open(path, encoding="utf-8") as f:
+                source = f.read()
+            if "_IMPORT_CWD" in source:
+                users[name] = None
+            if self.calls(path):
+                self.assertEqual(name, "__init__.py", self.calls(path))
+        self.assertLessEqual(set(users), {"__init__.py", "traceback.py"}, users)
+
+
 class ImportTimeReads(ImportTimeReadChecks, LockAtLoadChecks, LoadDirChecks, Matrix):
+    def tool_under(self, source, home_first=False, helper=None, local_cfg=False):
+        """A tool installed under the directory its daemon starts in, as one in a
+        venv under the home directory: what it reads of its own stays where it is."""
+        start = os.path.realpath(tempfile.mkdtemp(dir=ROOT))
+        bindir = os.path.join(start, "tools", "bin")
+        os.makedirs(bindir)
+        python = os.path.join(os.path.dirname(shutil.which("hstest", path=BASE_ENV["PATH"])), "python3")
+        with open(os.path.join(bindir, "hsunder"), "w") as f:
+            f.write(f"#!{python}\nimport hsunder_lib\nhsunder_lib.main()\n")
+        os.chmod(os.path.join(bindir, "hsunder"), 0o755)
+        with open(os.path.join(bindir, "hsunder_lib.py"), "w") as f:
+            f.write(source.replace("START", repr(start)))
+        with open(os.path.join(bindir, "data.txt"), "w") as f:
+            f.write("one")
+        if local_cfg:
+            with open(os.path.join(start, "local.cfg"), "w") as f:
+                f.write("here")
+        if helper:
+            module = os.path.join(bindir, helper[0])
+            os.makedirs(os.path.dirname(module))
+            with open(module, "w") as f:
+                f.write(helper[1])
+        env = {"PATH": f"{bindir}:{BASE_ENV['PATH']}", "XDG_RUNTIME_DIR": os.path.join(start, "run"),
+               "XDG_CACHE_HOME": os.path.join(start, "cache")}
+        if home_first:
+            env["HOME"] = start
+            with open(os.path.join(start, ".hsunder"), "w") as f:
+                f.write("home")
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(stop, "hsunder", env)
+        run("hs", ["hsunder"], env=env, cwd=start, require_fast=False)
+        wait_ready("hsunder", env)
+        return start, bindir, env
+
+    # tempfile asks for the cwd as it looks for a directory, and keeps nothing of it.
+    OWN_FILE = ("import os, tempfile\ntempfile.gettempdir()\n"
+                "DATA = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.txt')).read()\n"
+                "def main():\n    print(DATA)\n")
+
+    def test_own_file_of_a_tool_under_the_start_directory(self):
+        start, bindir, env = self.tool_under(self.OWN_FILE)
+        other = tempfile.mkdtemp(dir=ROOT)
+        p = run("hs", ["hsunder"], env=env, cwd=other)
+        self.assertEqual((p.returncode, p.stdout), (0, b"one\n"), p.stderr)
+        # Still looked after: what it read changing is an upgrade, wherever the client is.
+        with open(os.path.join(bindir, "data.txt"), "w") as f:
+            f.write("two")
+        self.assertEqual(run("hs", ["hsunder"], env=env, cwd=other, require_fast=False).stdout, b"two\n")
+
+    # What the tool reads by a path that owes nothing to the cwd: it is the same from anywhere.
+    def test_config_in_the_home_directory_it_started_in(self):
+        start, bindir, env = self.tool_under(
+            "import os, tempfile\ntempfile.gettempdir()\n"
+            "VALUE = open(os.path.expanduser('~/.hsunder')).read()\n"
+            "def main():\n    print(VALUE)\n", home_first=True)
+        other = tempfile.mkdtemp(dir=ROOT)
+        p = run("hs", ["hsunder"], env=env, cwd=other)
+        self.assertEqual((p.returncode, p.stdout), (0, b"home\n"), p.stderr)
+        # Still watched: changed, it is not served as it was.
+        with open(os.path.join(start, ".hsunder"), "w") as f:
+            f.write("changed")
+        self.assertEqual(run("hs", ["hsunder"], env=env, cwd=other, require_fast=False).stdout, b"changed\n")
+
+    def test_path_built_on_the_cwd_by_another_module_stays_relative(self):
+        # As ansible.utils.path's unfrackpath: it asks, and another module reads what it returns.
+        # Elsewhere that is another file: frozen here, the tool would read the wrong one.
+        start, bindir, env = self.tool_under(
+            "import os, ansible.utils.path as p\n"
+            "PATH = p.under_cwd('local.cfg')\nVALUE = open(PATH).read() if os.path.exists(PATH) else 'none'\n"
+            "def main():\n    print(VALUE)\n",
+            helper=("ansible/utils/path.py", "import os\ndef under_cwd(n):\n    return os.path.join(os.getcwd(), n)\n"),
+            local_cfg=True)
+        other = tempfile.mkdtemp(dir=ROOT)
+        native = run("native", ["hsunder"], env=env, cwd=other)
+        self.assertEqual(native.stdout, b"none\n")
+        self.assertEqual(outcome(native), outcome(run("hs", ["hsunder"], env=env, cwd=other, require_fast=False)))
+        self.assertEqual(run("hs", ["hsunder"], env=env, cwd=other).returncode, EXIT_NOT_FAST)
+
+    def test_module_that_keeps_the_cwd_stays_native_elsewhere(self):
+        start, bindir, env = self.tool_under(
+            "import os, tempfile\ntempfile.gettempdir()\nHERE = os.getcwd()\n"
+            "def main():\n    print(HERE)\n")
+        other = os.path.realpath(tempfile.mkdtemp(dir=ROOT))
+        native = run("native", ["hsunder"], env=env, cwd=other)
+        self.assertEqual(native.stdout, f"{other}\n".encode())
+        self.assertEqual(outcome(native), outcome(run("hs", ["hsunder"], env=env, cwd=other, require_fast=False)))
+        self.assertEqual(run("hs", ["hsunder"], env=env, cwd=other).returncode, EXIT_NOT_FAST)
+
     LOCK_BODY = ("import fcntl, os, sys, time\n"
                  "LOCK_FILE = open(os.environ['HS_CFG'], 'w')\n"
                  "try:\n"

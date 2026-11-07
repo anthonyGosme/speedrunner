@@ -8,6 +8,8 @@
 # Env:   RUNS (default "native cold warm"), REPEAT (default 1), NO_REC=1 for
 #        logs instead of casts; ASCIINEMA, MOTO (their paths).
 # Run it in a terminal: asciinema records at the terminal's size (set below).
+# The directory it starts from counts: a project under it can change the times. Start it
+# from one with neither the project nor the tools below it, such as this one.
 set -euo pipefail
 
 sr=${1:?usage: record.sh <speedrunner> <out_dir>}

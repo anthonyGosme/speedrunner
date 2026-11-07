@@ -1004,6 +1004,10 @@ class FileReads:
     # depends on it.
     CWD_NOT_KEPT = ("multiprocessing.process", "rich", "pip._vendor.rich", "tempfile",
                     "ansible.config.manager", "ansible.utils.path")
+    # And of these, which give it to nobody: another module reading under the cwd
+    # did not get the path from them, so it did not read through the cwd. Not ansible's,
+    # whose unfrackpath returns paths built on it, which other modules then read.
+    CWD_KEPT_TO_ITSELF = ("multiprocessing.process", "rich", "pip._vendor.rich", "tempfile")
 
     def __init__(self, state):
         self.state = state
@@ -1012,7 +1016,7 @@ class FileReads:
         self.probed = set()   # absolute paths only stat-ed: a directory's mtime is no read
         self.relative = set()  # as given: resolved in each client's cwd
         self.cwd_read = False
-        self.cwd_asked = False  # by anyone: what it then reads under it is relative
+        self.cwd_asked = False  # by one that may pass it on: what is then read under it is relative
 
     @staticmethod
     def audit(event, args):
@@ -1063,8 +1067,10 @@ class FileReads:
     def getcwd_wrapper(self, original):
         def getcwd():
             if FileReads.active is self:
-                self.cwd_asked = True
-                if sys._getframe(1).f_globals.get("__name__") not in self.CWD_NOT_KEPT:
+                asker = sys._getframe(1).f_globals.get("__name__")
+                if asker not in self.CWD_KEPT_TO_ITSELF:
+                    self.cwd_asked = True
+                if asker not in self.CWD_NOT_KEPT:
                     self.cwd_read = True
             return original()
         return getcwd
@@ -1254,8 +1260,11 @@ def keep_file_reads(state, reads):
     state.import_cwd_read |= reads.cwd_read
     if reads.cwd_asked and state.start_cwd not in (None, "/"):
         prefix = state.start_cwd + "/"
+        # The tool's own files stay where they are, from any directory: it may be
+        # installed under this one, in a venv under the home directory.
+        roots = learn_roots(sys.path, state.start_cwd)
         for found in (reads.files, reads.probed, reads.listed):
-            under = {p for p in found if p.startswith(prefix)}
+            under = {p for p in found if p.startswith(prefix) and not in_roots(p, roots)}
             found -= under
             reads.relative |= {p[len(prefix):] for p in under}
     if state.start_cwd_fd is not None:
