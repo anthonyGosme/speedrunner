@@ -602,6 +602,61 @@ class ScriptPrefix(Matrix):
 
 
 @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+def check_failed_load_is_retried(test, write_tool):
+    """A load can fail for a moment: a gem being reinstalled has a file missing
+    while the daemon reads it. Natively meanwhile, then served, without anyone
+    having to stop the daemon. write_tool(root, flag) returns a script that
+    fails to load, natively too, while flag exists."""
+    root = tempfile.mkdtemp(dir=ROOT)
+    flag = os.path.join(root, "half-installed")
+    # Away from the flag and the daemon's files: a change in the tool's own
+    # directory makes its daemon stale.
+    tool_dir = os.path.join(root, "tool")
+    os.mkdir(tool_dir)
+    tool = write_tool(tool_dir, flag)
+    env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache"),
+           "SPEEDRUNNER_PRELOAD_RETRY": "2"}
+    os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+    test.addCleanup(lambda: stop(tool, env))
+    healthy = run("native", [tool], env=env)
+    test.assertEqual(healthy.returncode, 0, healthy.stderr)
+    open(flag, "w").close()
+    # A slow machine may see the daemon leave before it answers: another one comes.
+    deadline = time.monotonic() + 30
+    while "preload failed" not in (text := status(tool, env)):
+        test.assertLess(time.monotonic(), deadline, f"{text}: {daemon_logs(os.path.basename(tool), env)}")
+        if text == "down":
+            subprocess.run([HS_BIN, "prewarm", tool], env={**BASE_ENV, **env}, check=True)
+        time.sleep(0.05)
+    # As natively while it lasts, across the daemons that try again.
+    broken = run("native", [tool], env=env)
+    test.assertNotEqual(broken.returncode, 0)
+    for _ in range(3):
+        served = run("hs", [tool], env=env, require_fast=False)
+        test.assertEqual(served.returncode, broken.returncode, served.stderr)
+        time.sleep(0.7)
+    os.unlink(flag)
+    served_soon([tool], env=env)
+    test.assertEqual(outcome(run("hs", [tool], env=env)), outcome(healthy))
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class FailedLoad(Matrix):
+    def test_failed_load_is_retried(self):
+        python = shutil.which("python3", path=os.environ["HS_PATH"])
+
+        def write_tool(root, flag):
+            with open(os.path.join(root, "flaky_lib.py"), "w") as f:
+                f.write(f"import os\nif os.path.exists({flag!r}):\n    raise RuntimeError('half installed')\n")
+            path = os.path.join(root, "flaky-tool")
+            with open(path, "w") as f:
+                f.write(f"#!{python}\nimport flaky_lib\nprint('healthy')\n")
+            os.chmod(path, 0o755)
+            return path
+
+        check_failed_load_is_retried(self, write_tool)
+
+
 class RelativeScript(Matrix):
     """`./manage.py`: a script named relative to the cwd, a different one in
     each project. Each gets its own daemon, and sees argv[0] as typed."""

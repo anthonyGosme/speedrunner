@@ -580,6 +580,22 @@ class Failures(m.Matrix):
         finally:
             m.stop("rbtest", env)
 
+    def test_failed_load_is_retried(self):
+        # The job's, as rbtest's: BASE_ENV's PATH may find macOS's old system Ruby.
+        ruby = shutil.which("ruby")
+
+        def write_tool(root, flag):
+            lib = os.path.join(root, "flaky_lib.rb")
+            with open(lib, "w") as f:
+                f.write(f"raise 'half installed' if File.exist?({json.dumps(flag)})\n")
+            path = os.path.join(root, "flaky-tool")
+            with open(path, "w") as f:
+                f.write(f"#!{ruby}\nrequire {json.dumps(lib)}\nputs 'healthy'\n")
+            os.chmod(path, 0o755)
+            return path
+
+        m.check_failed_load_is_retried(self, write_tool)
+
     def test_output_at_load_not_read_in_time(self):
         m.check_output_not_read_in_time(self, "rbnoisy", ["rbnoisy"])
 

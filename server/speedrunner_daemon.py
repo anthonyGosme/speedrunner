@@ -76,6 +76,9 @@ IDLE_TIMEOUT_S = float(os.environ.get("SPEEDRUNNER_IDLE_TIMEOUT", 4 * 3600))
 # A tool that depends on the cwd it loaded in: how long its directory must have
 # gone unused before the daemon follows a client elsewhere.
 FOLLOW_AFTER_S = float(os.environ.get("SPEEDRUNNER_FOLLOW_AFTER", 30))
+# A load that failed may work next time (a package being reinstalled has a file
+# missing for a moment): how long before this daemon leaves for a fresh one.
+PRELOAD_RETRY_S = float(os.environ.get("SPEEDRUNNER_PRELOAD_RETRY", 60))
 # Env vars read once at interpreter startup: a child cannot honour a client
 # whose values differ from the daemon's, so such requests run natively.
 STARTUP_ENV_PREFIX = ("PYTHON", "LC_")
@@ -394,6 +397,7 @@ class State:
         self.top_names = frozenset()  # top-level modules a file in that cwd could shadow
         self.sock_path = sock_path
         self.disabled = None  # reason string when the fast path is off
+        self.load_failed_at = None
         # As the client that started us had it: compared with each client's.
         # What the interpreter set at startup, as natively for the tool.
         self.start_env, self.interpreter_env = launch_environ()
@@ -1480,8 +1484,9 @@ def preload(state):
         state.import_tty_read = ttys.seen
     except OutputLost as exc:
         state.restart = str(exc)  # a fresh daemon may read it: natively meanwhile
-    except BaseException as exc:  # keep serving, so clients stop respawning us
+    except BaseException as exc:  # keep serving for a while, so clients stop respawning us
         state.disabled = f"preload failed: {exc!r}"
+        state.load_failed_at = time.monotonic()
         log(state.disabled)
     after = dict(os.environ)
     state.import_env_changed = {k: v for k, v in after.items()
@@ -2918,6 +2923,8 @@ def serve(state):
                 timeout = 1.0
             if parent.learning is not None and not parent.active():
                 timeout = 0  # its next step, once the spare is replaced
+            if state.load_failed_at is not None:
+                timeout = min(timeout, max(0.05, state.load_failed_at + PRELOAD_RETRY_S - time.monotonic()))
             readable, _, _ = select.select(watch, [], [], timeout)
             if state.watch is not None and state.watch.fd in readable:
                 stop["why"] = "stale: a preloaded module file changed"
@@ -2951,6 +2958,9 @@ def serve(state):
             if (not parent.active()
                     and time.monotonic() >= parent.last_activity + IDLE_TIMEOUT_S):
                 stop["why"] = "idle timeout"
+            if (state.load_failed_at is not None and not parent.active()
+                    and time.monotonic() >= state.load_failed_at + PRELOAD_RETRY_S):
+                stop["why"] = "its load failed: the next client starts a fresh daemon"
         log(f"exiting: {stop['why']}")
         # Out of the way first, so that new clients start a fresh daemon;
         # then the runs in progress, some of which report their end only
