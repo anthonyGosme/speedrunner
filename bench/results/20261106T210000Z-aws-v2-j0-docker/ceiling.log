@@ -1,0 +1,23 @@
+Python 3.14.10
+aws-cli/2.39.5 Python/3.14.8 Linux/7.0.14-linuxkit exe/x86_64.debian.13
+archive entries 12 kinds {b's', b'z', b'm'} scripts ['pyiboot01_bootstrap', 'pyi_rth_inspect', 'pyi_rth_setuptools', 'pyi_rth_pkgutil', 'pyi_rth_multiprocessing', 'pyi_rth_pkgres', 'aws']
+pyc magic same as this python: ?
+modules in the PYZ 1272
+import awscli.clidriver 386 ms; 479 modules; threads python 1 native 1
+learned 77 modules, 0 failed; threads python 1 native 1
+aws --debug configure list                     native    983 ms forked    127 ms x 7.76 same 0/11
+   native: 0 b'NAME       : VALUE                    : TYPE             : LOCATION\nprofile    : <not set>' b'ad - awscli.utils - DEBUG - Max number of attempts exceeded (1) when attempting to retrieve data from metadata service.\n' 
+   forked: 0 b'NAME       : VALUE                    : TYPE             : LOCATION\nprofile    : <not set>' b'atest/meta-data/placement/availability-zone/"\n2026-11-06 19:43:28,472 - MainThread - awscli.utils - DEBUG - Max number of attempts exceeded (1) when attempting to retrieve data from metadata service.\n'
+aws --version                                  native    889 ms forked     47 ms x19.00 same 0/11
+   native: 0 b'aws-cli/2.39.5 Python/3.14.8 Linux/7.0.14-linuxkit exe/x86_64.debian.13\n' b'' 
+   forked: 0 b'aws-cli/2.39.5 Python/3.14.10 Linux/7.0.14-linuxkit exe/x86_64.debian.13\n' b''
+aws configure list                             native    897 ms forked     82 ms x10.93 same 11/11
+aws ec2 run-instances --generate-cli-skeleton  native   1196 ms forked    273 ms x 4.39 same 11/11
+threads at the end 1 1
+aws s3api list-buckets         native   1081 ms forked    231 ms x 4.68 same 11/11 killed/crashed 0 rc 0/0
+aws s3 ls                      native   1118 ms forked    283 ms x 3.95 same 11/11 killed/crashed 0 rc 0/0
+aws s3 cp (classic)            native   1240 ms forked    318 ms x 3.90 same 11/11 killed/crashed 0 rc 0/0
+aws s3 cp (CRT)                native   1177 ms forked    324 ms x 3.63 same 11/11 killed/crashed 0 rc 0/0
+--debug native: rc 0, 8 lines naming the CRT; first: 2026-11-06 19:45:19,080 - MainThread - s3transfer.crt - DEBUG - Creating CRT S3 client for region default
+--debug forked: rc 0, 8 lines naming the CRT; first: 2026-11-06 19:45:19,600 - MainThread - s3transfer.crt - DEBUG - Creating CRT S3 client for region default
+300 forks of configure list: 0 failures, 19.3 s, threads 1 1

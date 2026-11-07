@@ -175,7 +175,7 @@ def native_thread_count():
 
 def anon_file(name):
     """A file only we can reach, for output of any size."""
-    if not MACOS:
+    if hasattr(os, "memfd_create"):  # not macOS, nor the Python a bundle was built with
         return os.memfd_create(name)
     path = f".{name}-{os.getpid()}"
     flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
@@ -432,6 +432,10 @@ class State:
         self.restart = None  # reason to exit before serving
 
 
+# A PyInstaller bundle (aws v2), started by speedrunner_pyi: the tool's script, from its archive.
+BUNDLE = getattr(sys, "_speedrunner_pyi", None)  # (name, code object)
+
+
 def preload_levels(text):
     return {int(x) for x in text.split(",") if x.strip() in ("1", "2", "3")}
 
@@ -443,6 +447,9 @@ def startup_env(env):
 
 def script_imports(script):
     """Module names imported at the top level of the tool's script."""
+    if BUNDLE:
+        import dis
+        return [i.argval for i in dis.get_instructions(BUNDLE[1]) if i.opname == "IMPORT_NAME"]
     with open(script, "rb") as f:
         tree = ast.parse(f.read(), script)
     names = []
@@ -777,7 +784,8 @@ def module_files():
     files = []
     for module in list(sys.modules.values()):
         path = getattr(module, "__file__", None)
-        if isinstance(path, str):
+        # In a bundle most are in the executable, which the fingerprint covers: no such file.
+        if isinstance(path, str) and not (BUNDLE and not os.path.exists(path)):
             files.append(path)
     return files
 
@@ -1388,10 +1396,36 @@ def threads_running():
     return threading.active_count() != 1 or native_thread_count() != 1
 
 
+def hold_crt_logging():
+    """awscli.logger starts the CRT's logging thread as it loads (init_logging), and a
+    daemon with a second thread must not fork. Each child makes the call itself."""
+    try:
+        import awscrt.io
+    except Exception:
+        return
+    real, held = awscrt.io.init_logging, []
+
+    def init_logging(*args, **kwargs):
+        if CHILD["conn"] is None:
+            held.append((args, kwargs))
+            return None
+        return real(*args, **kwargs)
+
+    def release():
+        for args, kwargs in held:
+            real(*args, **kwargs)
+        held.clear()
+
+    awscrt.io.init_logging = init_logging
+    CHILD["crt_release"] = release
+
+
 def preload(state):
     """Level 1: import what the script imports at top level. Level 2: what
     earlier runs imported lazily, from the cache."""
-    first = not (getattr(sys.flags, "safe_path", False) or sys.flags.isolated)
+    first = not (BUNDLE or getattr(sys.flags, "safe_path", False) or sys.flags.isolated)
+    if BUNDLE:
+        hold_crt_logging()
     if state.module:
         if first:
             # Natively the client's cwd, which differs per run: put in each child.
@@ -1670,32 +1704,39 @@ def stat_key(path):
 class BotocoreMemo:
     """Level 3: botocore data files parsed in the daemon, by resolved path.
 
-    Wraps JSONFileLoader._load_file, so AWS_DATA_PATH and the search order
-    stay botocore's. A child takes each entry at most once and only while
+    Wraps JSONFileLoader._load_file (aws v2's botocore: load_file, which adds
+    the .json itself), so AWS_DATA_PATH and the search order stay botocore's. A child takes each entry at most once and only while
     the file's stat matches; otherwise it reads the file as natively. Every
     object it gets is still its own: the parent's copy is never handed out.
     """
 
     def __init__(self, loaders):
         self.loaders = loaders
-        self.original = loaders.JSONFileLoader._load_file
+        self.plain = not hasattr(loaders.JSONFileLoader, "_load_file")
+        self.original = loaders.JSONFileLoader.load_file if self.plain else loaders.JSONFileLoader._load_file
         self.entries = {}  # path -> (stat key, data), least recently used first
         self.size = 0
         self.loaded = []   # in a child: paths botocore loaded during the run
         memo = self
 
         def _load_file(loader, full_path, open_method):
-            return memo.load(loader, full_path, open_method)
+            return memo.load(full_path, lambda: memo.original(loader, full_path, open_method))
 
-        loaders.JSONFileLoader._load_file = _load_file
+        def load_file(loader, file_path):
+            return memo.load(file_path + ".json", lambda: memo.original(loader, file_path))
 
-    def load(self, loader, full_path, open_method):
+        if self.plain:
+            loaders.JSONFileLoader.load_file = load_file
+        else:
+            loaders.JSONFileLoader._load_file = _load_file
+
+    def load(self, full_path, read):
         entry = self.entries.pop(full_path, None)
         if entry is not None and stat_key(full_path) == entry[0]:
             self.loaders.logger.debug("Loading JSON file: %s", full_path)  # as natively
             data = entry[1]
         else:
-            data = self.original(loader, full_path, open_method)
+            data = read()
         if data is not None:
             self.loaded.append(full_path)
         return data
@@ -1716,11 +1757,13 @@ class BotocoreMemo:
                 continue
             if entry is not None:
                 self.size -= entry[0][1]
-            method = self.open_method(path)
-            if key is None or method is None or key[1] > MEMO_BUDGET:
+            method = None if self.plain else self.open_method(path)
+            if key is None or (method is None and not self.plain) or key[1] > MEMO_BUDGET:
                 continue
             try:
-                data = self.original(self.loaders.JSONFileLoader(), path, method)
+                loader = self.loaders.JSONFileLoader()
+                data = (self.original(loader, path[:-len(".json")]) if self.plain
+                        else self.original(loader, path, method))
             except Exception as exc:
                 log(f"level 3: cannot parse {path}: {exc!r}")
                 continue
@@ -1736,7 +1779,15 @@ def install_memo(state):
     if 3 in state.levels and state.memo is None and "botocore.loaders" in sys.modules:
         # awscli aliases its vendored botocore as top-level `botocore`, which
         # the CLI uses; awscli.botocore.* are separate module objects.
-        state.memo = BotocoreMemo(sys.modules["botocore.loaders"])
+        loaders = sys.modules["botocore.loaders"]
+        # An adapter that does not recognise what it wraps goes without: a daemon
+        # must not die of it.
+        kind = getattr(loaders, "JSONFileLoader", None)
+        code = getattr(getattr(kind, "load_file", None), "__code__", None)
+        if hasattr(kind, "_load_file") or (code and code.co_varnames[:2] == ("self", "file_path")):
+            state.memo = BotocoreMemo(loaders)
+        else:
+            log("level 3: not a botocore this adapter knows")
 
 
 def cache_file(state):
@@ -1883,6 +1934,18 @@ def bridge_tty(fd):
     builtins.open = io.open = open_file
 
 
+def bundle_env():
+    """What a bundle's bootloader leaves in the env of the tool, and so of what it runs."""
+    home = sys._MEIPASS
+    orig = os.environ.get("LD_LIBRARY_PATH")
+    if orig is not None:
+        os.environ["LD_LIBRARY_PATH_ORIG"] = orig
+    os.environ["LD_LIBRARY_PATH"] = home if orig is None else f"{home}:{orig}"
+    os.environ["_PYI_ARCHIVE_FILE"] = sys.executable
+    os.environ["_PYI_LINUX_PROCESS_NAME"] = os.path.basename(sys.executable)
+    os.environ["_PYI_PARENT_PROCESS_LEVEL"] = "1"
+
+
 def apply_request(state, req, fds):
     stdin, stdout, stderr, cwd = fds[:4]
     if state.tty is not None:
@@ -1921,6 +1984,8 @@ def apply_request(state, req, fds):
     for key in state.import_env_deleted:
         os.environ.pop(key, None)
     os.environ.update(state.import_env_changed)
+    if BUNDLE:
+        bundle_env()
     if hasattr(time, "tzset"):
         time.tzset()  # the C library read TZ once, as the daemon started
 
@@ -1982,7 +2047,7 @@ CHILD = {"conn": None, "ctl": None, "base_modules": None, "base_finders": (), "i
          "memo": None, "base_path": None, "roots": []}
 # Loaders a fresh interpreter has: a module another one loaded (a finder the
 # run installed, as pytest's assertion rewriting) must not be preloaded.
-STANDARD_LOADER_MODULES = {"importlib._bootstrap", "importlib._bootstrap_external",
+STANDARD_LOADER_MODULES = {"pyimod02_importers", "importlib._bootstrap", "importlib._bootstrap_external",
                            "_frozen_importlib", "_frozen_importlib_external", "zipimport"}
 # Types are told apart by id here: a metaclass that defines __eq__ makes its
 # classes unhashable, and comparing them would run the tool's code.
@@ -2002,6 +2067,8 @@ def has_finalizer(kind):
         return False
     if kind.__name__ == "Forward" and str(kind.__module__).endswith("pyparsing.core"):
         return False  # only warns, if asked to: the grammars of packaging, vendored by pip
+    if kind.__name__ == "ResourceTracker" and kind.__module__ == "multiprocessing.resource_tracker":
+        return False  # 3.14: a no-op until it starts its process, and each child starts its own
     for base in kind.__mro__:  # not getattr: a metaclass's __getattr__ is the tool's code
         finalizer = vars(base).get("__del__")
         if finalizer is not None:
@@ -2009,9 +2076,15 @@ def has_finalizer(kind):
     return False
 
 
+def of_kinds(objects, kinds):
+    """The objects whose type's id is in kinds. In C all the way: this walks the
+    whole heap at each exit, 35,000 objects for aws v2, and Python here cost 100 ms."""
+    return itertools.compress(objects, map(kinds.__contains__, map(id, map(type, objects))))
+
+
 def any_finalizer(objects):
-    kinds = {id(kind): kind for kind in map(type, objects)}
-    return any(map(has_finalizer, kinds.values()))
+    kinds = list(map(type, objects))  # by id: a metaclass may make a type unhashable
+    return any(map(has_finalizer, dict(zip(map(id, kinds), kinds)).values()))
 
 
 def freeze_heap():
@@ -2019,15 +2092,15 @@ def freeze_heap():
     it froze has a finalizer: only what came since the last call, so calling
     it after each import walks the heap once in all."""
     objects = gc.get_objects()
-    FROZEN_WRITERS.extend(obj for obj in objects if id(type(obj)) in FILE_TYPES)
+    FROZEN_WRITERS.extend(of_kinds(objects, FILE_TYPES))
     gc.freeze()
     return any_finalizer(objects)
 
 
 def flush_open_files(objects):
     std = {id(s) for s in (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)}
-    for obj in itertools.chain(objects, FROZEN_WRITERS):
-        if id(type(obj)) in FILE_TYPES and id(obj) not in std:
+    for obj in itertools.chain(of_kinds(objects, FILE_TYPES), FROZEN_WRITERS):
+        if id(obj) not in std:
             try:
                 if not obj.closed:
                     obj.flush()
@@ -2044,7 +2117,7 @@ def finalizers_pending(objects):
     if any_finalizer(objects):
         return True
     return any(getattr(obj, SUSPENDABLE_TYPES[id(type(obj))]) is not None
-               for obj in objects if id(type(obj)) in SUSPENDABLE_TYPES)
+               for obj in of_kinds(objects, SUSPENDABLE_TYPES))
 
 
 def tell_parent(kind):
@@ -2184,6 +2257,8 @@ def script_traceback(tb, state):
     """Drop our frames so the traceback starts in the script, or for a
     module in runpy's _run_module_as_main, as natively."""
     def first(code):
+        if BUNDLE:
+            return code is BUNDLE[1]
         if state.module:
             return code is runpy._run_module_as_main.__code__
         return code.co_filename == state.script
@@ -2250,6 +2325,16 @@ def run_tool(state, conn):
             CHILD["daemon_main"] = sys.modules["__main__"]  # our functions' globals
             sys.modules["__main__"] = main
             runpy._run_module_as_main(state.module)
+        elif BUNDLE:
+            # As the bootloader: the script's code, in __main__, under the name it gives it.
+            if "crt_release" in CHILD:
+                CHILD["crt_release"]()
+            main = types.ModuleType("__main__")
+            main.__builtins__ = builtins
+            main.__file__ = os.path.join(sys._MEIPASS, BUNDLE[0] + ".py")
+            CHILD["daemon_main"] = sys.modules["__main__"]  # our functions' globals
+            sys.modules["__main__"] = main
+            exec(BUNDLE[1], main.__dict__)
         else:
             keep_argv0(CHILD.get("argv0", state.script), state.script)
             runpy.run_path(state.script, run_name="__main__")

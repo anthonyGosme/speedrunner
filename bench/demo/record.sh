@@ -5,7 +5,7 @@
 # gets a fresh local S3 (moto) to upload to.
 #
 # Usage: bench/demo/record.sh <speedrunner binary> <out_dir>
-# Env:   RUNS (default "native cold warm"), REPEAT (default 1), NO_REC=1 for
+# Env:   AWS_DIR (the aws to use, default the v1 venv), RUNS (default "native cold warm"), REPEAT (default 1), NO_REC=1 for
 #        logs instead of casts; ASCIINEMA, MOTO (their paths).
 # Run it in a terminal: asciinema records at the terminal's size (set below).
 # The directory it starts from counts: a project under it can change the times. Start it
@@ -24,7 +24,7 @@ mkdir -p "$out" "$SHOP"
 mkdir -m 0700 "$scratch/run"
 python3 "$here/make_shop.py" "$SHOP" "$root/php/laravel"
 
-export PATH=$root/venv-aws/bin:$root/venv-panel/bin:$root/gems-rb/bin:/usr/local/bin:/usr/bin:/bin
+export PATH=${AWS_DIR:-$root/venv-aws/bin}:$root/venv-panel/bin:$root/gems-rb/bin:/usr/local/bin:/usr/bin:/bin
 export HOME=$scratch LANG=C.UTF-8 TERM=xterm-256color PAGER=cat
 export XDG_RUNTIME_DIR=$scratch/run XDG_CACHE_HOME=$scratch/cache XDG_CONFIG_HOME=$scratch/config
 export GEM_HOME=$root/gems-rb GEM_PATH=$root/gems-rb

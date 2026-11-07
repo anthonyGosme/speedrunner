@@ -105,7 +105,7 @@ speedrunner demo
 Why CLIs are slow to start: [where the time goes, and how to measure it](https://anthonygosme.github.io/).
 
 <!-- panel:start -->
-**96 commands served (46 Python, 18 Ruby, 19 PHP, 13 Node), 96 with an output identical to the native run. Speedup: geometric mean x5.5, median x4.8; 74 at x3 or more, 22 at x10 or more.**
+**96 commands served (46 Python, 18 Ruby, 19 PHP, 13 Node), 96 with an output identical to the native run. Speedup: geometric mean x5.6, median x4.8; 74 at x3 or more, 22 at x10 or more.**
 
 69 of them only print a version or a help text, which measures start-up alone. The 27 that do real work (lint or format a file, run tests, list a project) gain x4.0 median, 20 of them x3 or more.
 
@@ -133,19 +133,19 @@ Measured on a 2-vCPU Debian 12 VPS, or, for the commands marked ¹, on a laptop 
 | `yt-dlp --version` ¹ | 235 ms | 22 ms | **x10.8** (10.4–11.0) |
 | `conan --version` ¹ | 367 ms | 34 ms | **x10.7** (10.6–11.0) |
 | `nox --version` ¹ | 213 ms | 22 ms | **x9.8** (9.5–10.1) |
+| `aws --version` | 386 ms | 40 ms | **x9.7** (9.2–10.1) |
 | `mkdocs --version` ¹ | 141 ms | 16 ms | **x9.1** (8.9–9.2) |
 | `twine --version` ¹ | 300 ms | 35 ms | **x8.6** (7.3–11.7) |
 | `meson --version` ¹ | 367 ms | 43 ms | **x8.6** (8.4–8.8) |
 | `hatch --version` ¹ | 135 ms | 16 ms | **x8.4** (8.3–8.6) |
 | `sam --version` ¹ | 136 ms | 16 ms | **x8.3** (8.1–8.6) |
+| `aws configure list` | 401 ms | 48 ms | **x8.3** (7.8–8.7) |
 | `black --check sample.py` | 92 ms | 12 ms | **x7.5** (7.2–7.9) |
 | `pre-commit --version` | 85 ms | 12 ms | **x7.0** (6.3–7.3) |
 | `pip list` | 127 ms | 19 ms | **x6.7** (6.4–6.8) |
 | `pdm --version` ¹ | 456 ms | 73 ms | **x6.3** (6.2–6.3) |
 | `ansible-doc ping` | 318 ms | 59 ms | **x5.3** (5.2–5.6) |
-| `aws --version` | 221 ms | 41 ms | **x5.3** (5.2–5.7) |
 | `az vm --help` | 314 ms | 64 ms | **x4.9** (4.7–5.3) |
-| `aws configure list` | 229 ms | 48 ms | **x4.8** (4.7–5.0) |
 | `yamllint sample.yaml` | 52 ms | 11 ms | **x4.8** (4.5–5.1) |
 | `sqlfluff lint sample.sql` (exits 1 natively) ¹ | 669 ms | 141 ms | **x4.8** (4.6–5.0) |
 | `command-not-found sl` (exits 127 natively) ¹ | 82 ms | 18 ms | **x4.4** (4.3–4.5) |
@@ -237,22 +237,26 @@ No gain: `vite --version` is slower served: its bundler starts threads as it loa
 
 <!-- panel:end -->
 
-### aws, with real requests
+### aws
 
-The panel's aws rows only print a version or the configuration. These five send requests to S3,
-here to a local S3 server (moto) on the same VPS, so that the network takes next to no time:
+AWS's official install, v2, is a PyInstaller bundle, with the Python inside it. speedrunner serves it on Linux, with
+nothing to set up. On a 2-vCPU VPS, 20 interleaved runs of each, requests to a local S3 server (moto), so that
+the network takes next to no time:
 
-| Command | Native | speedrunner | Saved per call | Speedup (95% CI) |
-|---|---:|---:|---:|---:|
-| `aws s3 ls` | 316 ms | 71 ms | 245 ms | **x4.5** (4.2–4.7) |
-| `aws s3 ls s3://bucket/` | 323 ms | 74 ms | 250 ms | **x4.4** (4.2–4.6) |
-| `aws s3 cp`, a small file | 324 ms | 87 ms | 237 ms | **x3.7** (3.6–4.0) |
-| `aws s3api head-object` | 294 ms | 77 ms | 217 ms | **x3.8** (3.7–4.0) |
-| `aws sts get-caller-identity` | 277 ms | 71 ms | 206 ms | **x3.9** (3.8–4.1) |
+| Command | Native | speedrunner | Speedup (95% CI) |
+|---|---:|---:|---:|
+| `aws --version` | 386 ms | 40 ms | **x9.7** (9.2–10.1) |
+| `aws configure list` | 401 ms | 48 ms | **x8.3** (7.8–8.7) |
+| `aws ec2 run-instances --generate-cli-skeleton` | 535 ms | 112 ms | **x4.8** (4.5–5.0) |
+| `aws s3 ls` | 548 ms | 100 ms | **x5.5** (5.2–5.7) |
+| `aws s3 ls s3://bucket/` | 534 ms | 97 ms | **x5.5** (5.3–5.7) |
+| `aws s3 cp, a small file` | 556 ms | 120 ms | **x4.6** (4.4–4.9) |
+| `aws s3api head-object` | 522 ms | 108 ms | **x4.8** (4.5–5.0) |
+| `aws sts get-caller-identity` | 486 ms | 98 ms | **x5.0** (4.7–5.2) |
 
-Outputs identical to native. Against AWS itself, your latency adds the same time to both columns:
-the 0.2 s saved per call stays, the ratio drops (`aws s3 ls` with 100 ms of round trips: about
-0.42 → 0.17 s). [Protocol and every run](bench/results/20261103T180000Z-s3-vps/ANALYSE.md).
+Outputs identical to native. Against AWS itself, your latency adds the same time to both columns: the time saved
+stays, the ratio drops. On macOS, v2 runs natively for now. [Protocol and every run](bench/results/20261106T220000Z-aws-v1-v2-vps/ANALYSE.md);
+[how it is served](bench/results/20261106T210000Z-aws-v2-j0-docker/ANALYSE.md).
 
 ### Against the tools' own daemons
 
@@ -291,7 +295,7 @@ starts the daemon as you type the tool's name, so that even the first call is fa
 
 **When does it not help?** When the command's own work or the network dominates (`phpstan analyse`,
 `aws s3 ls` on a slow link), for tools that start threads as they load (vite), and for native binaries:
-there is nothing to preload.
+there is nothing to preload. Of the tools packed into one binary, only aws v2 is served so far.
 
 **pre-commit, git hooks?** Commit with `speedrunner exec git commit`. git runs pre-commit's hook by its
 path, but the hook's `#!/usr/bin/env bash` looks bash up on PATH: next to pre-commit's link, `exec` puts a

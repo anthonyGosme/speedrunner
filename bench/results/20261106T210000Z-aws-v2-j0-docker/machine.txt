@@ -1,0 +1,4 @@
+26.7.2
+Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz
+docker 29.9.2
+Debian GNU/Linux 13 (trixie)

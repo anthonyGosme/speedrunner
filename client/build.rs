@@ -40,6 +40,7 @@ fn main() {
     if !built {
         fs::write(&darwin, b"").unwrap();
     }
+    build_pyi(&out, &given, linux && !musl_host);
     for libc in ["gnu", "musl"] {
         let name = format!("speedrunner_node-{}.node", libc);
         let dest = Path::new(&out).join(&name);
@@ -68,5 +69,26 @@ fn main() {
         if !built {
             fs::write(&dest, b"").unwrap();
         }
+    }
+}
+
+/// The launcher of PyInstaller bundles, as glibc builds them: from the same directory
+/// as the addons, else compiled here on a glibc host. Empty otherwise: they run natively.
+fn build_pyi(out: &str, given: &Option<std::ffi::OsString>, glibc_host: bool) {
+    let src = "../server/speedrunner_pyi.c";
+    println!("cargo:rerun-if-changed={}", src);
+    let dest = Path::new(out).join("speedrunner_pyi");
+    let _ = fs::remove_file(&dest);
+    let built = match given {
+        Some(dir) => fs::copy(Path::new(dir).join("speedrunner_pyi"), &dest).is_ok(),
+        None if glibc_host => {
+            let cc = env::var("NODE_ADDON_CC").unwrap_or_else(|_| "cc".to_string());
+            Command::new(&cc).args(["-O2", "-o"]).arg(&dest).arg(src).arg("-ldl")
+                .status().map_or(false, |s| s.success())
+        }
+        None => false,
+    };
+    if !built {
+        fs::write(&dest, b"").unwrap();
     }
 }

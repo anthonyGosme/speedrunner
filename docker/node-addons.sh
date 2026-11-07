@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# The Node daemon's addon (server/speedrunner_node.c), built for glibc and for
+# The launcher of PyInstaller bundles (server/speedrunner_pyi.c), for glibc, and
+# the Node daemon's addon (server/speedrunner_node.c), built for glibc and for
 # musl, as client/build.rs embeds them (SPEEDRUNNER_NODE_ADDONS=<dir>): glibc
 # on Ubuntu 22.04, so that it loads on any glibc from 2.35 up; musl on Alpine.
+# The launcher on Ubuntu 20.04, from glibc 2.31: aws runs on older systems than
+# Node does, and where the launcher cannot start, aws just runs natively.
 #
 #   docker/node-addons.sh <out_dir> [platform]     (platform: linux/amd64, ...)
 set -euo pipefail
@@ -13,6 +16,9 @@ flags="-O2 -Wall -shared -fPIC"
 docker run --rm --platform "$platform" -v "$PWD/server:/s:ro" -v "$(cd "$out" && pwd):/out" ubuntu:22.04 sh -c \
   "apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/dev/null \
    && gcc $flags -o /out/speedrunner_node-gnu.node /s/speedrunner_node.c"
+docker run --rm --platform "$platform" -v "$PWD/server:/s:ro" -v "$(cd "$out" && pwd):/out" ubuntu:20.04 sh -c \
+  "apt-get update -qq >/dev/null && apt-get install -y -qq --no-install-recommends gcc libc6-dev >/dev/null \
+   && gcc -O2 -Wall -o /out/speedrunner_pyi /s/speedrunner_pyi.c -ldl"
 docker run --rm --platform "$platform" -v "$PWD/server:/s:ro" -v "$(cd "$out" && pwd):/out" alpine:3.20 sh -c \
   "apk add -q gcc musl-dev && gcc $flags -o /out/speedrunner_node-musl.node /s/speedrunner_node.c"
 ls -l "$out"
