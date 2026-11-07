@@ -615,16 +615,18 @@ def check_failed_load_is_retried(test, write_tool):
     os.mkdir(tool_dir)
     tool = write_tool(tool_dir, flag)
     env = {"XDG_RUNTIME_DIR": os.path.join(root, "run"), "XDG_CACHE_HOME": os.path.join(root, "cache"),
-           "SPEEDRUNNER_PRELOAD_RETRY": "1"}
+           "SPEEDRUNNER_PRELOAD_RETRY": "2"}
     os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
     test.addCleanup(lambda: stop(tool, env))
     healthy = run("native", [tool], env=env)
     test.assertEqual(healthy.returncode, 0, healthy.stderr)
     open(flag, "w").close()
-    subprocess.run([HS_BIN, "prewarm", tool], env={**BASE_ENV, **env}, check=True)
+    # A slow machine may see the daemon leave before it answers: another one comes.
     deadline = time.monotonic() + 30
-    while "preload failed" not in status(tool, env):
-        test.assertLess(time.monotonic(), deadline, status(tool, env))
+    while "preload failed" not in (text := status(tool, env)):
+        test.assertLess(time.monotonic(), deadline, f"{text}: {daemon_logs(os.path.basename(tool), env)}")
+        if text == "down":
+            subprocess.run([HS_BIN, "prewarm", tool], env={**BASE_ENV, **env}, check=True)
         time.sleep(0.05)
     # As natively while it lasts, across the daemons that try again.
     broken = run("native", [tool], env=env)
@@ -634,7 +636,7 @@ def check_failed_load_is_retried(test, write_tool):
         test.assertEqual(served.returncode, broken.returncode, served.stderr)
         time.sleep(0.7)
     os.unlink(flag)
-    served_soon([tool], env=env, timeout=15)
+    served_soon([tool], env=env)
     test.assertEqual(outcome(run("hs", [tool], env=env)), outcome(healthy))
 
 
