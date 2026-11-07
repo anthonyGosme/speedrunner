@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "0.4.8"
+  version "0.4.9"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "1b0b6e31d84ff71026b03e38941d9465482fb2a037c09636e882afa2d6c486b8"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.9/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "72b04094ada41937e90a5669b0f47c2cb96c9866ec42dbb42a8cfc9b8d198ce7"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "1b0b6e31d84ff71026b03e38941d9465482fb2a037c09636e882afa2d6c486b8"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.9/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "72b04094ada41937e90a5669b0f47c2cb96c9866ec42dbb42a8cfc9b8d198ce7"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "9286736411737f75a0bfcccedc3b3c933f3008c31f3ba04b56bcdc2484fa45f8"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.9/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "1cf8b3d2979ea8d7cff024817dc69cfca00f248dbaa3ff798b7eaa194a566e49"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.8/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "227c2c38091a40c54d537ec6b4bc24d9587ef7576f6b2d70884accf289a06c1a"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v0.4.9/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "6d90bb5f6f533ad172a193a3396c207b219fcf437f24ce95b9c55d0cf5a76544"
     end
   end
 
