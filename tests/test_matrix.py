@@ -1925,6 +1925,56 @@ class LoadDirChecks:
 
 
 class ImportTimeReads(ImportTimeReadChecks, LockAtLoadChecks, LoadDirChecks, Matrix):
+    def tool_under(self, source):
+        """A tool installed under the directory its daemon starts in, as one in a
+        venv under the home directory: what it reads of its own stays where it is."""
+        start = os.path.realpath(tempfile.mkdtemp(dir=ROOT))
+        bindir = os.path.join(start, "tools", "bin")
+        os.makedirs(bindir)
+        python = os.path.join(os.path.dirname(shutil.which("hstest", path=BASE_ENV["PATH"])), "python3")
+        with open(os.path.join(bindir, "hsunder"), "w") as f:
+            f.write(f"#!{python}\nimport hsunder_lib\nhsunder_lib.main()\n")
+        os.chmod(os.path.join(bindir, "hsunder"), 0o755)
+        with open(os.path.join(bindir, "hsunder_lib.py"), "w") as f:
+            f.write(source.replace("START", repr(start)))
+        with open(os.path.join(bindir, "data.txt"), "w") as f:
+            f.write("one")
+        env = {"PATH": f"{bindir}:{BASE_ENV['PATH']}", "XDG_RUNTIME_DIR": os.path.join(start, "run"),
+               "XDG_CACHE_HOME": os.path.join(start, "cache")}
+        os.makedirs(env["XDG_RUNTIME_DIR"], mode=0o700)
+        self.addCleanup(stop, "hsunder", env)
+        run("hs", ["hsunder"], env=env, cwd=start, require_fast=False)
+        wait_ready("hsunder", env)
+        return start, bindir, env
+
+    # tempfile asks for the cwd as it looks for a directory, and keeps nothing of it.
+    OWN_FILE = ("import os, tempfile\ntempfile.gettempdir()\n"
+                "DATA = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.txt')).read()\n"
+                "def main():\n    print(DATA)\n")
+
+    def test_own_file_of_a_tool_under_the_start_directory(self):
+        start, bindir, env = self.tool_under(self.OWN_FILE)
+        other = tempfile.mkdtemp(dir=ROOT)
+        p = run("hs", ["hsunder"], env=env, cwd=other)
+        self.assertEqual((p.returncode, p.stdout), (0, b"one\n"), p.stderr)
+        # Still looked after: what it read changing is an upgrade, wherever the client is.
+        with open(os.path.join(bindir, "data.txt"), "w") as f:
+            f.write("two")
+        self.assertEqual(run("hs", ["hsunder"], env=env, cwd=other, require_fast=False).stdout, b"two\n")
+
+    def test_project_file_under_the_start_directory_stays_relative(self):
+        # Under the start directory and outside the tool's: the directory's, not the tool's.
+        start, bindir, env = self.tool_under(
+            "import os, tempfile\ntempfile.gettempdir()\n"
+            "PATH = os.path.join(START, 'local.cfg')\nHAS = os.path.exists(PATH)\n"
+            "def main():\n    print(HAS)\n")
+        with open(os.path.join(start, "local.cfg"), "w") as f:
+            f.write("x")
+        run("hs", ["hsunder"], env=env, cwd=start, require_fast=False)
+        wait_ready("hsunder", env)
+        p = run("hs", ["hsunder"], env=env, cwd=tempfile.mkdtemp(dir=ROOT))
+        self.assertEqual(p.returncode, EXIT_NOT_FAST, p.stdout)
+
     LOCK_BODY = ("import fcntl, os, sys, time\n"
                  "LOCK_FILE = open(os.environ['HS_CFG'], 'w')\n"
                  "try:\n"

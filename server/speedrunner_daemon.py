@@ -1254,8 +1254,11 @@ def keep_file_reads(state, reads):
     state.import_cwd_read |= reads.cwd_read
     if reads.cwd_asked and state.start_cwd not in (None, "/"):
         prefix = state.start_cwd + "/"
+        # The tool's own files stay where they are, from any directory: it may be
+        # installed under this one, in a venv under the home directory.
+        roots = learn_roots(sys.path, state.start_cwd)
         for found in (reads.files, reads.probed, reads.listed):
-            under = {p for p in found if p.startswith(prefix)}
+            under = {p for p in found if p.startswith(prefix) and not in_roots(p, roots)}
             found -= under
             reads.relative |= {p[len(prefix):] for p in under}
     if state.start_cwd_fd is not None:
