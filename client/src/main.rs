@@ -2381,9 +2381,9 @@ impl Runtime {
         }
     }
 
-    /// The oldest version its daemon runs on: the oldest the test suites run
-    /// on, and older ones cannot even parse the daemon (Python 3.8, Ruby 2.7,
-    /// PHP 8.0). A bundle brings its own Python, checked by its builder.
+    /// The oldest version its daemon runs on, measured: older ones cannot
+    /// even parse it (Python 3.8, Ruby 2.7, PHP 8.0), and on Node 18 and 20
+    /// served calls hang. A bundle brings its own Python, checked by its builder.
     fn oldest(self) -> Option<(u32, u32)> {
         match self {
             Runtime::Python => Some((3, 9)),

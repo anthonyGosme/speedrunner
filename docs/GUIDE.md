@@ -446,7 +446,7 @@ names: nothing else to install.
 | Python | 3.9 or later (3.9 to 3.14 tested) | Preload levels 1, 2 and 3. |
 | Ruby | 3.0 or later (3.0 to 3.4 tested) | Levels 1 and 2. A binstub's `_x.y.z_` version argument runs natively. |
 | PHP | 8.1 or later (8.1 to 8.5 tested) | Needs the FFI, pcntl and posix extensions; uses OPcache. Without them, tools run natively. |
-| Node | 22 and 24 tested | Experimental. Learning what a tool loads needs Node 22.15 or later; before that, only Node's own start is saved. |
+| Node | 22 or later (22 and 24 tested) | Experimental. Learning what a tool loads needs Node 22.15 or later; before that, only Node's own start is saved. |
 
 **An older interpreter** cannot run its daemon: its tools simply run natively,
 as without speedrunner. The first call asks the interpreter its version, in the
