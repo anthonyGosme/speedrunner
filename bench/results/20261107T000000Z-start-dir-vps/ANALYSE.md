@@ -16,8 +16,23 @@ Module-level code that asks for the cwd (`tempfile`, which keeps nothing of it, 
 
 The tool's own files are now left out: those under its `sys.path`, as `learn_roots` gives them, so not the start directory itself. They stay watched like any other, by absolute path.
 
+## Then narrower: who asked
+
+Asking for the cwd now only counts if the asker may pass it on. `tempfile`, `multiprocessing.process` and `rich` keep it to themselves (read in their source; `CwdKeptToItself` fails if that changes), so a file read elsewhere under the cwd did not owe its path to them, and a config in the home directory stays absolute. ansible keeps the wider treatment: its `unfrackpath` returns paths built on the cwd, which other modules read. With the rule applied to it, the test standing for that case gives `here` where native gives `none`: a wrong output.
+
+On the demo script this changes nothing measurable, medians of 3 on the VPS, with the first fix against this one:
+
+| Started from | Cold, first | Cold, narrower | Warm, first | Warm, narrower |
+|---|---:|---:|---:|---:|
+| `/root` | 7.9 s | 8.2 s | 5.9 s | 5.6 s |
+| `bench/demo` | 7.7 s | 8.0 s | 6.0 s | 5.6 s |
+| `/tmp` | 8.8 s | 9.4 s | 7.4 s | 8.0 s |
+
+So its gain is for the case it was made for, a config under the home directory, tested and not measured on a real tool.
+
 ## What this does not change
 
-- A project's file under the start directory stays relative, as it must: `test_project_file_under_the_start_directory_stays_relative`. That is the likely reason `/tmp` stays slower here, its daemons starting there with the project under it; it was not looked into further.
-- Files read under the home directory when a daemon starts there, such as a config in `~/.something`, are not in a `sys.path`: they stay relative, with the same effect if a tool reads one at load. Not measured.
+- **`/tmp` stays slower, and not for this reason:** neither fix moves it. Its daemons start there with the project under it; why that costs more was not found.
+- A file named by a relative path stays relative, and a tool that keeps the cwd stays native elsewhere: `test_module_that_keeps_the_cwd_stays_native_elsewhere`.
+- With ansible, a file read under the start directory still counts as read through the cwd, unless it is ansible's own: from elsewhere it runs natively, right and slower.
 - Only the Python daemon had this. Ruby and Node count only paths that are relative as given, and PHP has no such tracking.
