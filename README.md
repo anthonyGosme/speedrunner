@@ -263,6 +263,25 @@ Outputs identical to native. Against AWS itself, your latency adds the same time
 stays, the ratio drops. On macOS, v2 runs natively for now. [Protocol and every run](bench/results/20261106T220000Z-aws-v1-v2-vps/ANALYSE.md);
 [how it is served](bench/results/20261106T210000Z-aws-v2-j0-docker/ANALYSE.md).
 
+### llm
+
+Simon Willison's [llm](https://github.com/simonw/llm) loads its model plugins at every call, even for
+`--version`. llm 0.37.1, alone and with four model plugins (Anthropic, Gemini, Mistral, Ollama), no API key
+and no request to a model, in a Debian container on a laptop, medians of 20 alternated runs:
+
+| Command | Native | speedrunner | Gain |
+|---|---:|---:|---:|
+| `llm --version` | 1171 ms | 21 ms | **x55** |
+| `llm models` | 1223 ms | 45 ms | **x27** |
+| `llm plugins` | 1175 ms | 19 ms | **x61** |
+| `llm --version`, 4 plugins | 3472 ms | 33 ms | **x105** |
+| `llm models`, 4 plugins | 3569 ms | 139 ms | **x26** |
+
+Outputs identical to native. `llm plugins` with the four plugins (3401 → 38 ms) lists them in an order that
+changes from one native run to the next, 4 orders in 15 runs; served, it keeps the order the daemon drew, with the
+same content. A prompt's own time, waiting for the model, is not touched.
+[Protocol and every run](bench/results/20261108T205000Z-llm-docker/ANALYSE.md).
+
 ### Through uv run
 
 `uv run black` syncs the project, then runs black from its environment. `srr uv run black` lets uv do all

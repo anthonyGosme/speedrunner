@@ -1,0 +1,56 @@
+== versions
+click==8.5.1
+click-default-group==1.2.4
+httpx==0.28.1
+httpx2==2.16.0
+llm==0.37.1
+llm-anthropic==0.30
+llm-gemini==0.35
+llm-mistral==0.16
+llm-ollama==0.19.1
+openai==3.46.0
+pluggy==1.7.0
+pydantic==2.14.3
+pydantic_core==2.50.4
+Python 3.12.16
+speedrunner 0.4.10
+median of 20 alternated runs
+
+== llm --version (/bare)
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, 1 stdout lines, first: ['llm, version 0.37.1']
+   same output as native: True
+   median: native 1171 ms, speedrunner 21 ms, x54.57
+
+== llm models (/bare)
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, 31 stdout lines, first: ['OpenAI Chat: gpt-4o (aliases: 4o)']
+   same output as native: True
+   median: native 1223 ms, speedrunner 45 ms, x27.28
+
+== llm plugins (/bare)
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, 1 stdout lines, first: ['[]']
+   same output as native: True
+   median: native 1175 ms, speedrunner 19 ms, x60.78
+
+== llm --version, 4 plugins (/plugins)
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, 1 stdout lines, first: ['llm, version 0.37.1']
+   same output as native: True
+   median: native 3472 ms, speedrunner 33 ms, x104.73
+
+== llm models, 4 plugins (/plugins)
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, 101 stdout lines, first: ['OpenAI Chat: gpt-4o (aliases: 4o)']
+   same output as native: True
+   median: native 3569 ms, speedrunner 139 ms, x25.64
+
+== llm plugins, 4 plugins (/plugins)
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, 38 stdout lines, first: ['[']
+   same output as native: False
+     native: 0 b'[\n  {\n    "name": "llm-ollama",\n    "hooks": [\n      "register_commands",\n      "register_embedding_models",\n      "register_models",\n      "register_tools"\n    ],\n    "version": "0.19.1"\n  },\n  {\n    "name": "llm-gemini",\n    "hooks": [\n      "register_commands",\n      "register_embedding_models",\n' b''
+     served: 0 b'[\n  {\n    "name": "llm-mistral",\n    "hooks": [\n      "register_commands",\n      "register_embedding_models",\n      "register_models"\n    ],\n    "version": "0.16"\n  },\n  {\n    "name": "llm-gemini",\n    "hooks": [\n      "register_commands",\n      "register_embedding_models",\n      "register_models"\n ' b''
+   median: native 3401 ms, speedrunner 38 ms, x88.76
+

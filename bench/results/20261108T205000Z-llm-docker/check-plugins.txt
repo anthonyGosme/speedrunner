@@ -1,0 +1,9 @@
+native: 4 distinct raw outputs in 15 runs
+   order: llm-gemini, llm-anthropic, llm-mistral, llm-ollama
+   order: llm-gemini, llm-mistral, llm-ollama, llm-anthropic
+   order: llm-gemini, llm-ollama, llm-mistral, llm-anthropic
+   order: llm-ollama, llm-gemini, llm-anthropic, llm-mistral
+served: 1 distinct raw outputs in 15 runs
+   order: llm-anthropic, llm-mistral, llm-gemini, llm-ollama
+once sorted (name, version, hooks): 1 distinct content(s) across all 30 runs
+   [["llm-anthropic", "0.30", ["register_commands", "register_models"]], ["llm-gemini", "0.35", ["register_commands", "register_embedding_models", "register_models"]], ["llm-mistral", "0.16", ["register_commands", "register_embedding_models", "register_models"]], ["llm-ollama", "0.19.1", ["register_commands", "register_embedding_models", "register_models", "register_tools"]]]

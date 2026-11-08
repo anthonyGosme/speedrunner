@@ -697,7 +697,10 @@ and none runs a command twice.
   own process group.
 - **`PYTHONHASHSEED`**: every call of a Python tool shares the daemon's hash seed,
   where native runs each draw one. The order of a `set` of strings is then the same
-  from call to call. `random` and `uuid` stay random.
+  from call to call. `random` and `uuid` stay random. More generally, an output whose
+  order varies from one native run to the next comes out in the same order at each
+  served call: `llm plugins` with several plugins, for one
+  ([run](../bench/results/20261108T205000Z-llm-docker/ANALYSE.md)).
 - **Values frozen at load.** The daemon checks what a tool reads as it loads: the
   environment variables, whether its streams are terminals, the files it opens or
   looks for, the directories it lists, and the current directory. A call that
