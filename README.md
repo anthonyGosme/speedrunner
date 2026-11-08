@@ -40,6 +40,7 @@ faster, with no per-tool setup.
 ```bash
 srr aws s3 ls                      # any Python, Ruby, PHP or Node tool, nothing to set up
 srr uv run black --check .         # through uv run too: uv syncs, then black is served
+srr python3 -m pytest -q           # python -m too: the module gets a daemon of its own
 speedrunner exec ./script.sh       # a whole script: every tool it calls, preloaded
 eval "$(speedrunner activate)"     # at the top of a script: no prefix needed after
 eval "$(speedrunner init zsh)"     # in ~/.zshrc (or init bash, in ~/.bashrc): daemons warm up while you type
@@ -276,8 +277,26 @@ interleaved runs:
 | `uv run black --version`, under `speedrunner exec -t uv` | 262 ms | 33 ms | **x8.0** |
 
 Outputs identical to native. black called directly goes from 288 to 18 ms in the same run: the rest is uv's
-own preparation, about 14 ms a call. What uv runs that is not a served script (`uv run python …`, `uv run ruff`)
-is left to uv, at no measurable cost. [Protocol and every run](bench/results/20261108T120700Z-uv-run-docker/ANALYSE.md).
+own preparation, about 14 ms a call. `uv run python -m pytest` is served too ([python -m](#through-python--m)). What uv runs that is not a served
+script or module (`uv run python script.py`, `uv run ruff`) is left to uv, at no measurable cost. [Protocol and every run](bench/results/20261108T120700Z-uv-run-docker/ANALYSE.md).
+
+### Through python -m
+
+`python3 -m pytest` runs a module through the interpreter, a native binary. `srr python3 -m pytest` gives
+the module a daemon of its own, for that interpreter and its options. Python 3.12 in a Debian container on a
+laptop, medians of 20 alternated runs:
+
+| Command | Native | speedrunner | Gain |
+|---|---:|---:|---:|
+| `python3 -m pip --version` | 304 ms | 18 ms | **x17** |
+| `python3 -m black --version` | 243 ms | 16 ms | **x15** |
+| `python3 -m black -q --check`, one file | 224 ms | 20 ms | **x11** |
+| `python3 -m mypy --version` | 212 ms | 20 ms | **x11** |
+| `python3 -m pytest -q`, one test file | 339 ms | 96 ms | **x3.5** |
+
+Outputs identical to native. `python3 -m pytest` gains as much as `pytest` called directly. A script, `-c` or the
+REPL stays native, for about 1 ms more. `uv run python -m pytest` is served too.
+[Protocol and every run](bench/results/20261108T173000Z-python-m-docker/ANALYSE.md).
 
 ### Against the tools' own daemons
 

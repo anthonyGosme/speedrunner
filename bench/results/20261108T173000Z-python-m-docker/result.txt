@@ -1,0 +1,85 @@
+Python 3.12.16
+speedrunner 0.4.10
+median of 20 alternated runs
+
+== pytest script, for reference
+   native: pytest --version
+   served: srr pytest --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['pytest 8.3.3']
+   same output as native: True
+   median: native 296 ms, speedrunner 76 ms, x3.91
+
+== pytest --version
+   native: python3 -m pytest --version
+   served: srr python3 -m pytest --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['pytest 8.3.3']
+   same output as native: True
+   median: native 283 ms, speedrunner 74 ms, x3.84
+
+== pytest, one test file
+   native: python3 -m pytest -q -p no:cacheprovider test_one.py
+   served: srr python3 -m pytest -q -p no:cacheprovider test_one.py
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['.                                                                        [100%]']
+   same output as native: True
+   median: native 339 ms, speedrunner 96 ms, x3.52
+
+== black --version
+   native: python3 -m black --version
+   served: srr python3 -m black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['python -m black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median: native 243 ms, speedrunner 16 ms, x15.32
+
+== black, a file checked
+   native: python3 -m black -q --check fmt.py
+   served: srr python3 -m black -q --check fmt.py
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: []
+   same output as native: True
+   median: native 224 ms, speedrunner 20 ms, x11.11
+
+== mypy --version
+   native: python3 -m mypy --version
+   served: srr python3 -m mypy --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['mypy 1.13.0 (compiled: yes)']
+   same output as native: True
+   median: native 212 ms, speedrunner 20 ms, x10.56
+
+== pip --version
+   native: python3 -m pip --version
+   served: srr python3 -m pip --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['pip 25.0.1 from /v/lib/python3.12/site-packages/pip (python 3.12)']
+   same output as native: True
+   median: native 304 ms, speedrunner 18 ms, x17.34
+
+== json.tool (stdlib)
+   native: python3 -m json.tool in.json
+   served: srr python3 -m json.tool in.json
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['{']
+   same output as native: True
+   median: native 53 ms, speedrunner 30 ms, x1.78
+
+== pytest under exec -t python3
+   native: python3 -m pytest --version
+   served: speedrunner exec -t python3 python3 -m pytest --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['pytest 8.3.3']
+   same output as native: True
+   median: native 289 ms, speedrunner 75 ms, x3.87
+
+== python3 -c (left native)
+   native: python3 -c pass
+   served: srr python3 -c pass
+   REQUIRE_FAST exit: 124 (NOT served)
+     debug: speedrunner: fast path unavailable: the interpreter itself: only `-m module` is served
+   native exit 0, stdout: []
+   same output as native: True
+   median: native 17 ms, speedrunner 18 ms, x0.96
+

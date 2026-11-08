@@ -1873,9 +1873,10 @@ def names_script(state, argv0, cwd_fd):
 
 def names_entry(state, argv, cwd_fd):
     """The request runs what we preloaded: [script, args...], or for a
-    module [-m, name, args...]."""
+    module [-m, name, args...], or [-mname, name, args...] as it was typed."""
     if state.module:
-        return len(argv) >= 2 and argv[0] == b"-m" and os.fsdecode(argv[1]) == state.module
+        return (len(argv) >= 2 and argv[0] in (b"-m", b"-m" + argv[1])
+                and os.fsdecode(argv[1]) == state.module)
     return bool(argv) and names_script(state, os.fsdecode(argv[0]), cwd_fd)
 
 
@@ -2020,9 +2021,10 @@ def apply_request(state, req, fds):
     # sys.argv[0] as natively: the script as the client ran it, or for a
     # module "-m" while it is found (runpy then sets it to its file).
     args = [os.fsdecode(a) for a in req.argv]
-    entry = ["-m", args[1]] if state.module else args[:1]
+    # sys.orig_argv keeps -mname joined, as typed.
+    entry = (["-m", args[1]] if args[0] == "-m" else args[:1]) if state.module else args[:1]
     if state.module:
-        args = args[:1] + args[2:]
+        args = ["-m"] + args[2:]
         if state.cwd_first:
             sys.path.insert(0, os.getcwd())
     CHILD["argv0"] = args[0]
