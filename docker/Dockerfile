@@ -16,7 +16,7 @@ WORKDIR /root/speedrunner
 RUN python3 -m venv venv-aws && venv-aws/bin/pip install -q --no-cache-dir awscli \
     && python3 -m venv venv-panel && venv-panel/bin/pip install -q --no-cache-dir \
         ansible black poetry httpie pre-commit mypy pytest flake8 yamllint \
-    && python3 -m venv venv-test \
+    && python3 -m venv venv-test && venv-test/bin/pip install -q --no-cache-dir uv==0.13.7 \
     && python3 -m venv venv-moto && venv-moto/bin/pip install -q --no-cache-dir "moto[server]" \
     && python3 -m venv venv-rec && venv-rec/bin/pip install -q --no-cache-dir asciinema
 RUN GEM_HOME=/root/speedrunner/gems-rb gem install --no-document rubocop rake bundler rspec

@@ -1,0 +1,35 @@
+uv 0.13.7 (x86_64-unknown-linux-gnu)
+speedrunner 0.4.9
+
+== venv script, direct (reference)
+   native: .venv/bin/black --version
+   served: srr .venv/bin/black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 235 ms, speedrunner 15 ms, x15.53
+
+== uv run srr
+   native: uv run black --version
+   served: uv run srr black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 246 ms, speedrunner 28 ms, x8.65
+
+== uv run --frozen srr
+   native: uv run --frozen black --version
+   served: uv run --frozen srr black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 247 ms, speedrunner 28 ms, x8.89
+
+== uvx --from black srr
+   native: uvx black==24.10.0 --version
+   served: uvx --from black==24.10.0 srr black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 251 ms, speedrunner 32 ms, x7.86
+

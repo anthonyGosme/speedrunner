@@ -18,6 +18,7 @@ undo it. For what it gains, see the [README](../README.md); for how it is built,
 - [aws v2](#aws-v2)
 - [Java and the JVM](#java-and-the-jvm)
 - [Launchers: az, gcloud](#launchers-az-gcloud)
+- [uv run and uvx](#uv-run-and-uvx)
 - [Known limits](#known-limits)
 - [Stopping every daemon](#stopping-every-daemon)
 - [Uninstall](#uninstall)
@@ -50,6 +51,7 @@ srr black --check src/
 srr rubocop app/models/user.rb
 srr ./manage.py migrate        # a script by path: one daemon per project
 srr php artisan route:list     # `php script`: the script gets a daemon of its own
+srr uv run black --check src/  # through uv: see [uv run](#uv-run-and-uvx)
 ```
 
 `srr` is a link to `speedrunner`. The long form is the same thing:
@@ -323,6 +325,7 @@ The reasons you can meet, and what to do:
 | `the cwd is deleted`, `the cwd has its own json` | A tool run as `python -m module` (az) would import from the current directory. | Nothing: it would see other code natively. |
 | `preload failed: …`, `threads running after preload`, `threads appeared in the daemon`, `spare children keep dying` | The daemon cannot fork this tool safely, and `status` shows `disabled: …`. Every call runs natively. | Read the log. `speedrunner stop <tool>` frees its memory. |
 | `cannot follow the launcher: …`, `the launcher execs no script or module` | See [launchers](#launchers-az-gcloud). | |
+| `uv: …`, `uv run: …` | A uv call the client does not step into. | See [uv run](#uv-run-and-uvx). |
 | `handshake: …` | The daemon did not answer within 3 s: still preloading a slow tool, or a machine under heavy load. | |
 
 The daemon takes its environment from the client that started it. The variables
@@ -544,6 +547,49 @@ Limits:
   launchers (gcloud, Homebrew's az) are followed. A launcher whose text mentions
   `umask` runs natively, since macOS does not let one process read another's
   umask.
+
+## uv run and uvx
+
+`uv run black` syncs the project's environment, then runs black from it. uv is a
+native binary, so `srr` in front of it would only see uv, with black running
+natively behind it. Instead the client steps into `uv run`: it puts itself in the
+command's place, so uv does everything it does (sync, environment variables,
+`PATH`), then starts the client, which serves the command.
+
+```bash
+srr uv run black --check src/     # runs: uv run <speedrunner> run black -- --check src/
+speedrunner enroll uv             # zsh and bash: `uv run black` itself is served
+speedrunner exec -t uv make lint  # a script or a Makefile that calls uv run
+```
+
+With black 24.10.0 and uv 0.13.7 in a Linux container, `uv run black --version`
+takes 293 ms natively and 32 ms served (x9.2). black called directly goes from 288
+to 18 ms (x16): the rest is uv's own preparation, about 14 ms, which still runs on
+each call ([measurements](../bench/results/20261108T120700Z-uv-run-docker/ANALYSE.md)).
+Enrolled, every other uv command (`uv sync`, `uv add`) costs one more client start.
+
+The call is left to uv as it is when:
+
+- it is not `uv run`: `uv sync`, `uv pip …`, `uv tool run`;
+- the command is not a script of a runtime speedrunner serves (`uv run ruff`,
+  `uv run python -m pytest`), or is not installed yet. A command that uv's first
+  sync or a `--with` package installs runs natively this once: the client would
+  not find it, and its error would not be uv's;
+- uv runs a file, not a command: `uv run script.py`, a URL, `-`, `--module`,
+  `--script`;
+- `--directory` or `--project` is given, or an option `uv run` did not document as
+  of uv 0.13: the client could not tell where the command is.
+
+`uvx black` (`uv tool run`) is not stepped into: the client cannot know beforehand
+whether the package provides a command of that name, and when it does not, the
+error would not be uv's. Write it out instead, 251 → 32 ms (x7.9):
+
+```bash
+uvx --from black srr black --check src/
+```
+
+A tool installed with `uv tool install` is an ordinary script on `PATH`, served
+as any other.
 
 ## Known limits
 

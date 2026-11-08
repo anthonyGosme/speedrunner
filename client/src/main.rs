@@ -9,6 +9,7 @@
 mod launcher;
 mod platform;
 mod script;
+mod uv;
 
 use std::env;
 use std::ffi::{CString, OsStr, OsString};
@@ -551,9 +552,76 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
     } else if tool.is_launcher() {
         return run_launcher(&tool, tool.name, args, lazy);
     } else if read_shebang(&tool.path).is_err() {
+        if is_uv(&tool) {
+            match uv_run_args(args) {
+                Ok(rewritten) => {
+                    if env::var_os("SPEEDRUNNER_DEBUG").is_some() {
+                        eprintln!("speedrunner: uv run: the client takes the command's place");
+                    }
+                    exec_native(&tool, &rewritten);
+                }
+                Err(reason) => fall_back(&tool, args, &reason),
+            }
+        }
         fall_back(&tool, args, "not a script of a runtime speedrunner serves");
     }
     serve(&tool, args, lazy)
+}
+
+/// uv itself, which `uv run` makes a way to call any tool (see uv.rs).
+fn is_uv(tool: &Tool) -> bool {
+    tool.form.is_none() && tool.target.is_none() && basename(&tool.path) == b"uv"
+}
+
+/// `uv run <command> ...`, when the command is a script a daemon serves:
+/// the same arguments for uv, with the client in the command's place, so
+/// that uv prepares the environment as it would and the client then serves
+/// the command uv's PATH names. Why not, otherwise: the call stays uv's.
+fn uv_run_args(args: &[OsString]) -> Result<Vec<OsString>, String> {
+    let words: Vec<&[u8]> = args.iter().map(|a| a.as_bytes()).collect();
+    let run = uv::parse_run(&words).map_err(|e| format!("uv: {}", e))?;
+    let name = words[run.command];
+    let shown = String::from_utf8_lossy(name);
+    // Only a command that exists before uv runs it: one uv installs on the
+    // way (a first sync, `--with`) runs natively this once. The client
+    // started in its place would not find it, and its error is not uv's.
+    let found = if run.no_project { None } else { project_command(name) }
+        .or_else(|| resolve_in_path(name))
+        .ok_or_else(|| format!("uv run: {} is not installed yet", shown))?;
+    if read_shebang(&found).is_err() && !launcher::looks_like_launcher(&found) {
+        return Err(format!("uv run: {} is not a script of a runtime speedrunner serves", shown));
+    }
+    let me = env::current_exe().and_then(|p| p.canonicalize())
+        .map_err(|e| format!("uv run: {}", e))?;
+    let mut out: Vec<OsString> = args[..run.command].to_vec();
+    out.push(me.into_os_string());
+    out.push(OsString::from("run"));
+    out.push(args[run.command].clone());
+    out.push(OsString::from("--"));
+    out.extend_from_slice(&args[run.command + 1..]);
+    Ok(out)
+}
+
+/// The command in the environment `uv run` uses from here: the nearest
+/// directory up that has a pyproject.toml and the command in its
+/// environment (`.venv`, or UV_PROJECT_ENVIRONMENT). A workspace keeps its
+/// environment at its root, above a member's own pyproject.toml.
+fn project_command(name: &[u8]) -> Option<Vec<u8>> {
+    let custom = env::var_os("UV_PROJECT_ENVIRONMENT").filter(|v| !v.is_empty());
+    let mut dir = env::current_dir().ok()?;
+    loop {
+        if dir.join("pyproject.toml").is_file() {
+            // An absolute UV_PROJECT_ENVIRONMENT replaces dir in the join.
+            let venv = dir.join(custom.as_deref().unwrap_or(OsStr::new(".venv")));
+            let cand = venv.join("bin").join(OsStr::from_bytes(name)).into_os_string().into_vec();
+            if is_executable(&cand) {
+                return Some(cand);
+            }
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
 }
 
 /// SPEEDRUNNER_NATIVE: everything run under it is the tool itself, sub-processes
@@ -1341,6 +1409,9 @@ fn autostart(tool: &Tool) {
 /// Make sure a daemon is up and still matches the installed tool, so that
 /// the next run finds a spare ready. Called by the shell while typing.
 fn cmd_prewarm(tool: &Tool) -> i32 {
+    if is_uv(tool) {
+        return 0; // no daemon of its own: the command it runs has one
+    }
     if tool.is_launcher() {
         return 0; // never seen to exec a daemon's tool: its first run will tell
     }
@@ -2023,12 +2094,13 @@ fn prepare_links(extra: &[OsString], origin: &str, script: Option<(String, PathB
             }
         };
         if let Err(e) = read_shebang(&tool.path) {
-            if !tool.is_launcher() {
+            if !tool.is_launcher() && !is_uv(&tool) {
                 eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", text, e);
                 continue;
             }
             // Its daemon is the one of what it execs, which its first run
             // through the link finds out; once known, it is started here.
+            // uv has none: the commands `uv run` hands on have theirs.
             if let Some(learned) = tool.learned() {
                 launchers.push(learned);
             }
@@ -2318,7 +2390,7 @@ fn cmd_enroll(rest: &[OsString]) -> i32 {
             }
         };
         if let Err(e) = read_shebang(&tool.path) {
-            if !tool.is_launcher() {
+            if !tool.is_launcher() && !is_uv(&tool) {
                 eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", name, e);
                 return 1;
             }
