@@ -59,6 +59,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv-aws"
           cp -r tests/fixture/hstest "$RUNNER_TEMP/hstest-build"
           "$RUNNER_TEMP/venv-test/bin/pip" install -q --no-deps "$RUNNER_TEMP/hstest-build"
+          "$RUNNER_TEMP/venv-test/bin/pip" install -q uv==0.13.7  # UvRun.test_real_uv
           "$RUNNER_TEMP/venv-aws/bin/pip" install -q awscli
           echo "HS_PATH=$RUNNER_TEMP/venv-test/bin:$RUNNER_TEMP/venv-aws/bin" >> "$GITHUB_ENV"
       - name: rbtest gem

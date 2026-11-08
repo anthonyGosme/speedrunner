@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /root/speedrunner
 RUN python3 -m venv venv-aws && venv-aws/bin/pip install -q --no-cache-dir awscli \
-    && python3 -m venv venv-test \
+    && python3 -m venv venv-test && venv-test/bin/pip install -q --no-cache-dir uv==0.13.7 \
     && chmod 755 /root && chmod -R a+rwX /root/speedrunner
 
 COPY run.sh /usr/local/bin/speedrunner-dev

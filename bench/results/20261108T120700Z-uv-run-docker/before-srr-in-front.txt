@@ -1,0 +1,53 @@
+uv 0.13.7 (x86_64-unknown-linux-gnu)
+speedrunner 0.4.9
+
+== venv script, direct
+   native: .venv/bin/black --version
+   served: srr .venv/bin/black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 244 ms, speedrunner 15 ms, x16.00
+
+== uv tool install
+   native: /root/.local/bin/black --version
+   served: srr /root/.local/bin/black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 244 ms, speedrunner 16 ms, x15.43
+
+== uv run
+   native: uv run black --version
+   served: srr uv run black --version
+   REQUIRE_FAST exit: 124 (NOT served)
+     debug: speedrunner: fast path unavailable: not a script of a runtime speedrunner serves
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 287 ms, speedrunner 276 ms, x1.04
+
+== uv run, under exec -t black
+   native: uv run black --version
+   served: speedrunner exec -t black uv run black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 261 ms, speedrunner 266 ms, x0.98
+
+== uvx
+   native: uvx black==24.10.0 --version
+   served: srr uvx black==24.10.0 --version
+   REQUIRE_FAST exit: 124 (NOT served)
+     debug: speedrunner: fast path unavailable: not a script of a runtime speedrunner serves
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 251 ms, speedrunner 251 ms, x1.00
+
+== uvx, under exec -t black
+   native: uvx black==24.10.0 --version
+   served: speedrunner exec -t black uvx black==24.10.0 --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median of 20: native 256 ms, speedrunner 260 ms, x0.98
+

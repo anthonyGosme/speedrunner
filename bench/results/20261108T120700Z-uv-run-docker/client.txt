@@ -1,0 +1,57 @@
+uv 0.13.7 (x86_64-unknown-linux-gnu)
+speedrunner 0.4.9
+round: client, median of 20 alternated runs
+
+== venv script, direct
+   native: .venv/bin/black --version
+   served: srr .venv/bin/black --version
+   REQUIRE_FAST exit: 0 (served)
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median: native 288 ms, speedrunner 18 ms, x16.39
+
+== srr uv run
+   native: uv run black --version
+   served: srr uv run black --version
+   REQUIRE_FAST exit: 0 (served)
+     debug: speedrunner: uv run: the client takes the command's place
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median: native 293 ms, speedrunner 32 ms, x9.22
+
+== srr uv -q run --frozen
+   native: uv -q run --frozen black --version
+   served: srr uv -q run --frozen black --version
+   REQUIRE_FAST exit: 0 (served)
+     debug: speedrunner: uv run: the client takes the command's place
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median: native 308 ms, speedrunner 33 ms, x9.39
+
+== srr uv run, a file to format
+   native: uv run black -q --check fmt.py
+   served: srr uv run black -q --check fmt.py
+   REQUIRE_FAST exit: 0 (served)
+     debug: speedrunner: uv run: the client takes the command's place
+   native exit 0, stdout: []
+   same output as native: True
+   median: native 272 ms, speedrunner 39 ms, x6.96
+
+== uv run, under exec -t uv
+   native: uv run black --version
+   served: speedrunner exec -t uv uv run black --version
+   REQUIRE_FAST exit: 0 (served)
+     debug: speedrunner: uv run: the client takes the command's place
+   native exit 0, stdout: ['black, 24.10.0 (compiled: yes)']
+   same output as native: True
+   median: native 262 ms, speedrunner 33 ms, x8.01
+
+== srr uv run python (left to uv)
+   native: uv run python -c pass
+   served: srr uv run python -c pass
+   REQUIRE_FAST exit: 124 (NOT served)
+     debug: speedrunner: fast path unavailable: uv run: python is not a script of a runtime speedrunner serves
+   native exit 0, stdout: []
+   same output as native: True
+   median: native 32 ms, speedrunner 32 ms, x0.98
+

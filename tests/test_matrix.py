@@ -3501,5 +3501,152 @@ class Interactive(Matrix):
         self.assertEqual(results[0], results[1])
 
 
+FAKE_UV = """#!/bin/sh
+# uv run's shape, as the client sees it: `uv [-q] run [flags] [--] CMD ARGS`.
+# Puts the project's environment first on PATH, as uv does, runs CMD and
+# exits as it did. Not a launcher: its last command is not an exec.
+echo "$*" >> "$UV_LOG"
+project=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    run) shift; break ;;
+    -*) shift ;;
+    *) echo "fake uv: no command $1" >&2; exit 2 ;;
+  esac
+done
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-project) project=0; shift ;;
+    --) shift; break ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+if [ $project = 1 ]; then
+  d=$PWD
+  while [ "$d" != / ] && [ ! -f "$d/pyproject.toml" ]; do d=$(dirname "$d"); done
+  if [ -f "$d/pyproject.toml" ]; then
+    PATH=$d/.venv/bin:$PATH
+    VIRTUAL_ENV=$d/.venv
+    export PATH VIRTUAL_ENV
+  fi
+fi
+"$@"
+status=$?
+exit $status
+"""
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class UvRun(Matrix):
+    """`srr uv run <command>`: uv, a native binary, prepares the environment
+    and runs the command. The client steps in by putting itself in the
+    command's place: uv still does all it does, then the client serves the
+    command. The same output as `uv run` natively, and when the client
+    cannot step in, the call is uv's, untouched."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = root = tempfile.mkdtemp(dir=ROOT, prefix="uv-")
+        bin_dir = os.path.join(root, "bin")
+        os.mkdir(bin_dir)
+        cls.uv = os.path.join(bin_dir, "uv")
+        with open(cls.uv, "w") as f:
+            f.write(FAKE_UV)
+        os.chmod(cls.uv, 0o755)
+        cls.project = os.path.join(root, "project")
+        cls.venv_bin = os.path.join(cls.project, ".venv", "bin")
+        os.makedirs(cls.venv_bin)
+        os.makedirs(os.path.join(cls.project, "src", "deep"))
+        with open(os.path.join(cls.project, "pyproject.toml"), "w") as f:
+            f.write('[project]\nname = "demo"\nversion = "0"\n')
+        # A script only the project's environment has, as `uv add` puts there.
+        with open(shutil.which("hstest", path=os.environ["HS_PATH"])) as src, \
+                open(os.path.join(cls.venv_bin, "projtool"), "w") as dst:
+            dst.write(src.read())
+        os.chmod(os.path.join(cls.venv_bin, "projtool"), 0o755)
+        cls.srr = os.path.join(root, "srr")
+        os.symlink(HS_BIN, cls.srr)
+        cls.env = {**in_private_daemon_env(root), "PATH": f"{bin_dir}:{BASE_ENV['PATH']}",
+                   "UV_LOG": os.path.join(root, "uv.log")}
+
+    @classmethod
+    def tearDownClass(cls):
+        env = {**cls.env, "PATH": f"{cls.venv_bin}:{cls.env['PATH']}"}
+        for tool in ("projtool", "hstest"):
+            stop(tool, env)
+
+    def call(self, argv, cwd=None, fast=False, env=None, input=b""):
+        full = {**BASE_ENV, **self.env, **(env or {})}
+        if fast:
+            full["SPEEDRUNNER_REQUIRE_FAST"] = "1"
+        p = subprocess.run(argv, input=input, capture_output=True, cwd=cwd or self.project,
+                           env=full, timeout=60)
+        return p.returncode, p.stdout, p.stderr
+
+    def served(self, uv, *args, cwd=None, env=None, input=b"", timeout=30.0):
+        """`srr uv args` once the command's daemon is up, against `uv args`."""
+        deadline = time.monotonic() + timeout
+        while True:
+            fast = self.call([self.srr, uv, *args], cwd, True, env, input)
+            if fast[0] != EXIT_NOT_FAST:
+                break
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"never served: {fast[2]!r}")
+            time.sleep(0.1)
+        native = self.call([uv, *args], cwd, env=env, input=input)
+        self.assertEqual(native, fast)
+        return native
+
+    def last_uv_call(self):
+        with open(self.env["UV_LOG"]) as f:
+            return f.read().splitlines()[-2]  # the served call; the native one came after
+
+    def test_a_command_of_the_project_environment(self):
+        code, out, _ = self.served(self.uv, "run", "projtool", "argv", "a b")
+        self.assertEqual(code, 0)
+        self.assertIn(os.path.join(self.venv_bin, "projtool").encode(), out)
+        client = os.path.realpath(HS_BIN)
+        self.assertEqual(self.last_uv_call(), f"run {client} run projtool -- argv a b")
+
+    def test_uv_options_a_subdirectory_and_an_exit_code(self):
+        deep = os.path.join(self.project, "src", "deep")
+        code, _, _ = self.served(self.uv, "-q", "run", "--frozen", "--", "projtool", "exit", "int:3",
+                                 cwd=deep)
+        self.assertEqual(code, 3)
+
+    def test_stdin(self):
+        _, out, _ = self.served(self.uv, "run", "projtool", "echo-stdin", input=b"piped\0bytes")
+        self.assertEqual(out, b"piped\0bytes")
+
+    def test_no_project_looks_on_path(self):
+        self.served(self.uv, "run", "--no-project", "hstest", "argv", "x")
+
+    def test_left_to_uv(self):
+        cases = {
+            "not run": ["sync"],
+            "not installed yet": ["run", "missing-tool"],
+            "not a script": ["run", "cat", "/dev/null"],
+            "not a command": ["run", "-m", "hstest", "argv"],
+            "an unknown option": ["run", "--some-new-option", "hstest", "argv"],
+            "the project's script, without the project": ["run", "--no-project", "projtool", "argv"],
+        }
+        for why, args in cases.items():
+            with self.subTest(why):
+                native = self.call([self.uv, *args])
+                self.assertEqual(self.call([self.srr, self.uv, *args]), native)
+                code, _, err = self.call([self.srr, self.uv, *args], fast=True)
+                self.assertEqual(code, EXIT_NOT_FAST, err)
+
+    @unittest.skipUnless(shutil.which("uv", path=os.environ.get("HS_PATH", "")), "uv is not installed")
+    def test_real_uv(self):
+        uv = shutil.which("uv", path=os.environ["HS_PATH"])
+        env = {"PATH": BASE_ENV["PATH"], "UV_CACHE_DIR": os.path.join(self.root, "uv-cache"),
+               "UV_OFFLINE": "1", "UV_PYTHON_DOWNLOADS": "never", "UV_NO_CONFIG": "1"}
+        code, out, _ = self.served(uv, "run", "--no-project", "hstest", "argv", "x", env=env)
+        self.assertEqual(code, 0)
+        self.assertIn(b"'x'", out)
+
+
 if __name__ == "__main__":
     unittest.main()
