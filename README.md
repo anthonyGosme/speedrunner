@@ -32,7 +32,8 @@ faster, with no per-tool setup.
   Once it has started, speedrunner never runs it again, whatever dies.
 - **Same output.** Identical to the native run on all 96 commands measured below; what speedrunner
   cannot serve faithfully runs natively. A forked process keeps what its tool made as it loaded, which
-  no check can see in general: [the known limits](docs/GUIDE.md#known-limits) say what follows from that.
+  no check can see in general: [the known limits](docs/GUIDE.md#known-limits) say what follows from that,
+  and [this article](https://anthonygosme.github.io/fork-fidelity/) how the rest is kept identical.
 
 ![speedrunner demo: the same bash script, run natively and with speedrunner](bench/speedrunner.gif)
 
@@ -108,6 +109,8 @@ speedrunner demo
 ## Results
 
 Why CLIs are slow to start: [where the time goes, and how to measure it](https://anthonygosme.github.io/).
+
+How a forked call stays identical to a native one: [Forking a CLI is easy. Making it behave like the CLI is the hard part](https://anthonygosme.github.io/fork-fidelity/).
 
 <!-- panel:start -->
 **96 commands served (46 Python, 18 Ruby, 19 PHP, 13 Node), 96 with an output identical to the native run. Speedup: geometric mean x5.6, median x4.8; 74 at x3 or more, 22 at x10 or more.**
