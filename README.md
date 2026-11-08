@@ -39,6 +39,7 @@ faster, with no per-tool setup.
 
 ```bash
 srr aws s3 ls                      # any Python, Ruby, PHP or Node tool, nothing to set up
+srr uv run black --check .         # through uv run too: uv syncs, then black is served
 speedrunner exec ./script.sh       # a whole script: every tool it calls, preloaded
 eval "$(speedrunner activate)"     # at the top of a script: no prefix needed after
 eval "$(speedrunner init zsh)"     # in ~/.zshrc (or init bash, in ~/.bashrc): daemons warm up while you type
@@ -307,6 +308,12 @@ straight to the real bash. pre-commit's default hooks run from environments of i
 so they stay native. Declare them `language: system` and they are served too: black, isort, flake8 and
 mypy on a changed file, 1.11 s → 0.31 s per commit, same output
 ([details](bench/results/20261031T214045Z-precommit-hook-docker/ANALYSE.md), in French).
+
+**uv run, uvx?** `srr uv run black` is served: the client takes the command's place, so uv syncs and sets
+up the environment as usual, then the client serves black: 293 → 32 ms, x9.2, same output. With
+`speedrunner enroll uv`, a plain `uv run black` in zsh or bash is served too. For `uvx`, write
+`uvx --from black srr black`; tools installed with `uv tool install` are served like any other
+([details](docs/GUIDE.md#uv-run-and-uvx)).
 
 **Node?** Supported since 0.3, as experimental. To fork V8, the daemon runs Node single-threaded
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
