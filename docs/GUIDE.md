@@ -18,6 +18,7 @@ undo it. For what it gains, see the [README](../README.md); for how it is built,
 - [aws v2](#aws-v2)
 - [Java and the JVM](#java-and-the-jvm)
 - [Launchers: az, gcloud](#launchers-az-gcloud)
+- [python -m](#python--m)
 - [uv run and uvx](#uv-run-and-uvx)
 - [Known limits](#known-limits)
 - [Stopping every daemon](#stopping-every-daemon)
@@ -51,6 +52,7 @@ srr black --check src/
 srr rubocop app/models/user.rb
 srr ./manage.py migrate        # a script by path: one daemon per project
 srr php artisan route:list     # `php script`: the script gets a daemon of its own
+srr python3 -m pytest -q       # `python -m module`: see [python -m](#python--m)
 srr uv run black --check src/  # through uv: see [uv run](#uv-run-and-uvx)
 ```
 
@@ -207,7 +209,8 @@ stops after 4 hours unused, or with the [stop-everything loop](#stopping-every-d
 
 All of them exit with 127 for a tool not found on `PATH`, and 2 on a usage error.
 `status`, `stop` and `prewarm` also take `php <script>`
-(`speedrunner status php artisan`), and wait up to 3 s for a daemon that is still
+(`speedrunner status php artisan`) and `python -m <module>`
+(`speedrunner stop python3 -m pytest`), and wait up to 3 s for a daemon that is still
 starting rather than answer `down`.
 
 **`demo`** runs only a fixed list of well-known tools (aws, pip, ansible, black,
@@ -314,6 +317,7 @@ The reasons you can meet, and what to do:
 | `connect: Connection refused` | The daemon died; this call started another. | Nothing. |
 | `runtime dir: …` | The [runtime directory](#where-things-live) is missing (the very first call) or is not yours with mode 0700. | If it persists, check `ls -ld` on it. |
 | `not a script of a runtime speedrunner serves` | A native binary, or a script for another interpreter. | Nothing to gain. |
+| `` the interpreter itself: only `-m module` is served `` | `python3` given a script, `-c`, `-` or nothing. | See [python -m](#python--m). |
 | `stale: installed files changed` | The tool, a module it loaded, or its interpreter changed. The daemon exits and a new one starts. | Nothing. |
 | `startup env differs: LANG` | A variable the interpreter reads as it starts differs from the daemon's: `PYTHON*`, `LANG`, `LC_ALL`, `LC_CTYPE` (Python); `RUBY*`, `GEM_*` and the same locale variables (Ruby); `PHPRC`, `PHP_INI_SCAN_DIR` (PHP); `NODE_*`, `UV_THREADPOOL_SIZE`, `LANG`, `LC_ALL`, `LC_MESSAGES` (Node). | `speedrunner stop <tool>`: the next call starts a daemon with your current environment. |
 | `import-time env differs: KEY` | The tool read `KEY` as it loaded, and kept its value. Yours differs from the daemon's. | Same. |
@@ -322,7 +326,7 @@ The reasons you can meet, and what to do:
 | `gem version chosen on the command line` (Ruby) | A RubyGems binstub was called with `_1.2.3_` to pick a gem version. | Nothing. |
 | `credentials differ from the daemon's` | Your group or supplementary groups differ (`newgrp`, `sg`). | Nothing: it would run with the wrong groups. |
 | `fd 0 is closed` | One of your standard streams is closed. | Nothing. |
-| `the cwd is deleted`, `the cwd has its own json` | A tool run as `python -m module` (az) would import from the current directory. | Nothing: it would see other code natively. |
+| `the cwd is deleted`, `the cwd has its own json` | A tool run as `python -m module` (az, `python3 -m pytest`) would import from the current directory. | Nothing: it would see other code natively. |
 | `preload failed: …`, `threads running after preload`, `threads appeared in the daemon`, `spare children keep dying` | The daemon cannot fork this tool safely, and `status` shows `disabled: …`. Every call runs natively. | Read the log. `speedrunner stop <tool>` frees its memory. |
 | `cannot follow the launcher: …`, `the launcher execs no script or module` | See [launchers](#launchers-az-gcloud). | |
 | `uv: …`, `uv run: …` | A uv call the client does not step into. | See [uv run](#uv-run-and-uvx). |
@@ -548,6 +552,53 @@ Limits:
   `umask` runs natively, since macOS does not let one process read another's
   umask.
 
+## python -m
+
+`python3 -m pytest` runs a module through the interpreter, a native binary. The
+client recognises this form: the module gets a daemon of its own, for that
+interpreter and its options, and each call is served as natively, with the same
+`sys.argv` and `sys.orig_argv`, and the current directory first on `sys.path`.
+
+```bash
+srr python3 -m pytest -q tests/
+srr .venv/bin/python -m mypy src/       # another interpreter or venv: another daemon
+speedrunner enroll python3              # zsh and bash: `python3 -m ...` itself is served
+speedrunner exec -t python3 make test   # a script or a Makefile that calls python3 -m
+speedrunner status python3 -m pytest    # status, stop and prewarm take the same form
+```
+
+In a Linux container, with the tools in a venv, medians of 20 runs
+([measurements](../bench/results/20261108T173000Z-python-m-docker/ANALYSE.md)):
+
+| Call | Native | Served | Gain |
+|---|---:|---:|---:|
+| `python3 -m pip --version` | 304 ms | 18 ms | x17 |
+| `python3 -m black --version` | 243 ms | 16 ms | x15 |
+| `python3 -m black -q --check fmt.py` | 224 ms | 20 ms | x11 |
+| `python3 -m mypy --version` | 212 ms | 20 ms | x11 |
+| `python3 -m pytest -q test_one.py` | 339 ms | 96 ms | x3.5 |
+
+Same output as native in every case. `python3 -m pytest` gains what `pytest`
+called directly gains: the form costs nothing.
+
+The interpreter's own options (`-s`, `-I`, `-X dev`, `-W error`) are passed on,
+and each set of them gets its own daemon; `-mpytest`, written as one word, is the
+same as `-m pytest`. The call runs natively when:
+
+- it names no module: a script (`python3 build.py`), `-c`, `-`, or the REPL. A
+  script given to the interpreter is often a one-off; a daemon for each would cost
+  more than it saves. A script with a shebang, called by its name, is served as
+  any tool;
+- a file or package in the current directory has the name of a module the daemon
+  holds (`json.py`): natively, `python -m` would import that one
+  (`the cwd has its own json`);
+- the interpreter is older than 3.9.
+
+Enrolled, `python3` gets a wrapper like a tool, so each of its other calls goes
+through the client first, which then runs it natively (about 1 ms: `python3 -c pass` 17 → 18 ms). Typing
+`python3 ` does not warm anything up: the module is not known yet. The first call
+of a module starts its daemon.
+
 ## uv run and uvx
 
 `uv run black` syncs the project's environment, then runs black from it. uv is a
@@ -572,7 +623,9 @@ The call is left to uv as it is when:
 
 - it is not `uv run`: `uv sync`, `uv pip …`, `uv tool run`;
 - the command is not a script of a runtime speedrunner serves (`uv run ruff`,
-  `uv run python -m pytest`), or is not installed yet. A command that uv's first
+  `uv run python script.py`), or is not installed yet. `uv run python -m pytest`
+  is served: the client takes `python`'s place and serves the module, as
+  [`python -m`](#python--m). A command that uv's first
   sync or a `--with` package installs runs natively this once: the client would
   not find it, and its error would not be uv's;
 - uv runs a file, not a command: `uv run script.py`, a URL, `-`, `--module`,

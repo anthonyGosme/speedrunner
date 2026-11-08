@@ -3622,6 +3622,12 @@ class UvRun(Matrix):
     def test_no_project_looks_on_path(self):
         self.served(self.uv, "run", "--no-project", "hstest", "argv", "x")
 
+    def test_python_on_a_module(self):
+        code, out, _ = self.served(self.uv, "run", "python3", "-m", "json.tool", input=b'{"a": [1]}')
+        self.assertEqual((code, out), (0, b'{\n    "a": [\n        1\n    ]\n}\n'))
+        client = os.path.realpath(HS_BIN)
+        self.assertEqual(self.last_uv_call(), f"run {client} run python3 -- -m json.tool")
+
     def test_left_to_uv(self):
         cases = {
             "not run": ["sync"],
@@ -3630,6 +3636,7 @@ class UvRun(Matrix):
             "not a command": ["run", "-m", "hstest", "argv"],
             "an unknown option": ["run", "--some-new-option", "hstest", "argv"],
             "the project's script, without the project": ["run", "--no-project", "projtool", "argv"],
+            "python without a module": ["run", "python3", "-c", "print(1)"],
         }
         for why, args in cases.items():
             with self.subTest(why):
@@ -3646,6 +3653,120 @@ class UvRun(Matrix):
         code, out, _ = self.served(uv, "run", "--no-project", "hstest", "argv", "x", env=env)
         self.assertEqual(code, 0)
         self.assertIn(b"'x'", out)
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class PythonModule(Matrix):
+    """`srr python3 -m module`: the interpreter, a native binary, given a
+    module to run. Served as a launcher's `-m` target is (az): by a daemon
+    of that module on that interpreter, with its options. Anything else
+    given to the interpreter (-c, a script, -, nothing) runs natively."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = d = tempfile.mkdtemp(dir=ROOT, prefix="pymod-")
+        files = {"lib/lmod/__init__.py": "", "lib/lmod/__main__.py": LMOD_MAIN,
+                 "lib/lmod/lazy.py": "VALUE = 'lazy'\n", "shadow/json.py": "VALUE = 'cwd json'\n",
+                 "work/script.py": "import sys\nprint(sys.argv)\n"}
+        for name, text in files.items():
+            path = os.path.join(d, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+        cls.env = {**in_private_daemon_env(d), "PYTHONPATH": os.path.join(d, "lib"),
+                   "LAUNCHED_BY": "none"}
+        cls.work = os.path.join(d, "work")
+
+    @classmethod
+    def tearDownClass(cls):
+        for flags in ([], ["-s"]):
+            cls.control("stop", *flags)
+
+    @classmethod
+    def control(cls, what, *flags):
+        p = subprocess.run([HS_BIN, what, "python3", *flags, "-m", "lmod"],
+                           env={**BASE_ENV, **cls.env}, capture_output=True, timeout=60)
+        return p.returncode, p.stdout.decode().strip(), p.stderr
+
+    def warm(self, argv, timeout=30.0):
+        deadline = time.monotonic() + timeout
+        while run("hs", argv, cwd=self.work, env=self.env).returncode == EXIT_NOT_FAST:
+            if time.monotonic() > deadline:
+                raise RuntimeError(f"never served: {argv}")
+            time.sleep(0.1)
+
+    def test_served_as_natively(self):
+        self.warm(["python3", "-m", "lmod"])
+        for args in (["x", "a b"], ["7"], ["boom"]):
+            with self.subTest(args=args):
+                self.assertSame(["python3", "-m", "lmod", *args], cwd=self.work, env=self.env)
+        _, out, _ = self.assertSame(["python3", "-m", "lmod", "x"], cwd=self.work, env=self.env,
+                                    input=b"unread", umask=0o077)
+        self.assertEqual(out, b"True __main__.py ['x'] __main__ lmod.__main__ True none lazy"
+                              b" stdlib json ['-m', 'lmod']\n")
+
+    def test_options_of_the_interpreter(self):
+        # -s is the daemon's own option: another daemon. -mlmod is the same one.
+        for argv in (["python3", "-s", "-m", "lmod", "x"], ["python3", "-mlmod", "x"]):
+            with self.subTest(argv=argv):
+                self.warm(argv)
+                self.assertSame(argv, cwd=self.work, env=self.env)
+
+    def test_cwd_module_shadows_a_preloaded_one(self):
+        self.warm(["python3", "-m", "lmod"])
+        shadow = os.path.join(self.root, "shadow")
+        argv = ["python3", "-m", "lmod", "x"]
+        _, out, _ = self.assertSame(argv, cwd=shadow, env=self.env, require_fast=False)
+        self.assertIn(b"cwd json", out)
+        self.assertEqual(run("hs", argv, cwd=shadow, env=self.env).returncode, EXIT_NOT_FAST)
+
+    def test_anything_else_runs_natively(self):
+        for argv, input in ((["python3", "-c", "import sys; print(sys.argv)", "a"], b""),
+                            (["python3", "script.py", "a"], b""),
+                            (["python3", "-"], b"print('from stdin')\n"),
+                            (["python3", "-m"], b""),
+                            (["python3", "-m", "../lmod"], b""),
+                            (["python3", "-I", "-c", "print(1)"], b"")):
+            with self.subTest(argv=argv):
+                self.assertSame(argv, cwd=self.work, env=self.env, input=input, require_fast=False)
+                p = run("hs", argv, cwd=self.work, env=self.env, input=input)
+                self.assertEqual(p.returncode, EXIT_NOT_FAST)
+
+    def test_status_stop_and_prewarm(self):
+        self.warm(["python3", "-m", "lmod"])
+        self.assertTrue(self.control("status")[1].startswith("ready"))
+        self.control("stop")
+        deadline = time.monotonic() + 10
+        while self.control("status")[1] != "down":
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(0.05)
+        self.assertEqual(self.control("prewarm")[0], 0)
+        deadline = time.monotonic() + 30
+        while not self.control("status")[1].startswith("ready"):
+            self.assertLess(time.monotonic(), deadline, self.control("status"))
+            time.sleep(0.1)
+        # The interpreter alone has no daemon: nothing to warm, and no error.
+        p = subprocess.run([HS_BIN, "prewarm", "python3"], env={**BASE_ENV, **self.env},
+                           capture_output=True, timeout=60)
+        self.assertEqual((p.returncode, p.stderr), (0, b""))
+
+    def test_exec_names_the_interpreter(self):
+        self.warm(["python3", "-m", "lmod"])
+        script = 'python3 -m lmod "a b"; python3 -m lmod 4; echo "rc=$?"'
+        env = {**BASE_ENV, **self.env}
+        native = subprocess.run(["sh", "-c", script], capture_output=True, cwd=self.work,
+                                env=env, timeout=60)
+        fast = subprocess.run([HS_BIN, "exec", "-t", "python3", "sh", "-c", script],
+                              capture_output=True, cwd=self.work, timeout=60,
+                              env={**env, "SPEEDRUNNER_REQUIRE_FAST": "1"})
+        self.assertEqual(outcome(native), outcome(fast))
+        # And the interpreter's other uses, natively through the link.
+        script = 'python3 -c "import sys; print(sys.argv)" x; echo "rc=$?"'
+        native = subprocess.run(["sh", "-c", script], capture_output=True, cwd=self.work,
+                                env=env, timeout=60)
+        linked = subprocess.run([HS_BIN, "exec", "-t", "python3", "sh", "-c", script],
+                                capture_output=True, cwd=self.work, env=env, timeout=60)
+        self.assertEqual(outcome(native), outcome(linked))
 
 
 if __name__ == "__main__":

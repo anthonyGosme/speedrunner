@@ -141,7 +141,7 @@ const USAGE: &str =
      eval \"$(speedrunner activate [--eager] [<tool>...])\"     (in a script: no prefix needed)\n       \
      speedrunner exec [--eager] [-t <tool>]... [--] <command> [args...]\n       \
      speedrunner enroll [<tool>...]\n       \
-     speedrunner prewarm|status|stop <tool>   (or: php <script>)\n       \
+     speedrunner prewarm|status|stop <tool>   (or: php <script>, python -m <module>)\n       \
      eval \"$(speedrunner init zsh|bash)\"     (in ~/.zshrc or ~/.bashrc: wrappers, warm-up while typing)\n       \
      speedrunner demo [--runs N]     (the gain on this machine, with the tools it has)\n       \
      speedrunner --version|--help";
@@ -354,7 +354,8 @@ impl Target {
         let flags = argv[1.min(i)..i].to_vec();
         let rest = argv[next..].iter().map(|a| OsString::from_vec(a.clone()));
         let (argv0, args) = match &module_name {
-            Some(m) => (b"-m".to_vec(), std::iter::once(OsString::from_vec(m.clone())).chain(rest).collect()),
+            // -m, or -mname as given: sys.orig_argv shows it so.
+            Some(m) => (argv[i].clone(), std::iter::once(OsString::from_vec(m.clone())).chain(rest).collect()),
             None => (argv[i].clone(), rest.collect()),
         };
         Ok(Target { flags, module: module_name, argv0, args, launch })
@@ -467,6 +468,23 @@ impl<'a> Tool<'a> {
                     target: None, learned: false })
     }
 
+    /// The tool as `python -m module args` runs it, when it is a Python
+    /// interpreter and its arguments name a module: served as a launcher's
+    /// `-m` target is (az), by a daemon of that module on that interpreter,
+    /// with its options. None otherwise (a script, -c, -, no argument): as is.
+    /// A script given to the interpreter is not served: a daemon of its own
+    /// for each one-off file would cost more than it saves.
+    fn module_form(&self, args: &[OsString]) -> Option<Tool<'a>> {
+        if !is_python(self) {
+            return None;
+        }
+        let target = module_target(&self.path, self.name, args)?;
+        // The daemon is named after the module; the client exits soon.
+        let module = target.module.clone()?;
+        let name: &'static OsStr = Box::leak(OsString::from_vec(module).into_boxed_os_str());
+        Some(Tool::for_target(name, target))
+    }
+
     /// argv[0] the tool sees: the script as typed, or as execvp found it.
     fn argv0(&self) -> &[u8] {
         if let Some(t) = &self.target {
@@ -480,9 +498,9 @@ impl<'a> Tool<'a> {
     }
 }
 
-/// `<tool>`, or `php <script>` for a script's own daemon.
+/// `<tool>`, `php <script>` for a script's own daemon, or `python -m <module>`.
 fn with_tool(rest: &[OsString], f: impl Fn(&Tool) -> i32) -> i32 {
-    if rest.is_empty() || rest.len() > 2 {
+    if rest.is_empty() || rest.len() > 3 {
         eprintln!("{}", USAGE);
         return 2;
     }
@@ -502,11 +520,13 @@ fn with_tool(rest: &[OsString], f: impl Fn(&Tool) -> i32) -> i32 {
         }
         return f(&tool);
     }
-    match tool.script_form(&rest[1..]) {
+    let script = if rest.len() == 2 { tool.script_form(&rest[1..]) } else { None };
+    match script.or_else(|| tool.module_form(&rest[1..])) {
         Some(script) => f(&script),
         None => {
-            eprintln!("speedrunner: {} {}: not an interpreter and its script",
-                      rest[0].to_string_lossy(), rest[1].to_string_lossy());
+            let named: Vec<_> = rest[1..].iter().map(|a| a.to_string_lossy()).collect();
+            eprintln!("speedrunner: {} {}: not an interpreter and its script or module",
+                      rest[0].to_string_lossy(), named.join(" "));
             2
         }
     }
@@ -549,6 +569,9 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
     if let Some(script) = tool.script_form(args) {
         tool = script;
         args = &args[1..];
+    } else if let Some(module) = tool.module_form(args) {
+        let args = module.target.as_ref().map_or_else(Vec::new, |t| t.args.clone());
+        return serve(&module, &args, lazy);
     } else if tool.is_launcher() {
         return run_launcher(&tool, tool.name, args, lazy);
     } else if read_shebang(&tool.path).is_err() {
@@ -563,6 +586,9 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
                 Err(reason) => fall_back(&tool, args, &reason),
             }
         }
+        if is_python(&tool) {
+            fall_back(&tool, args, "the interpreter itself: only `-m module` is served");
+        }
         fall_back(&tool, args, "not a script of a runtime speedrunner serves");
     }
     serve(&tool, args, lazy)
@@ -571,6 +597,41 @@ fn cmd_run_with(rest: &[OsString], lazy: Option<&Path>) -> i32 {
 /// uv itself, which `uv run` makes a way to call any tool (see uv.rs).
 fn is_uv(tool: &Tool) -> bool {
     tool.form.is_none() && tool.target.is_none() && basename(&tool.path) == b"uv"
+}
+
+/// `python args`, run as is, as a launcher's exec: the target when the
+/// arguments name a module (`-m name`, `-mname`, after the interpreter's own
+/// options) with a dotted name, as import finds it, which also names the
+/// daemon's files.
+fn module_target(interp: &[u8], name: &OsStr, args: &[OsString]) -> Option<Target> {
+    let launch = launcher::Launch {
+        exe: interp.to_vec(),
+        argv: std::iter::once(name.as_bytes().to_vec())
+            .chain(args.iter().map(|a| a.as_bytes().to_vec()))
+            .collect(),
+        env: environ(),
+        umask: current_umask(),
+        ignored: ignored_signals(),
+    };
+    let target = Target::parse(launch).ok()?;
+    let m = target.module.as_deref()?;
+    let plain = !m.is_empty() && !m.starts_with(b".") && !m.ends_with(b".")
+        && m.iter().all(|c| c.is_ascii_alphanumeric() || b"_.".contains(c));
+    if plain { Some(target) } else { None }
+}
+
+/// A Python interpreter itself, not a script: `python -m module` serves the
+/// module (Tool::module_form).
+fn is_python(tool: &Tool) -> bool {
+    tool.form.is_none() && tool.target.is_none()
+        && matches!(Runtime::of(&tool.path), Some(Runtime::Python))
+        && read_shebang(&tool.path).is_err()
+}
+
+/// A tool with no daemon of its own, that hands calls on to tools with one:
+/// uv (`uv run`), or a Python interpreter (`python -m`).
+fn hands_on(tool: &Tool) -> bool {
+    is_uv(tool) || is_python(tool)
 }
 
 /// `uv run <command> ...`, when the command is a script a daemon serves:
@@ -588,7 +649,13 @@ fn uv_run_args(args: &[OsString]) -> Result<Vec<OsString>, String> {
     let found = if run.no_project { None } else { project_command(name) }
         .or_else(|| resolve_in_path(name))
         .ok_or_else(|| format!("uv run: {} is not installed yet", shown))?;
-    if read_shebang(&found).is_err() && !launcher::looks_like_launcher(&found) {
+    let python = matches!(Runtime::of(&found), Some(Runtime::Python)) && read_shebang(&found).is_err();
+    if python {
+        // `uv run python -m pytest`: the client then serves the module.
+        if module_target(&found, OsStr::from_bytes(name), &args[run.command + 1..]).is_none() {
+            return Err(format!("uv run: {} runs no module (`-m name`)", shown));
+        }
+    } else if read_shebang(&found).is_err() && !launcher::looks_like_launcher(&found) {
         return Err(format!("uv run: {} is not a script of a runtime speedrunner serves", shown));
     }
     let me = env::current_exe().and_then(|p| p.canonicalize())
@@ -1133,11 +1200,7 @@ fn run_body(script: &[u8], args: &[OsString], launch: Option<&launcher::Launch>)
     for e in &env {
         put_blob(&mut b, e);
     }
-    let umask = launch.map_or_else(|| unsafe {
-        let m = libc::umask(0o022);
-        libc::umask(m);
-        m as u32
-    }, |l| l.umask);
+    let umask = launch.map_or_else(current_umask, |l| l.umask);
     put_u32(&mut b, umask);
     b.extend_from_slice(&launch.map_or_else(ignored_signals, |l| l.ignored).to_le_bytes());
     let groups = unsafe {
@@ -1152,6 +1215,14 @@ fn run_body(script: &[u8], args: &[OsString], launch: Option<&launcher::Launch>)
         put_u32(&mut b, g);
     }
     b
+}
+
+fn current_umask() -> u32 {
+    unsafe {
+        let m = libc::umask(0o022);
+        libc::umask(m);
+        m as u32
+    }
 }
 
 /// Our env, as KEY=VALUE entries.
@@ -1409,8 +1480,8 @@ fn autostart(tool: &Tool) {
 /// Make sure a daemon is up and still matches the installed tool, so that
 /// the next run finds a spare ready. Called by the shell while typing.
 fn cmd_prewarm(tool: &Tool) -> i32 {
-    if is_uv(tool) {
-        return 0; // no daemon of its own: the command it runs has one
+    if hands_on(tool) {
+        return 0; // no daemon of its own: the command or module it runs has one
     }
     if tool.is_launcher() {
         return 0; // never seen to exec a daemon's tool: its first run will tell
@@ -2094,13 +2165,13 @@ fn prepare_links(extra: &[OsString], origin: &str, script: Option<(String, PathB
             }
         };
         if let Err(e) = read_shebang(&tool.path) {
-            if !tool.is_launcher() && !is_uv(&tool) {
+            if !tool.is_launcher() && !hands_on(&tool) {
                 eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", text, e);
                 continue;
             }
             // Its daemon is the one of what it execs, which its first run
             // through the link finds out; once known, it is started here.
-            // uv has none: the commands `uv run` hands on have theirs.
+            // uv and python have none: the commands and modules they run have theirs.
             if let Some(learned) = tool.learned() {
                 launchers.push(learned);
             }
@@ -2390,7 +2461,7 @@ fn cmd_enroll(rest: &[OsString]) -> i32 {
             }
         };
         if let Err(e) = read_shebang(&tool.path) {
-            if !tool.is_launcher() && !is_uv(&tool) {
+            if !tool.is_launcher() && !hands_on(&tool) {
                 eprintln!("speedrunner: {}: cannot be preloaded ({}); left native", name, e);
                 return 1;
             }
@@ -2763,7 +2834,7 @@ fn basename(path: &[u8]) -> &[u8] {
 
 #[cfg(test)]
 mod tests {
-    use super::Runtime;
+    use super::{launcher, Runtime, Target};
 
     #[test]
     fn too_old_reads_what_each_probe_prints() {
@@ -2787,5 +2858,33 @@ mod tests {
         assert!(!old(Runtime::Python, "3"));
         assert_eq!(Runtime::Python.too_old(b"3.7").unwrap(),
                    "python 3.7 is older than 3.9, the oldest speedrunner serves");
+    }
+
+    fn parsed(argv: &[&str]) -> Option<(Vec<Vec<u8>>, Option<Vec<u8>>, Vec<u8>, Vec<String>)> {
+        let launch = launcher::Launch {
+            exe: b"/usr/bin/python3".to_vec(),
+            argv: argv.iter().map(|a| a.as_bytes().to_vec()).collect(),
+            env: vec![],
+            umask: 0o022,
+            ignored: 0,
+        };
+        let t = Target::parse(launch).ok()?;
+        let args = t.args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        Some((t.flags, t.module, t.argv0, args))
+    }
+
+    #[test]
+    fn target_parse_keeps_the_module_as_typed() {
+        let b = |s: &str| s.as_bytes().to_vec();
+        assert_eq!(parsed(&["python3", "-m", "pytest", "-q"]),
+                   Some((vec![], Some(b("pytest")), b("-m"), vec!["pytest".into(), "-q".into()])));
+        assert_eq!(parsed(&["python3", "-mpytest", "-q"]),
+                   Some((vec![], Some(b("pytest")), b("-mpytest"), vec!["pytest".into(), "-q".into()])));
+        assert_eq!(parsed(&["python3", "-s", "-X", "dev", "-m", "http.server"]).map(|p| (p.0, p.1)),
+                   Some((vec![b("-s"), b("-X"), b("dev")], Some(b("http.server")))));
+        assert_eq!(parsed(&["python3", "script.py", "a"]).map(|p| p.1), Some(None));
+        for as_is in [&["python3", "-c", "pass"][..], &["python3", "-"], &["python3", "-m"], &["python3"]] {
+            assert!(parsed(as_is).is_none(), "{:?}", as_is);
+        }
     }
 }
