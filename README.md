@@ -359,6 +359,16 @@ starts the daemon as you type the tool's name, so that even the first call is fa
 `aws s3 ls` on a slow link), for tools that start threads as they load (vite), and for native binaries:
 there is nothing to preload. Of the tools packed into one binary, only aws v2 is served so far.
 
+**Isn't `fork()` unsafe when threads exist?** It is, so the daemon never forks while a thread runs. Once the
+tool is loaded, it checks that a single thread remains, both in the language and in the kernel's list
+(`/proc/self/task`, `proc_pidinfo` on macOS), so native threads count too. A module that starts a thread as it
+loads is left out of the preload, and loaded at each call instead. If a thread is still there, the daemon
+disables itself and every call runs natively: the worst case is no gain, never a wrong run. The fork happens
+right after the imports, before any of the tool's own code runs, a narrower case than forking a running
+program. On macOS, a canary child also catches CoreFoundation, which can kill a forked child without leaving a
+thread behind. Ruby's timer thread and Node's worker threads are handled for each runtime
+([architecture](docs/ARCHITECTURE.md); the pitfalls, threads included: [this article](https://anthonygosme.github.io/fork-fidelity/)).
+
 **pre-commit, git hooks?** Commit with `speedrunner exec git commit`. git runs pre-commit's hook by its
 path, but the hook's `#!/usr/bin/env bash` looks bash up on PATH: next to pre-commit's link, `exec` puts a
 `bash` link that recognises pre-commit's hook and serves pre-commit itself; any other bash call goes
