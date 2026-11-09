@@ -90,8 +90,56 @@ class AsNatively(m.Matrix):
         self.assertEqual(run("hs", ["rbstate", "from-a-run"], env=env).returncode, 0)
         time.sleep(0.2)
         m.stop("rbstate", env)
+        logs = glob.glob(os.path.join(root, "run", "speedrunner", "rbstate-*.log"))
         with open(os.path.join(root, "rbstate")) as f:
-            self.assertEqual(f.read(), "from-a-run")
+            self.assertEqual(f.read(), "from-a-run", b"".join(m.open_log(log) for log in logs).decode(errors="replace"))
+
+    def test_helpers_do_not_run_the_tools_exit_hooks(self):
+        # A probe, a spare before its client, the macOS canary: processes the
+        # daemon forks for itself. One that failed by an exception left by an
+        # exit, which ran the tool's at_exit handlers: rbstate's saved the
+        # daemon's state over a run's. They must leave by exit! whatever happens.
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        code = r"""
+          require "io/console"
+          require "pty"
+          require "socket"
+          require "tmpdir"
+          src = File.read(ARGV[0])
+          eval(src[0...src.rindex("at_exit { Speedrunner.report_exit }")])
+          S = Speedrunner
+          MAIN = Process.pid
+          marker = ARGV[1]
+          at_exit { File.write(marker, "#{Process.pid}\n", mode: "a") unless Process.pid == MAIN }
+          probe = S.in_child(:fallback) { raise "boom" }
+          broken = Class.new(UNIXServer) { def accept_nonblock(*) = raise(Errno::ECONNABORTED) }
+          dir = Dir.mktmpdir
+          server = broken.new(File.join(dir, "s"))
+          client = UNIXSocket.new(File.join(dir, "s"))
+          ctl, ctl_child = UNIXSocket.pair
+          pid = fork do
+            ctl.close
+            S.run_spare(nil, server, ctl_child, [])
+          end
+          ctl_child.close
+          Process.wait(pid)
+          spare = $?.exitstatus
+          client.close
+          cf = nil
+          if S::MACOS
+            Fiddle.singleton_class.prepend(Module.new { def dlopen(*) = raise(Fiddle::DLError, "test") })
+            cf = S.cf_unsafe?
+          end
+          puts [probe, spare, cf].inspect
+        """
+        with open(shutil.which("rbtest", path=m.BASE_ENV["PATH"])) as f:
+            ruby = f.readline()[2:].split()  # the tool's, not the first on PATH
+        marker = os.path.join(tempfile.mkdtemp(dir=m.ROOT), "marker")
+        p = subprocess.run([*ruby, "-e", code, os.path.join(repo, "server", "speedrunner_daemon.rb"), marker],
+                           capture_output=True, env=m.BASE_ENV, timeout=60)
+        cf = "true" if m.MACOS else "nil"
+        self.assertEqual(p.stdout, f"[:fallback, 0, {cf}]\n".encode(), p.stderr)
+        self.assertFalse(os.path.exists(marker), p.stderr)
 
     @unittest.skipUnless(HS_BIN, "needs the speedrunner client")
     def test_printing_more_than_a_pty_holds_as_it_loads(self):
