@@ -167,8 +167,10 @@ final class Cli
     {
         echo 'Name: ';
         $name = trim(fgets(STDIN));
-        echo 'Secret: ';
+        // Echo off before the prompt, as Python's getpass does: the test
+        // answers once it sees the prompt, and a slow stty would echo it.
         shell_exec('stty -echo');
+        echo 'Secret: ';
         $secret = trim(fgets(STDIN));
         shell_exec('stty echo');
         echo "\nname=$name secret_len=", strlen($secret), "\n";
