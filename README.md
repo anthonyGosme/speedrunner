@@ -383,7 +383,7 @@ up the environment as usual, then the client serves black: 293 → 32 ms, x9.2, 
 `uvx --from black srr black`; tools installed with `uv tool install` are served like any other
 ([details](docs/GUIDE.md#uv-run-and-uvx)).
 
-**Node?** Supported since 0.3, as experimental. To fork V8, the daemon runs Node single-threaded
+**Node?** Supported since 0.3. To fork V8, the daemon runs Node single-threaded
 (`--single-threaded`), which can slow down tools that compute a lot; and it needs Node 22.15 or later to
 learn what a tool loads.
 

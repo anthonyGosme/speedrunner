@@ -1,6 +1,6 @@
 # speedrunner — architecture and handover
 
-This document describes what is built, how the pieces fit together, where the project stands, and what to know to carry on without falling into the pitfalls already met. State as of 2026-11-05, version 0.4.6: Python, Ruby, PHP and Node (experimental), on Linux (x86_64 and aarch64) and macOS (Intel and Apple Silicon, §2 quinquies).
+This document describes what is built, how the pieces fit together, where the project stands, and what to know to carry on without falling into the pitfalls already met. State as of 2026-11-05, version 0.4.6: Python, Ruby, PHP and Node, on Linux (x86_64 and aarch64) and macOS (Intel and Apple Silicon, §2 quinquies).
 
 ## 1. In one sentence
 
@@ -551,12 +551,12 @@ Next:
 - macOS: the Python daemon and the client are ported (M1, §2 quinquies, `bench/results/…-macos-m1-mac/ANALYSE.md`). Ruby and PHP too (M2, `bench/results/…-macos-m2-mac/ANALYSE.md`). Node too (M3, `bench/results/…-macos-m3-mac/ANALYSE.md`). The universal binary is published by the release, installed by `install.sh` and by the Homebrew formula (§10 bis). PHP 8.5, Nodes without code cache and launchers are served there too (§2 quinquies);
 - the JVM, through caches or CRIU: see [multi-runtime.md](multi-runtime.md).
 
-Version 1.0, decided 2026-11-08: it promises that the interface (subcommands and options, `SPEEDRUNNER_*` variables, file locations, shell wrappers) no longer breaks without a 2.0. Not before all of these hold:
+Version 1.0, decided 2026-11-08: it promises that the interface (subcommands and options, `SPEEDRUNNER_*` variables, file locations, shell wrappers) no longer breaks without a 2.0. The criteria set then, and where they stood when 1.0 was decided on 2026-11-10:
 
-1. the interface is frozen and every part of it is in the [guide](GUIDE.md);
-2. Node is no longer experimental;
-3. the two rare failures seen only in CI on macOS Intel (a tool back as -9, output of the load lost) are explained, or have not been seen for several weeks;
-4. several weeks with no regression reported by users;
-5. the AUR package is published.
+1. the interface is frozen and every part of it is in the [guide](GUIDE.md): done, the guide says what 1.0 promises and what stays free to change ([What 1.0 promises](GUIDE.md#what-10-promises));
+2. Node is no longer experimental: done, decided on 2026-11-10; its known limits stay documented (vite slower served, `--single-threaded`, Node 22.15 to learn);
+3. the two rare failures seen only in CI on macOS Intel (a tool back as -9, output of the load lost) are explained, or have not been seen for several weeks: waived. Neither was seen again after 2026-11-06, four days before. A third, rbstate's state file emptied on Apple Silicon (2026-11-07 and 2026-11-09), had a gap that was closed (helper processes left by an exit that ran the tool's `at_exit`), its trigger unknown;
+4. several weeks with no regression reported by users: waived, no issue opened so far;
+5. the AUR package is published: waived, the AUR registration is closed; the package stays ready in `packaging/`.
 
 A new OS was ruled out by measurement (VPS, hyperfine, 30 runs). Kernel time is only 44 ms out of 218 for `aws --version` and 70 ms out of 304 for the ec2 skeleton. A perfect kernel would therefore cap the gain at x1.25, and that kernel time itself mostly comes from the initialisation speedrunner removes (file opens, allocations). For `wget --version`, the total is only 2.2 ms.
