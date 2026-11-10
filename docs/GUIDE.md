@@ -23,6 +23,7 @@ undo it. For what it gains, see the [README](../README.md); for how it is built,
 - [Known limits](#known-limits)
 - [Stopping every daemon](#stopping-every-daemon)
 - [Uninstall](#uninstall)
+- [What 1.0 promises](#what-10-promises)
 
 ## The idea in one minute
 
@@ -204,7 +205,7 @@ stops after 4 hours unused, or with the [stop-everything loop](#stopping-every-d
 | `speedrunner prewarm <tool>` | Starts the daemon if none is up, or replaces one the tool's upgrade made stale. Returns at once. | 0, 1 if it cannot start one |
 | `speedrunner enroll [<tool>…]` | Enrolls tools; with no argument, lists them. | 0, 1 or 127 if refused |
 | `speedrunner init zsh\|bash` | Prints the shell hook, for `eval`. | 0 |
-| `speedrunner --version`, `speedrunner version`, `-V`, `srr --version` | Prints the version, as `speedrunner 0.4.10`. | 0 |
+| `speedrunner --version`, `speedrunner version`, `-V`, `srr --version` | Prints the version, as `speedrunner 1.0.0`. | 0 |
 | `speedrunner --help`, `speedrunner help`, `-h`, `srr --help` | Prints the usage. | 0 |
 
 All of them exit with 127 for a tool not found on `PATH`, and 2 on a usage error.
@@ -454,7 +455,7 @@ names: nothing else to install.
 | Python | 3.9 or later (3.9 to 3.14 tested) | Preload levels 1, 2 and 3. |
 | Ruby | 3.0 or later (3.0 to 3.4 tested) | Levels 1 and 2. A binstub's `_x.y.z_` version argument runs natively. |
 | PHP | 8.1 or later (8.1 to 8.5 tested) | Needs the FFI, pcntl and posix extensions; uses OPcache. Without them, tools run natively. |
-| Node | 22 or later (22 and 24 tested) | Experimental. Learning what a tool loads needs Node 22.15 or later; before that, only Node's own start is saved. |
+| Node | 22 or later (22 and 24 tested) | Learning what a tool loads needs Node 22.15 or later; before that, only Node's own start is saved. |
 
 **An older interpreter** cannot run its daemon: its tools simply run natively,
 as without speedrunner. The first call asks the interpreter its version, in the
@@ -815,3 +816,37 @@ rm -rf "/tmp/speedrunner-$(id -u)"
 
 (with your `XDG_*` directories instead, if you set them). No package manager
 removes these: they belong to your user, not to the package.
+
+## What 1.0 promises
+
+From 1.0 on, what follows changes in a way that breaks a script or a setup only
+with a 2.0. Versions 1.x may add commands, options, variables and fields, never
+take one away or change what it means:
+
+- the commands and options in this guide: `srr`, `run`, `exec` (and its shebang
+  form), `activate`, `enroll`, `prewarm`, `status`, `stop`, `init`, `demo`,
+  `--native`, `version` and `help`, with their exit codes (2 for a usage error,
+  124, 125, 127, and the tool's own code otherwise);
+- the `SPEEDRUNNER_*` variables in [Environment variables](#environment-variables),
+  those of `install.sh` included, apart from the three internal ones named below;
+- the shell hooks that `speedrunner init zsh|bash` prints: the wrappers they
+  define and the warm-up while you type;
+- the directories in [Where things live](#where-things-live), the format of the
+  enrolled-tools file (one tool per line), and the `running <pid>` line of each
+  `.sock.lock`, which [Stopping every daemon](#stopping-every-daemon) reads;
+- `status`'s three answers: `ready …`, `disabled: <reason>` and `down`.
+
+Free to change in any version:
+
+- the fields after `ready` in `status`, the messages of `SPEEDRUNNER_DEBUG`, and
+  the text `demo` prints;
+- the names and content of the files inside those directories, other than the two
+  above: sockets, logs, link directories, what daemons learned, the daemons
+  themselves;
+- the protocol between the client and the daemons, which ship together in the
+  binary;
+- `SPEEDRUNNER_DAEMON`, `SPEEDRUNNER_LAUNCH_ENV` and `SPEEDRUNNER_OBJC_ADDED`,
+  which are for development and for the client's own use;
+- which tools are served and which run natively: a later version may serve more,
+  or send a tool natively once it finds that a served call differs from a native
+  one. Either way the output is the native one.
