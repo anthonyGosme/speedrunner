@@ -138,6 +138,8 @@ module Speedrunner
       sc = Fiddle.dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration")
       Fiddle::Function.new(sc["SCDynamicStoreCopyProxies"], [Fiddle::TYPE_VOIDP], Fiddle::TYPE_VOIDP).call(nil)
       exit!(0)
+    rescue Exception # rubocop:disable Lint/RescueException
+      exit!(1) # unsafe, as before; but by exit!, or the tool's at_exit handlers would run here
     end
     Process.wait(pid)
     !$?.success?
@@ -1064,13 +1066,21 @@ module Speedrunner
     r, w = IO.pipe
     pid = Process.fork
     if pid.nil?
-      r.close
-      reads = FileReads.new(nil, nil)
-      reads.note_mkdirs
-      w.write(JSON.generate(yield))
-      w.close
-      reads.remove_made
-      exit!(0)
+      # Out by exit! whatever happens: an exception would unwind into the
+      # daemon's code, and the exit after it would run the tool's at_exit
+      # handlers, which may save the state it loaded over a run's.
+      begin
+        r.close
+        reads = FileReads.new(nil, nil)
+        reads.note_mkdirs
+        w.write(JSON.generate(yield))
+        w.close
+        reads.remove_made
+      rescue Exception => e # rubocop:disable Lint/RescueException
+        log("probe failed: #{e.inspect}") # the parent falls back on nothing read
+      ensure
+        exit!(0)
+      end
     end
     w.close
     data = "".b
@@ -1814,19 +1824,26 @@ module Speedrunner
 
   # Runs in a forked spare: wait for one client, then serve it.
   def self.run_spare(state, server, ctl, inherited)
-    %w[CHLD TERM USR1].each { |sig| trap(sig, "DEFAULT") }
-    inherited.each { |io| io.close unless io.closed? }
-    Process.setpgid(0, 0)
     conn = nil
-    loop do
-      readable, = IO.select([server, ctl])
-      exit!(0) if readable.include?(ctl) # retired, or the daemon is gone
-      conn = server.accept_nonblock(exception: false)
-      break unless conn == :wait_readable # else another spare took it
+    begin
+      %w[CHLD TERM USR1].each { |sig| trap(sig, "DEFAULT") }
+      inherited.each { |io| io.close unless io.closed? }
+      Process.setpgid(0, 0)
+      loop do
+        readable, = IO.select([server, ctl])
+        exit!(0) if readable.include?(ctl) # retired, or the daemon is gone
+        conn = server.accept_nonblock(exception: false)
+        break unless conn == :wait_readable # else another spare took it
+      end
+      server.close
+      # The parent keeps a copy, to send the wait status and replace us.
+      ctl.sendmsg("A" + [0].pack("V"), 0, nil, Socket::AncillaryData.unix_rights(conn))
+    rescue Exception => e # rubocop:disable Lint/RescueException
+      # Nothing has run, and the client runs natively. Out by exit!, as in a
+      # probe: an exit would run the tool's at_exit handlers here.
+      log("spare failed before its client: #{e.inspect}")
+      exit!(0)
     end
-    server.close
-    # The parent keeps a copy, to send the wait status and replace us.
-    ctl.sendmsg("A" + [0].pack("V"), 0, nil, Socket::AncillaryData.unix_rights(conn))
     CHILD[:ctl] = ctl
     serve_child(state, conn)
   end
