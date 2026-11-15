@@ -1,0 +1,15 @@
+brew --version                      median   174.8 ms  min   173.3  rc=0
+brew --prefix                       median    58.2 ms  min    57.2  rc=0
+brew list --formula                 median    69.2 ms  min    67.8  rc=0
+brew info gh                        median  1048.0 ms  min  1040.0  rc=0
+brew info --json=v2 gh              median  1030.0 ms  min  1024.0  rc=0
+brew deps gh                        median  1028.6 ms  min  1020.8  rc=0
+brew desc gh                        median  1021.3 ms  min  1015.7  rc=0
+brew uses --installed openssl@3     median  2212.2 ms  min  2167.2  rc=0
+brew leaves                         median  1665.4 ms  min  1627.1  rc=0
+brew config                         median  1004.4 ms  min   990.9  rc=0
+brew commands                       median  1673.9 ms  min  1647.7  rc=0
+brew --cache gh                     median  1305.7 ms  min  1287.2  rc=0
+brew outdated                       median  1771.4 ms  min  1748.4  rc=0
+brew --env                          median   981.8 ms  min   947.4  rc=0
+brew formulae                       median   261.4 ms  min   260.1  rc=0
