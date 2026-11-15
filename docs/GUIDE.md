@@ -551,7 +551,9 @@ Limits:
   installed by pip on python.org's or Apple's Python) runs natively; shell
   launchers (gcloud, Homebrew's az) are followed. A launcher whose text mentions
   `umask` runs natively, since macOS does not let one process read another's
-  umask.
+  umask. SIGCHLD, SIGWINCH, SIGURG, SIGIO and SIGINFO, if the launcher leaves
+  them ignored, are served as left at their default: macOS reports both the same
+  way once the interpreter is execed.
 
 ## python -m
 
