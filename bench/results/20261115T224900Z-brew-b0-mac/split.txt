@@ -1,0 +1,6 @@
+brew info gh                      total  1075.0  bash preamble  209.3  ruby   836.0 ms  rc 0/0
+  ruby argv: ['/usr/local/Homebrew/Library/Homebrew/vendor/portable-ruby/current/bin/ruby', '-W1', '--disable=gems,rubyopt', '/usr/local/Homebrew/Library/Homebrew/brew.rb', 'info', 'gh'] ... 75 env vars
+brew config                       total  1023.8  bash preamble  210.2  ruby   788.7 ms  rc 0/0
+brew deps gh                      total  1085.7  bash preamble  209.6  ruby   843.8 ms  rc 0/0
+brew leaves                       total  1707.3  bash preamble  211.3  ruby  1460.4 ms  rc 0/0
+brew outdated                     total  1816.7  bash preamble  210.1  ruby  1564.0 ms  rc 0/0
