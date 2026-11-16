@@ -4,28 +4,28 @@
 class Speedrunner < Formula
   desc "Preloaded Python, Ruby, PHP and Node command-line tools, forked per call"
   homepage "https://github.com/anthonyGosme/speedrunner"
-  version "1.0.0"
+  version "1.1.0"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.0.0/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "ba568b4a63814928abab5e205eb2dce74241bed72b041b1d4ee719a49cb2e324"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.1.0/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "e9090b1f912cb9a45269f31105a9ad9908952a92465d82aa3931a6a4ebaf806d"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.0.0/speedrunner-universal-apple-darwin.tar.gz"
-      sha256 "ba568b4a63814928abab5e205eb2dce74241bed72b041b1d4ee719a49cb2e324"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.1.0/speedrunner-universal-apple-darwin.tar.gz"
+      sha256 "e9090b1f912cb9a45269f31105a9ad9908952a92465d82aa3931a6a4ebaf806d"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.0.0/speedrunner-x86_64-unknown-linux-musl.tar.gz"
-      sha256 "0b6d8e29603fe9a2a993dc8208d34fab09aae41fd0412273745aa2d9989638bf"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.1.0/speedrunner-x86_64-unknown-linux-musl.tar.gz"
+      sha256 "05f473fb317c84083f2c415a967f454cc56669d7eaeea582e4afd61578b605f1"
     end
     on_arm do
-      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.0.0/speedrunner-aarch64-unknown-linux-musl.tar.gz"
-      sha256 "d01d79cca35773933e79ac1ffb2e495582bb3bfdddb00c74b62f6ba82f736063"
+      url "https://github.com/anthonyGosme/speedrunner/releases/download/v1.1.0/speedrunner-aarch64-unknown-linux-musl.tar.gz"
+      sha256 "10655adc4408ed292c04ae7025db9d19b47be70399008371dc7ee582a61af610"
     end
   end
 
