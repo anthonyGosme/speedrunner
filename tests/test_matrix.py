@@ -708,6 +708,10 @@ def main():
     import thirdmod  # lazily, from the entry added above: learned with it
     with open(os.environ["TOOL_LOG"], "a") as f:
         f.write("tool\\n")
+    if sys.argv[1:] == ["child"]:
+        import subprocess
+        print(subprocess.call(["sh", "-c", "exit 5"]), signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL)
+        return
     print(sys.argv, os.environ.get("LAUNCHED_BY"), sys.flags.no_user_site, thirdmod.VALUE,
           signal.getsignal(signal.SIGUSR2) == signal.SIG_IGN,
           getattr(sys, "orig_argv", ["", "-s"])[1:2], os.umask(0o22))  # orig_argv: 3.10+
@@ -823,6 +827,14 @@ class Launchers(Matrix):
                 self.assertEqual(err, b"")
         _, out, _ = self.assertSame(["sh-tool", "a b"], cwd=self.work, env=self.env, umask=0o077)
         self.assertEqual(out, b"['%s/bin/../lib/tool.py', 'a b'] sh 1 third True ['-s'] 63\n" % self.root.encode())
+
+    @needs_ptrace
+    def test_children_of_the_tool_report_their_status(self):
+        # macOS reports SIGCHLD as ignored when it is at its default: taken
+        # at its word, the served tool reaped no child, and saw exit codes of 0.
+        self.warm("sh-tool")
+        _, out, _ = self.assertSame(["sh-tool", "child"], cwd=self.work, env=self.env)
+        self.assertEqual(out, b"5 True\n")
 
     @needs_ptrace
     def test_python_launcher_on_a_module(self):

@@ -254,7 +254,13 @@ pub fn fd_identity(pid: i32, fd: i32) -> Option<(i32, u64, u64)> {
 }
 
 /// A process's ignored signals, bit n for signal n: p_sigignore of the
-/// extern_proc at the head of its kinfo_proc (sysctl KERN_PROC_PID).
+/// extern_proc at the head of its kinfo_proc (sysctl KERN_PROC_PID). The
+/// kernel also puts there, at their default, the signals whose default is to
+/// be ignored (CHLD, URG, IO, WINCH, INFO). Past an exec nothing tells them
+/// apart from the same signals ignored for real (P_NOCLDWAIT is cleared):
+/// they are taken as left at their default, as nearly every launcher leaves
+/// them. Taken as ignored, SIGCHLD made the child reap its own children
+/// itself, and a tool's `$?` or wait() found none.
 #[cfg(target_os = "macos")]
 pub fn ignored_signals(pid: i32) -> Option<u64> {
     const KINFO_PROC: usize = 648;
@@ -269,7 +275,48 @@ pub fn ignored_signals(pid: i32) -> Option<u64> {
     if !ok || size != KINFO_PROC {
         return None;
     }
-    Some((u32::from_ne_bytes(buf[P_SIGIGNORE..P_SIGIGNORE + 4].try_into().unwrap()) as u64) << 1)
+    let bit = |sig: libc::c_int| 1u32 << (sig - 1);
+    let default_ignored = [libc::SIGCHLD, libc::SIGURG, libc::SIGIO, libc::SIGWINCH, libc::SIGINFO]
+        .iter().fold(0, |m, s| m | bit(*s));
+    let ignored = u32::from_ne_bytes(buf[P_SIGIGNORE..P_SIGIGNORE + 4].try_into().unwrap()) & !default_ignored;
+    Some((ignored as u64) << 1)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod ignored_tests {
+    use super::ignored_signals;
+    use std::os::unix::process::CommandExt;
+    use std::process::Command;
+
+    fn ignored_by(sigs: &'static [libc::c_int]) -> u64 {
+        let mut cmd = Command::new("/bin/sleep");
+        cmd.arg("5");
+        unsafe {
+            cmd.pre_exec(move || {
+                for s in sigs {
+                    libc::signal(*s, libc::SIG_IGN);
+                }
+                Ok(())
+            });
+        }
+        let mut child = cmd.spawn().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let got = ignored_signals(child.id() as i32).unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        got
+    }
+
+    #[test]
+    fn default_ignored_signals_are_not_taken_for_ignored() {
+        let has = |m: u64, s: libc::c_int| m & (1 << s) != 0;
+        let none = ignored_by(&[]);
+        for s in [libc::SIGCHLD, libc::SIGWINCH, libc::SIGURG, libc::SIGIO, libc::SIGINFO, libc::SIGHUP] {
+            assert!(!has(none, s), "signal {} taken for ignored", s);
+        }
+        let some = ignored_by(&[libc::SIGHUP, libc::SIGQUIT]);
+        assert!(has(some, libc::SIGHUP) && has(some, libc::SIGQUIT) && !has(some, libc::SIGCHLD));
+    }
 }
 
 /// A process's executable as exec named it, argv and env (sysctl
