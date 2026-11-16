@@ -830,10 +830,19 @@ class Launchers(m.Matrix):
         m.stop("rb-tool", cls.env)
 
     def warm(self, timeout=30.0):
+        # Served, not only run: a launcher the client lets go runs natively,
+        # and returns the tool's own status, 124 never.
         deadline = time.monotonic() + timeout
-        while run("hs", ["rb-tool"], cwd=self.work, env=self.env).returncode == m.EXIT_NOT_FAST:
+        while True:
+            p = run("hs", ["rb-tool"], cwd=self.work, env={**self.env, "SPEEDRUNNER_DEBUG": "1"})
+            text = m.status("rb-tool", self.env)
+            if p.returncode != m.EXIT_NOT_FAST and text.startswith("ready"):
+                return
             if time.monotonic() > deadline:
-                raise RuntimeError("no daemon for rb-tool")
+                logs = glob.glob(os.path.join(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/speedrunner-{os.getuid()}",
+                                              "**", "rb-tool-*.log"), recursive=True)
+                raise RuntimeError(f"rb-tool not served: status {text!r}, rc {p.returncode}, "
+                                   f"stderr {p.stderr[-600:]!r}, logs {[m.open_log(l)[-600:] for l in logs]}")
             time.sleep(0.1)
 
     def log(self):
@@ -881,8 +890,8 @@ class Launchers(m.Matrix):
                 before = len(self.log())
                 self.assertSame([tool, "x"], cwd=self.work, env=self.env, require_fast=False)
                 self.assertEqual(self.log()[before:], ["launcher", "launcher"])
-                self.assertEqual(run("hs", [tool, "x"], cwd=self.work, env=self.env).returncode,
-                                 m.EXIT_NOT_FAST)
+                p = run("hs", [tool, "x"], cwd=self.work, env={**self.env, "SPEEDRUNNER_DEBUG": "1"})
+                self.assertEqual(p.returncode, m.EXIT_NOT_FAST, p.stderr)
 
     @m.needs_ptrace
     def test_status_stop_and_prewarm(self):

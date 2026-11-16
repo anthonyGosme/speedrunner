@@ -62,6 +62,11 @@ fn is_shell(name: &[u8]) -> bool {
     SHELLS.contains(&name)
 }
 
+/// Programs that are many: BusyBox's `env` and `sh` (Alpine), coreutils'
+/// single binary (Fedora's containers). They are what argv[0] names.
+#[cfg(target_os = "linux")]
+const MULTICALL: [&[u8]; 3] = [b"busybox", b"coreutils", b"toybox"];
+
 /// What a launcher may stop at: a Python or Ruby interpreter, by its file's
 /// name (python3.12, ruby, Debian's ruby3.1).
 fn is_interpreter(name: &[u8]) -> bool {
@@ -466,7 +471,13 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
             continue; // the launcher itself starting
         }
         let exe = fs::read_link(format!("/proc/{}/exe", pid))?;
-        let name = basename(exe.as_os_str().as_bytes());
+        let file = basename(exe.as_os_str().as_bytes());
+        let argv0 = if MULTICALL.contains(&file) {
+            fs::read(format!("/proc/{}/cmdline", pid)).ok().and_then(|c| split0(c).into_iter().next())
+        } else {
+            None
+        };
+        let name = argv0.as_deref().map_or(file, basename);
         if is_interpreter(name) {
             let launch = read_launch(pid, &exe, !quiet);
             match launch {
