@@ -320,9 +320,10 @@ struct ScriptForm {
 
 /// What a launcher execs, when a daemon can serve it: a Python interpreter,
 /// with options of its own that change nothing per run, on a script or on
-/// `-m module`.
+/// `-m module`; or a Ruby interpreter, likewise, on a script.
 struct Target {
     launch: launcher::Launch,
+    runtime: Runtime,
     flags: Vec<Vec<u8>>,
     module: Option<Vec<u8>>,
     argv0: Vec<u8>,      // of the request: the script as named, or -m
@@ -331,6 +332,9 @@ struct Target {
 
 impl Target {
     fn parse(launch: launcher::Launch) -> Result<Target, launcher::Launch> {
+        if matches!(Runtime::of(&launch.exe), Some(Runtime::Ruby)) {
+            return Target::parse_ruby(launch);
+        }
         let argv = &launch.argv;
         let mut i = 1;
         while i < argv.len() {
@@ -358,7 +362,47 @@ impl Target {
             Some(m) => (argv[i].clone(), std::iter::once(OsString::from_vec(m.clone())).chain(rest).collect()),
             None => (argv[i].clone(), rest.collect()),
         };
-        Ok(Target { flags, module: module_name, argv0, args, launch })
+        Ok(Target { runtime: Runtime::Python, flags, module: module_name, argv0, args, launch })
+    }
+
+    /// `ruby [options] script args`, with options that change nothing per
+    /// run: warnings, features on or off (brew's `-W1 --disable=gems,rubyopt`),
+    /// encodings, an absolute load path, libraries to require. Anything else
+    /// (-e, -n, -x, -C, -S, a relative -I) runs as is. So does a script not
+    /// named by a plain absolute path: natively `__FILE__` and `$0` are the
+    /// path as named, and the daemon's `load` would make `lib/../x.rb` `x.rb`.
+    fn parse_ruby(launch: launcher::Launch) -> Result<Target, launcher::Launch> {
+        let argv = &launch.argv;
+        let mut i = 1;
+        while i < argv.len() {
+            let a = &argv[i][..];
+            let joined = |flag: &[u8]| a.len() > 2 && a.starts_with(flag);
+            if a == b"-I" && argv.get(i + 1).map_or(false, |d| d.starts_with(b"/")) {
+                i += 2;
+            } else if a == b"-r" || a == b"-E" {
+                i += 2;
+            } else if joined(b"-I") && a[2] == b'/' || joined(b"-r") || joined(b"-E")
+                || a == b"-w" || a == b"-U" || a == b"-W"
+                || joined(b"-W") && (a[2..].iter().all(|c| c.is_ascii_digit()) || a[2] == b':')
+                || [&b"--disable"[..], b"--enable", b"--encoding=", b"--external-encoding=", b"--internal-encoding="]
+                    .iter().any(|p| a.starts_with(p))
+            {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let plain = |p: &[u8]| {
+            p.starts_with(b"/") && p[1..].split(|b| *b == b'/').all(|c| !c.is_empty() && c != b"." && c != b"..")
+        };
+        match argv.get(i) {
+            Some(a) if plain(a) => {}
+            _ => return Err(launch),
+        }
+        let flags = argv[1..i].to_vec();
+        let argv0 = argv[i].clone();
+        let args = argv[i + 1..].iter().map(|a| OsString::from_vec(a.clone())).collect();
+        Ok(Target { runtime: Runtime::Ruby, flags, module: None, argv0, args, launch })
     }
 }
 
@@ -802,7 +846,7 @@ fn run_launcher(tool: &Tool, name: &OsStr, args: &[OsString], lazy: Option<&Path
         Err(e) => fall_back(tool, args, &format!("cannot follow the launcher: {}", e)),
         Ok(launcher::Traced::Done(status)) => exit_like(status),
         Ok(launcher::Traced::Native(pid)) => wait_native(pid),
-        Ok(launcher::Traced::Python(launch)) => match Target::parse(launch) {
+        Ok(launcher::Traced::Interpreter(launch)) => match Target::parse(launch) {
             Err(launch) => fall_back_launch(tool, &launch, "the launcher execs no script or module"),
             Ok(target) => {
                 let args = target.args.clone();
@@ -1517,7 +1561,7 @@ fn prewarm_launcher(learned: &Tool, origin: &str) -> i32 {
     };
     let argv = vec![learned.name.as_bytes().to_vec()];
     let target = match launcher::trace(&launcher.found, &argv, true) {
-        Ok(launcher::Traced::Python(launch)) => match Target::parse(launch) {
+        Ok(launcher::Traced::Interpreter(launch)) => match Target::parse(launch) {
             Ok(target) => Tool::for_target(learned.name, target),
             Err(_) => return 1,
         },
@@ -1746,8 +1790,7 @@ fn wait_learned(tool: &Tool) {
 fn interpreter_of(tool: &Tool) -> io::Result<(Vec<u8>, Vec<u8>, Vec<Vec<u8>>, Runtime)> {
     Ok(match (&tool.form, &tool.target) {
         (Some(f), _) => (f.interp.clone(), f.interp.clone(), vec![], Runtime::Php),
-        (None, Some(t)) => (t.launch.argv[0].clone(), t.launch.exe.clone(), t.flags.clone(),
-                            Runtime::Python),
+        (None, Some(t)) => (t.launch.argv[0].clone(), t.launch.exe.clone(), t.flags.clone(), t.runtime),
         (None, None) => {
             let (interp, flag, runtime) = read_shebang(&tool.path)?;
             (interp.clone(), interp, flag.into_iter().collect(), runtime)
@@ -2871,6 +2914,37 @@ mod tests {
         let t = Target::parse(launch).ok()?;
         let args = t.args.iter().map(|a| a.to_string_lossy().into_owned()).collect();
         Some((t.flags, t.module, t.argv0, args))
+    }
+
+    fn parsed_ruby(argv: &[&str]) -> Option<(Vec<String>, String, Vec<String>)> {
+        let launch = launcher::Launch {
+            exe: b"/usr/local/Homebrew/Library/Homebrew/vendor/portable-ruby/current/bin/ruby".to_vec(),
+            argv: argv.iter().map(|a| a.as_bytes().to_vec()).collect(),
+            env: vec![],
+            umask: 0o022,
+            ignored: 0,
+        };
+        let t = Target::parse(launch).ok()?;
+        assert!(matches!(t.runtime, Runtime::Ruby) && t.module.is_none());
+        let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        Some((t.flags.iter().map(|f| s(f)).collect(), s(&t.argv0),
+              t.args.iter().map(|a| a.to_string_lossy().into_owned()).collect()))
+    }
+
+    #[test]
+    fn target_parse_ruby() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parsed_ruby(&["ruby", "-W1", "--disable=gems,rubyopt", "/h/brew.rb", "info", "gh"]),
+                   Some((v(&["-W1", "--disable=gems,rubyopt"]), "/h/brew.rb".into(), v(&["info", "gh"]))));
+        assert_eq!(parsed_ruby(&["ruby", "-I", "/lib", "-rjson", "-W:no-deprecated", "/t.rb"]).map(|p| p.0),
+                   Some(v(&["-I", "/lib", "-rjson", "-W:no-deprecated"])));
+        assert_eq!(parsed_ruby(&["ruby3.1", "/x/t.rb", "-e", "x"]).map(|p| p.2), Some(v(&["-e", "x"])));
+        for as_is in [&["ruby", "-e", "p 1"][..], &["ruby", "-I", "lib", "/t.rb"], &["ruby", "-Ilib", "/t.rb"],
+                      &["ruby", "-C", "/tmp", "/t.rb"], &["ruby", "-n", "/t.rb"], &["ruby", "-"], &["ruby"],
+                      &["ruby", "-W1"], &["ruby", "t.rb"], &["ruby", "./t.rb"], &["ruby", "/x/../t.rb"],
+                      &["ruby", "/x/./t.rb"], &["ruby", "/x//t.rb"]] {
+            assert!(parsed_ruby(as_is).is_none(), "{:?}", as_is);
+        }
     }
 
     #[test]

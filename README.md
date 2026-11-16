@@ -220,7 +220,7 @@ Measured on a 2-vCPU Debian 12 VPS, or, for the commands marked ¹, on a laptop 
 | `drush --version` ¹ | 203 ms | — | not served |
 
 No gain: `phpstan analyse` spends its time in the analysis itself, not in the interpreter start.
-`wp` and `drush` are not served: Composer installs them behind a shell script that runs PHP, and speedrunner follows such launchers only up to Python.
+`wp` and `drush` are not served: Composer installs them behind a shell script that runs PHP, and speedrunner follows such launchers only up to Python or Ruby.
 
 **Node**
 
@@ -392,7 +392,7 @@ a median of x1.58, with none at x3; CRaC gives x1.69, on a special JDK. Tools on
 [The guide](docs/GUIDE.md#java-and-the-jvm) shows how to turn the cache on yourself.
 
 **macOS, Windows?** macOS 11 or later, Intel and Apple Silicon, since 0.4.0: one universal
-binary, which `install.sh` picks. Python, Ruby, PHP and Node are served, launchers (az, gcloud) followed; the bash
+binary, which `install.sh` picks. Python, Ruby, PHP and Node are served, launchers (az, gcloud, brew) followed; the bash
 hook needs bash 4.2 or later (zsh, the default shell, has no such limit). Linux: x86_64 or aarch64, any
 distribution. Windows: not planned.
 

@@ -1,7 +1,9 @@
-//! Launchers: scripts that set up an environment, then exec a Python
+//! Launchers: scripts that set up an environment, then exec a Python or Ruby
 //! interpreter on the real tool. gcloud is a shell script that ends in
 //! `exec "$CLOUDSDK_PYTHON" ... lib/gcloud.py "$@"`; az, from pip, a Python
-//! script that ends in `os.execl(sys.executable, ..., "-m", "azure.cli", ...)`.
+//! script that ends in `os.execl(sys.executable, ..., "-m", "azure.cli", ...)`;
+//! brew, a bash script that runs `env -i ... bash -p brew.sh`, which ends in
+//! `exec "$HOMEBREW_RUBY_PATH" ... brew.rb "$@"`.
 //!
 //! The launcher runs natively, under ptrace. When it execs the interpreter,
 //! the kernel stops it before the interpreter runs a single instruction: its
@@ -14,8 +16,9 @@
 //! and sysctl and libproc tell what it execs (platform.rs). There the
 //! kernel hides the env of Apple's own binaries, and no process can read
 //! another's umask: a stop whose env is hidden is followed to the next exec,
-//! and a launcher that may set a umask runs natively. Elsewhere `trace`
-//! fails, and the launcher runs natively.
+//! and the launcher, then every script a shell runs on the way, is read for
+//! `umask` commands: one that may change ours makes the launcher run
+//! natively. Elsewhere `trace` fails, and the launcher runs natively.
 #![cfg_attr(not(any(target_os = "linux", target_os = "macos")), allow(dead_code, unused_imports))]
 
 use std::ffi::{CString, OsStr};
@@ -47,8 +50,8 @@ pub struct Launch {
 }
 
 pub enum Traced {
-    /// Stopped as it execed a Python interpreter, and killed.
-    Python(Launch),
+    /// Stopped as it execed a Python or Ruby interpreter, and killed.
+    Interpreter(Launch),
     /// Exited while traced: its wait status.
     Done(i32),
     /// Left to run natively, untraced: its pid, ours to wait for.
@@ -57,6 +60,114 @@ pub enum Traced {
 
 fn is_shell(name: &[u8]) -> bool {
     SHELLS.contains(&name)
+}
+
+/// What a launcher may stop at: a Python or Ruby interpreter, by its file's
+/// name (python3.12, ruby, Debian's ruby3.1).
+fn is_interpreter(name: &[u8]) -> bool {
+    name.starts_with(b"python")
+        || name.strip_prefix(b"ruby").map_or(false, |v| v.iter().all(|c| c.is_ascii_digit() || *c == b'.'))
+}
+
+/// Whether every `umask` command in a shell script leaves `mask` as it is:
+/// none at all, one that only prints, or one whose mode gives `mask` itself
+/// (brew.sh's `umask go-w`, when go-w is masked already). Any other mode, one
+/// in a variable included, may change it. Comments are skipped.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn umask_kept(text: &[u8], mask: u32) -> bool {
+    let starts = |b: u8| b.is_ascii_whitespace() || b";&|({`".contains(&b);
+    for line in text.split(|b| *b == b'\n') {
+        let line = trim(line);
+        if line.starts_with(b"#") {
+            continue;
+        }
+        let mut i = 0;
+        while let Some(off) = line[i..].windows(5).position(|w| w == b"umask") {
+            let at = i + off;
+            let after = &line[at + 5..];
+            i = at + 5;
+            let word_start = at == 0 || starts(line[at - 1]);
+            let word_end = after.first().map_or(true, |b| b.is_ascii_whitespace() || b";&|)}".contains(b));
+            if !(word_start && word_end) {
+                continue;
+            }
+            let end = after.iter().position(|b| b";&|)}".contains(b)).unwrap_or(after.len());
+            let mode = after[..end]
+                .split(|b| b.is_ascii_whitespace())
+                .find(|w| !w.is_empty() && !w.starts_with(b"-")); // -S, -p only print
+            if let Some(mode) = mode {
+                if umask_after(mode, mask) != Some(mask) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The mask `umask mode` leaves, from `mask`: octal, or symbolic as POSIX
+/// has it (`u=rwx,g=rx,o=`, `go-w`). None for anything else.
+fn umask_after(mode: &[u8], mask: u32) -> Option<u32> {
+    let mode = match mode {
+        [q, inner @ .., e] if (*q == b'\'' || *q == b'"') && q == e => inner,
+        m => m,
+    };
+    if !mode.is_empty() && mode.len() <= 4 && mode.iter().all(|c| (b'0'..=b'7').contains(c)) {
+        return u32::from_str_radix(std::str::from_utf8(mode).ok()?, 8).ok().map(|m| m & 0o777);
+    }
+    let mut allowed = !mask & 0o777;
+    for clause in mode.split(|b| *b == b',') {
+        let op_at = clause.iter().position(|b| b"+-=".contains(b))?;
+        let mut who = 0;
+        for c in &clause[..op_at] {
+            who |= match c {
+                b'u' => 0o700,
+                b'g' => 0o070,
+                b'o' => 0o007,
+                b'a' => 0o777,
+                _ => return None,
+            };
+        }
+        if who == 0 {
+            who = 0o777;
+        }
+        let mut perms = 0;
+        for c in &clause[op_at + 1..] {
+            perms |= match c {
+                b'r' => 0o444,
+                b'w' => 0o222,
+                b'x' => 0o111,
+                _ => return None,
+            };
+        }
+        perms &= who;
+        allowed = match clause[op_at] {
+            b'+' => allowed | perms,
+            b'-' => allowed & !perms,
+            _ => (allowed & !who) | perms,
+        };
+    }
+    Some(!allowed & 0o777)
+}
+
+/// Whether the script a shell runs, as `args` exec it (`bash -p file`, or
+/// `sh -c 'text'`), keeps `mask`. A shell that reads its commands elsewhere
+/// (stdin), or a file that cannot be read: it may not.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn shell_keeps_umask(args: &[Vec<u8>], mask: u32) -> bool {
+    let mut it = args.iter().skip(1);
+    while let Some(a) = it.next() {
+        match &a[..] {
+            b"-c" => return it.next().map_or(false, |text| umask_kept(text, mask)),
+            b"-o" | b"+o" => {
+                it.next();
+            }
+            b"--" => break,
+            a if a.starts_with(b"-") || a.starts_with(b"+") => {}
+            path => return fs::read(OsStr::from_bytes(path)).map_or(false, |text| umask_kept(&text, mask)),
+        }
+    }
+    it.next().map_or(false, |path| fs::read(OsStr::from_bytes(path)).map_or(false, |t| umask_kept(&t, mask)))
 }
 
 fn basename(path: &[u8]) -> &[u8] {
@@ -356,12 +467,12 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
         }
         let exe = fs::read_link(format!("/proc/{}/exe", pid))?;
         let name = basename(exe.as_os_str().as_bytes());
-        if name.starts_with(b"python") {
+        if is_interpreter(name) {
             let launch = read_launch(pid, &exe, !quiet);
             match launch {
                 Some(launch) => {
                     kill(pid);
-                    return Ok(Traced::Python(launch));
+                    return Ok(Traced::Interpreter(launch));
                 }
                 None if quiet => {
                     kill(pid);
@@ -375,7 +486,7 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
         if !is_shell(name) && name != b"Python" {
             if quiet {
                 kill(pid);
-                return Err(io::Error::new(io::ErrorKind::Other, "execs no Python interpreter"));
+                return Err(io::Error::new(io::ErrorKind::Other, "execs no Python or Ruby interpreter"));
             }
             return Ok(detach(pid));
         }
@@ -388,7 +499,14 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
     let argv_c: Vec<CString> = argv.iter().map(|a| CString::new(&a[..])).collect::<Result<_, _>>()?;
     let mut ptrs: Vec<*const libc::c_char> = argv_c.iter().map(|c| c.as_ptr()).collect();
     ptrs.push(ptr::null());
-    let sets_umask = fs::read(OsStr::from_bytes(path))?.windows(5).any(|w| w == b"umask");
+    // No process can read another's umask here: the launcher must keep ours,
+    // and so must every script a shell runs on the way (brew.sh, for brew).
+    let mask = unsafe {
+        let m = libc::umask(0o022);
+        libc::umask(m);
+        m as u32
+    };
+    let mut umask_known = umask_kept(&fs::read(OsStr::from_bytes(path))?, mask);
     let pid = unsafe { libc::fork() };
     if pid < 0 {
         return Err(io::Error::last_os_error());
@@ -454,15 +572,18 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
             continue; // the launcher itself starting
         }
         let name = basename(&exe);
-        if name.starts_with(b"python") {
+        if is_shell(name) && name != b"env" && !shell_keeps_umask(&args, mask) {
+            umask_known = false;
+        }
+        if is_interpreter(name) {
             if env.is_empty() {
                 continue; // Apple's /usr/bin/python3, which execs the real one
             }
-            let launch = if sets_umask { None } else { read_launch(pid, &exe, args, env, !quiet) };
+            let launch = if umask_known { read_launch(pid, &exe, args, env, !quiet) } else { None };
             match launch {
                 Some(launch) => {
                     kill(pid);
-                    return Ok(Traced::Python(launch));
+                    return Ok(Traced::Interpreter(launch));
                 }
                 None if quiet => {
                     kill(pid);
@@ -474,7 +595,7 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
         if !is_shell(name) {
             if quiet {
                 kill(pid);
-                return Err(io::Error::new(io::ErrorKind::Other, "execs no Python interpreter"));
+                return Err(io::Error::new(io::ErrorKind::Other, "execs no Python or Ruby interpreter"));
             }
             return Ok(detach(pid));
         }
@@ -701,6 +822,53 @@ mod tests {
         assert!(!hook(&HOOK.replace("    exit 1\nfi\n", "    exit 1\nfi\necho done\n")));
         assert!(!hook("#!/usr/bin/env bash\nexec true\n"));
         assert!(!is_precommit_hook(b"/nonexistent/hook"));
+    }
+
+    #[test]
+    fn interpreters() {
+        for name in ["python3", "python3.12", "ruby", "ruby3.1", "ruby3.4.1"] {
+            assert!(is_interpreter(name.as_bytes()), "{}", name);
+        }
+        for name in ["rubocop", "ruby-build", "bash", "env", "node"] {
+            assert!(!is_interpreter(name.as_bytes()), "{}", name);
+        }
+    }
+
+    #[test]
+    fn umask_commands() {
+        let kept = |text: &str, mask| umask_kept(text.as_bytes(), mask);
+        // brew.sh's, which only adds go-w
+        let brew = "if [[ -n \"${HOMEBREW_MACOS}\" ]]\nthen\n  umask go-w\nfi\n";
+        assert!(kept(brew, 0o022));
+        assert!(kept(brew, 0o077));
+        assert!(!kept(brew, 0o002));
+        assert!(kept("umask 022", 0o022) && kept("umask 0022", 0o022) && kept("umask '022'", 0o022));
+        assert!(!kept("umask 077", 0o022));
+        assert!(kept("umask u=rwx,g=rx,o=rx", 0o022));
+        assert!(!kept("umask u=rwx,g=,o=", 0o022));
+        assert!(kept("umask a+r", 0o022) && !kept("umask a+w", 0o022));
+        assert!(kept("umask", 0o002) && kept("umask -S", 0o002) && kept("echo $(umask)", 0o002));
+        assert!(!kept("umask \"$mode\"", 0o022) && !kept("umask -S u=rwx,go=", 0o022));
+        assert!(!kept("cd /x; umask 027; exec ruby t.rb", 0o022));
+        assert!(kept("# umask 077 would be too strict\nexec ruby t.rb", 0o022));
+        assert!(kept("HOMEBREW_UMASK=1 umasking=2", 0o002));
+    }
+
+    #[test]
+    fn shell_scripts_read_for_umask() {
+        let args = |a: &[&str]| a.iter().map(|s| s.as_bytes().to_vec()).collect::<Vec<_>>();
+        assert!(!shell_keeps_umask(&args(&["sh", "-c", "umask 077; exec ruby t.rb"]), 0o022));
+        assert!(shell_keeps_umask(&args(&["sh", "-c", "exec ruby t.rb"]), 0o022));
+        assert!(!shell_keeps_umask(&args(&["bash"]), 0o022)); // reads stdin
+        assert!(!shell_keeps_umask(&args(&["bash", "-p", "/nonexistent/brew.sh"]), 0o022));
+        let dir = std::env::temp_dir().join(format!("sr-umask-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("inner.sh");
+        fs::write(&script, "umask go-w\nexec ruby t.rb \"$@\"\n").unwrap();
+        let path = script.to_str().unwrap();
+        assert!(shell_keeps_umask(&args(&["/bin/bash", "-p", path, "info"]), 0o022));
+        assert!(!shell_keeps_umask(&args(&["/bin/bash", "-o", "posix", path]), 0o002));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

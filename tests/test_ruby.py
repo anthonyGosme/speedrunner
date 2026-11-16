@@ -762,5 +762,137 @@ class TooOld(m.TooOldChecks, m.Matrix):
     code = 'puts ARGV.join(" ")\n'
 
 
+
+RB_LAUNCHER = """#!/bin/bash
+# As brew: the env filtered, then a privileged bash runs the inner script.
+echo launcher >> "$TOOL_LOG"
+TOOL_LIB="$(cd "$(dirname "$0")/../lib" && pwd -P)"
+exec /usr/bin/env -i "PATH=$PATH" "HOME=$HOME" "TOOL_LOG=$TOOL_LOG" "TOOL_RUBY={ruby}" "TOOL_LIB=$TOOL_LIB" OUTER=yes /bin/bash -p "$TOOL_LIB/inner.sh" "$@"
+"""
+
+RB_INNER = """echo inner >> "$TOOL_LOG"
+export INNER=yes
+# As brew.sh: never changes a umask that already has go-w.
+if [[ "$(id -u)" != 0 ]]
+then
+  umask go-w
+fi
+exec "$TOOL_RUBY" -W1 --disable=gems,rubyopt "$TOOL_LIB/tool.rb" "$@"
+"""
+
+RB_TOOL = """raise "#{__FILE__} must not be loaded via `require`." if $PROGRAM_NAME != __FILE__
+require_relative "rbl_helper"
+File.open(ENV.fetch("TOOL_LOG"), "a") { |f| f.puts "tool" }
+exit 3 if ARGV.first == "fail"
+raise "boom" if ARGV.first == "boom"
+if ARGV.first == "child" # as brew's SystemCommand: a child, waited for by a thread
+  waiter = Process.detach(Process.spawn("sh", "-c", "exit 5"))
+  p [waiter.value&.exitstatus, Signal.trap("CHLD", "DEFAULT")]
+  exit
+end
+puts [ARGV, RblHelper::VALUE, ENV["OUTER"], ENV["INNER"], ENV.key?("RB_SECRET"), $VERBOSE,
+      defined?(Gem).inspect, File.umask.to_s(8)].inspect
+"""
+
+
+@unittest.skipUnless(HS_BIN, "needs the speedrunner client")
+class Launchers(m.Matrix):
+    """A bash launcher that ends in Ruby with interpreter options, as brew:
+    bin/brew filters the env and runs `bash -p brew.sh`, which execs
+    `ruby -W1 --disable=gems,rubyopt brew.rb`. The launcher runs natively
+    once per call, and the Ruby script is served."""
+
+    @classmethod
+    def setUpClass(cls):
+        ruby = shutil.which("ruby")  # the job's, as rbtest's
+        cls.root = d = tempfile.mkdtemp(dir=m.ROOT, prefix="rb-launchers-")
+        files = {"bin/rb-tool": RB_LAUNCHER.format(ruby=ruby), "lib/inner.sh": RB_INNER,
+                 "lib/tool.rb": RB_TOOL, "lib/rbl_helper.rb": "module RblHelper\n  VALUE = 'helper'\nend\n",
+                 "bin/rbe-tool": f"#!/bin/sh\necho launcher >> \"$TOOL_LOG\"\nexec {ruby} -e 'p ARGV' \"$@\"\n",
+                 # The script by a path with `..`: natively __FILE__ keeps it.
+                 "bin/rbdot-tool": f"#!/bin/sh\necho launcher >> \"$TOOL_LOG\"\n"
+                                   f"exec {ruby} \"$(dirname \"$0\")/../lib/dot.rb\" \"$@\"\n",
+                 "lib/dot.rb": "p [__FILE__ == $0, File.basename(__FILE__), ARGV]\n"}
+        for name, text in files.items():
+            path = os.path.join(d, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(text)
+            if name.startswith("bin/"):
+                os.chmod(path, 0o755)
+        cls.env = {"PATH": os.path.join(d, "bin") + ":" + m.BASE_ENV["PATH"],
+                   "TOOL_LOG": os.path.join(d, "log"), "RB_SECRET": "not for the tool"}
+        cls.work = os.path.join(d, "work")
+        os.makedirs(cls.work)
+
+    @classmethod
+    def tearDownClass(cls):
+        m.stop("rb-tool", cls.env)
+
+    def warm(self, timeout=30.0):
+        deadline = time.monotonic() + timeout
+        while run("hs", ["rb-tool"], cwd=self.work, env=self.env).returncode == m.EXIT_NOT_FAST:
+            if time.monotonic() > deadline:
+                raise RuntimeError("no daemon for rb-tool")
+            time.sleep(0.1)
+
+    def log(self):
+        try:
+            with open(self.env["TOOL_LOG"]) as f:
+                return f.read().split()
+        except FileNotFoundError:
+            return []
+
+    @m.needs_ptrace
+    def test_bash_launcher_on_a_ruby_script(self):
+        self.warm()
+        for argv in (["rb-tool", "a b", "--x"], ["rb-tool", "fail"], ["rb-tool", "boom"]):
+            with self.subTest(argv=argv):
+                self.assertSame(argv, cwd=self.work, env=self.env, umask=0o022)
+        _, out, _ = self.assertSame(["rb-tool", "a b"], cwd=self.work, env=self.env, umask=0o022)
+        self.assertEqual(out, b'[["a b"], "helper", "yes", "yes", false, false, "nil", "22"]\n')
+
+    @m.needs_ptrace
+    def test_children_of_the_tool_report_their_status(self):
+        self.warm()
+        _, out, _ = self.assertSame(["rb-tool", "child"], cwd=self.work, env=self.env, umask=0o022)
+        self.assertEqual(out, b'[5, "DEFAULT"]\n')
+
+    @m.needs_ptrace
+    def test_launcher_and_tool_run_once_per_call(self):
+        self.warm()
+        before = len(self.log())
+        for _ in range(3):
+            self.assertEqual(run("hs", ["rb-tool"], cwd=self.work, env=self.env).returncode, 0)
+        self.assertEqual(self.log()[before:], ["launcher", "inner", "tool"] * 3)
+
+    @m.needs_ptrace
+    def test_umask_the_launcher_may_change(self):
+        # umask go-w changes 002: natively the tool gets 022. Linux reads it from
+        # the stopped process; macOS cannot, and runs such a call natively.
+        self.warm()
+        _, out, _ = self.assertSame(["rb-tool"], cwd=self.work, env=self.env, umask=0o002,
+                                    require_fast=not m.MACOS)
+        self.assertTrue(out.endswith(b'"22"]\n' if os.getuid() != 0 else b'"2"]\n'), out)
+
+    def test_ruby_without_a_plain_script_runs_natively(self):
+        for tool in ("rbe-tool", "rbdot-tool"):
+            with self.subTest(tool=tool):
+                before = len(self.log())
+                self.assertSame([tool, "x"], cwd=self.work, env=self.env, require_fast=False)
+                self.assertEqual(self.log()[before:], ["launcher", "launcher"])
+                self.assertEqual(run("hs", [tool, "x"], cwd=self.work, env=self.env).returncode,
+                                 m.EXIT_NOT_FAST)
+
+    @m.needs_ptrace
+    def test_status_stop_and_prewarm(self):
+        self.warm()
+        self.assertTrue(m.status("rb-tool", self.env).startswith("ready"))
+        m.stop("rb-tool", self.env)
+        self.assertEqual(m.status("rb-tool", self.env), "down")
+        subprocess.run([HS_BIN, "prewarm", "rb-tool"], env={**m.BASE_ENV, **self.env}, check=True)
+        m.wait_ready("rb-tool", self.env)
+        self.assertEqual(run("hs", ["rb-tool", "q"], cwd=self.work, env=self.env).returncode, 0)
+
 if __name__ == "__main__":
     unittest.main()

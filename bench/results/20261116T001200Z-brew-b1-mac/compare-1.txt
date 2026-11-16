@@ -1,0 +1,19 @@
+same: brew desc gh
+same: brew info gh
+same: brew deps gh
+same: brew config
+same: brew leaves
+same: brew --cache gh
+same: brew outdated
+same: brew commands
+same: brew uses --installed openssl@3
+same: brew info --json=v2 gh
+same: brew home --help
+same: brew nonexistent-cmd
+same: brew info no-such-formula
+same: brew list --versions gh
+same: brew --env
+same: brew doctor --list-checks
+same: brew search --formula ^gh$
+same: brew options gh
+same: brew cat gh
