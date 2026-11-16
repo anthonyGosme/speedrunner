@@ -16,7 +16,25 @@
 #   2  the gems and files earlier runs loaded, learned by the children and
 #      vetted by a probe, as in speedrunner_daemon.py.
 require "digest"
-require "fiddle"
+begin
+  require "fiddle"
+rescue LoadError
+  # Ruby 3.5 made fiddle a bundled gem, out of reach under `ruby --disable=gems`
+  # (brew.rb runs so): load it from its gem directory, then take that off the
+  # load path, so that the tool's own requires find what they find natively.
+  require "rbconfig"
+  dirs = %w[gems/fiddle-*/lib extensions/*/*/fiddle-*].filter_map do |pattern|
+    Dir[File.join(RbConfig::CONFIG["rubylibprefix"], "gems", RbConfig::CONFIG["ruby_version"], pattern)].max
+  end
+  raise if dirs.empty?
+
+  $LOAD_PATH.unshift(*dirs)
+  begin
+    require "fiddle"
+  ensure
+    dirs.each { |d| $LOAD_PATH.delete(d) }
+  end
+end
 require "io/console"
 require "json"
 require "pty"
@@ -279,12 +297,30 @@ module Speedrunner
   module ArgvReads
     ON = [false]
     READ = [false]
+    # Adapter: Homebrew's os.rb asks as it loads whether brew runs from
+    # nix-darwin, by a `--file /nix/store/...` argument (`brew bundle`), and
+    # keeps the answer. Its reads are tolerated, and a request with such an
+    # argument runs natively (why_not_fast).
+    KNOWN = %r{/Homebrew/os\.rb\z}
+    TOLERATED = [false]
 
     (Array.public_instance_methods(false) + %i[dup clone] - %i[hash eql?]).each do |name|
       define_method(name) do |*args, &blk|
-        READ[0] = true if ON[0]
+        READ[0] = true if ON[0] && !ArgvReads.tolerated?
         super(*args, &blk)
       end
+    end
+
+    def self.tolerated?
+      return false unless caller_locations(2, 4).any? { |l| KNOWN.match?(l.path.to_s) }
+
+      TOLERATED[0] = true
+    end
+
+    # What os.rb looks for, as it does.
+    def self.nix_store_file?(args)
+      args.each_cons(2).any? { |arg, value| arg == "--file".b && value.start_with?("/nix/store/".b) } ||
+        args.any? { |arg| arg.start_with?("--file=/nix/store/".b) }
     end
   end
   ARGV.singleton_class.prepend(ArgvReads)
@@ -854,8 +890,12 @@ module Speedrunner
     def fired? = !@io.nil? && !IO.select([@io], nil, nil, 0).nil?
   end
 
+  # Under `ruby --disable=gems`, as brew.rb runs, RubyGems is not loaded.
+  def self.gem_path = defined?(::Gem) ? Gem.path : []
+  def self.loaded_gems = defined?(::Gem) ? Gem.loaded_specs : {}
+
   def self.fingerprint_paths(state)
-    gem_dirs = Gem.path.flat_map { |d| [d, File.join(d, "specifications")] }
+    gem_dirs = gem_path.flat_map { |d| [d, File.join(d, "specifications")] }
     ([state.script, RbConfig.ruby] + gem_dirs + $LOAD_PATH.map(&:to_s)).select { |p| File.exist?(p) }
   end
 
@@ -953,7 +993,7 @@ module Speedrunner
       state.blacklist = (cached["blacklist"] || {}).select { |k, v| k.is_a?(String) && v.is_a?(String) }
       state.learned_gems = Array(cached["gems"]).select { |g| g.is_a?(Array) && g.size == 2 }
       activate_gems(state.learned_gems)
-      files = Array(cached["modules"]).grep(String).reject { |f| state.blacklist.key?(f) }
+      files = not_refused(state, Array(cached["modules"]).grep(String))
       # Vetted when they were learned: required directly, but checked again.
       why = import_in_daemon(state, files)
       save_cache(state) if why || state.learned.size != files.size
@@ -966,6 +1006,8 @@ module Speedrunner
   # --- level 2: learned gems and files -------------------------------------
 
   def self.activate_gems(gems)
+    return unless defined?(::Gem)
+
     gems.each do |name, version|
       next if Gem.loaded_specs[name]&.version&.to_s == version
       Gem::Specification.find_by_name(name, "= #{version}").activate
@@ -1275,12 +1317,28 @@ module Speedrunner
   # Vet and load what children learned, then let the caller replace the
   # spare. One probe per call: between calls the main loop keeps a spare
   # ready. Returns [changed, reason to restart or nil].
+  # The files to vet, less those refused: blacklisted, or parts of a refused
+  # file. A file's parts are those of its own directory, openssl/ for
+  # openssl.rb: they assume it loaded first, and with it what it loads
+  # (openssl.rb loads the extension that openssl/digest.rb builds on).
+  # Refused parts are blacklisted too.
+  def self.not_refused(state, files)
+    owners = state.blacklist.keys.filter_map { |r| "#{r.delete_suffix(".rb")}/" if r.end_with?(".rb") }
+    files.reject do |f|
+      next true if state.blacklist.key?(f)
+
+      owner = owners.find { |o| f.start_with?(o) } or next false
+      state.blacklist[f] = "part of #{owner.chomp("/")}.rb, refused"
+      true
+    end
+  end
+
   def self.apply_learned(state)
     job = state.learning
     unless job
       gems = state.pending_gems.keys - state.learned_gems
       native = state.pending.keys.reject { |f| $LOADED_FEATURES.include?(f) }
-      files = native.reject { |f| state.blacklist.key?(f) }
+      files = not_refused(state, native)
       state.pending.clear
       state.pending_gems.clear
       before = [state.learned.size, state.blacklist.size, state.learned_gems.size]
@@ -1304,7 +1362,7 @@ module Speedrunner
         return [true, why]
       end
       extend_fingerprint(state, $LOADED_FEATURES.select { |f| f.start_with?("/") }, watch: true)
-      job[:files] = verdict["retry"].reject { |f| state.blacklist.key?(f) || $LOADED_FEATURES.include?(f) }
+      job[:files] = not_refused(state, verdict["retry"].reject { |f| $LOADED_FEATURES.include?(f) })
       return [false, nil] if job[:files].any?
     end
     state.learning = nil
@@ -1322,7 +1380,7 @@ module Speedrunner
   def self.start_learning
     roots = learn_roots
     base_features = $LOADED_FEATURES.to_h { |f| [f, true] }
-    base_gems = Gem.loaded_specs.keys
+    base_gems = loaded_gems.keys
     order = []
     tp = TracePoint.new(:script_compiled) do |t|
       order << t.instruction_sequence.path if t.eval_script.nil?
@@ -1334,7 +1392,7 @@ module Speedrunner
       ordered = order.select { |f| loaded.include?(f) }.uniq
       files = ordered + (loaded - ordered) # native extensions compile nothing
       files = files.select { |f| in_roots?(f, roots) }
-      gems = (Gem.loaded_specs.keys - base_gems).map { |n| [n, Gem.loaded_specs[n].version.to_s] }
+      gems = (loaded_gems.keys - base_gems).map { |n| [n, loaded_gems[n].version.to_s] }
       { "modules" => files, "gems" => gems }
     end
   end
@@ -1345,7 +1403,7 @@ module Speedrunner
   # requires its spec_helper, which must not configure every later run.
   def self.learn_roots
     skip = ["/", (File.realpath(Dir.home) rescue Dir.home)]
-    dirs = $LOAD_PATH.map(&:to_s) + Gem.path
+    dirs = $LOAD_PATH.map(&:to_s) + gem_path
     dirs.filter_map do |d|
       next unless d.start_with?("/") && File.directory?(d)
       root = File.realpath(d)
@@ -1380,6 +1438,9 @@ module Speedrunner
       return "gem version chosen on the command line"
     end
     return "stale: installed files changed" if stale?(state)
+    if ArgvReads::TOLERATED[0] && ArgvReads.nix_store_file?(req.argv[1..].map(&:b))
+      return "a --file in /nix/store, which Homebrew read at load"
+    end
     why = why_cwd_differs(state, fds[3])
     return why if why
 

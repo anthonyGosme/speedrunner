@@ -517,26 +517,35 @@ java -XX:AOTCache=tool.aot -jar tool.jar --version
 
 ## Launchers: az, gcloud
 
-Some tools are a script that prepares an environment, then `exec`s Python on the
-real tool: gcloud is a shell script ending in `exec "$CLOUDSDK_PYTHON" … gcloud.py`,
-az (from pip) a Python script ending in `os.execl(sys.executable, …, "-m",
-"azure.cli", …)`. Preloading the launcher would gain nothing.
+Some tools are a script that prepares an environment, then `exec`s Python or Ruby
+on the real tool: gcloud is a shell script ending in `exec "$CLOUDSDK_PYTHON" …
+gcloud.py`, az (from pip) a Python script ending in `os.execl(sys.executable, …,
+"-m", "azure.cli", …)`, and brew a bash script that runs `env -i … bash -p brew.sh`,
+which ends in `exec` of Ruby on `brew.rb`. Preloading the launcher would gain
+nothing.
 
 So the client runs the launcher natively, under ptrace, and stops it the instant
-it `exec`s the Python interpreter, before a single instruction of the tool runs.
+it `exec`s the Python or Ruby interpreter, before a single instruction of the tool
+runs.
 It then serves what the launcher was about to run, with the environment, umask
 and ignored signals the launcher set up, by a daemon of its own. The launcher's
-preamble runs once per call, as natively (6.6 ms for gcloud, 7.5 ms for az).
+preamble runs once per call, as natively (6.6 ms for gcloud, 7.5 ms for az,
+about 240 ms for brew's, which runs git and Xcode's tools).
 
 ```bash
 srr gcloud config list
-speedrunner enroll gcloud az     # and the shell wrappers serve them too
+srr brew info gh                     # 1.07 s → 0.57 s on an Intel Mac
+speedrunner enroll gcloud az brew    # and the shell wrappers serve them too
 ```
 
 Limits:
 
-- Only a launcher whose last command is an `exec` of Python is followed. wp-cli
-  and drush go through two shell scripts and then PHP: they run natively.
+- Only a launcher whose last command is an `exec` of Python or Ruby is followed.
+  wp-cli and drush go through two shell scripts and then PHP: they run natively.
+- Ruby is served on a script named by a plain absolute path (as `brew.rb` is),
+  with options that change nothing per call: `-W…`, `-w`, `-U`, `--disable…`,
+  `--enable…`, encodings, `-r`, an absolute `-I`. Anything else (`-e`, `-n`,
+  `-C`, a relative script) runs natively.
 - ptrace must be allowed. In a container without it, or with Yama
   `ptrace_scope` set to 3, the client says `cannot follow the launcher: ptrace
   unavailable` and runs the launcher natively, once.
@@ -549,9 +558,11 @@ Limits:
   that, it runs the launcher's preamble without arguments to find its target.
 - On macOS, a launcher written in Python on a framework build of Python (az
   installed by pip on python.org's or Apple's Python) runs natively; shell
-  launchers (gcloud, Homebrew's az) are followed. A launcher whose text mentions
-  `umask` runs natively, since macOS does not let one process read another's
-  umask. SIGCHLD, SIGWINCH, SIGURG, SIGIO and SIGINFO, if the launcher leaves
+  launchers (gcloud, Homebrew's az, brew) are followed. macOS does not let one
+  process read another's umask: the launcher, and every script a shell runs on
+  its way (brew.sh), is read for `umask` commands, and one that may change yours
+  runs the call natively. brew.sh's `umask go-w` changes nothing to the usual
+  022. SIGCHLD, SIGWINCH, SIGURG, SIGIO and SIGINFO, if the launcher leaves
   them ignored, are served as left at their default: macOS reports both the same
   way once the interpreter is execed.
 

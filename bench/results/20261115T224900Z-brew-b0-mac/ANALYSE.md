@@ -1,10 +1,12 @@
 # brew, B0: go/no-go
 
+**Corrected after B1** ([B1](../20261116T001200Z-brew-b1-mac/ANALYSE.md)): this analysis said that macOS has no ptrace. It has: the client already followed launchers there with `PT_TRACE_ME`, and only stopped at Python interpreters. B1 needed no new technique; the struck-out claims are marked below.
+
 Machine: MacBook Pro (Intel i7-9750H), macOS 26.7.3. Homebrew 7.0.11 on its portable Ruby 4.0.9, 192 formulae installed, `HOMEBREW_NO_AUTO_UPDATE=1` and `HOMEBREW_NO_ANALYTICS=1` so that no call reaches the network. Medians of 10 runs after 2 warm-ups. No speedrunner client: these are ceilings. Scripts: [bench/brew/](../../brew/).
 
 ## Why brew
 
-Nearly everyone on a Mac runs it, and its Ruby commands take a second or more: `brew info gh` 1.05 s, `brew outdated` 1.8 s ([native.txt](native.txt)). speedrunner does not serve it today. `brew` is a bash launcher: `bin/brew` filters the environment and runs `env -i … /bin/bash -p brew.sh`, which computes the call's environment and ends with `exec` of Ruby on `brew.rb`. The client follows a launcher only to a Python interpreter, and only with ptrace, which macOS lacks. A few commands (`--version`, `--prefix`, `list`) never leave bash: 58 to 175 ms, out of scope.
+Nearly everyone on a Mac runs it, and its Ruby commands take a second or more: `brew info gh` 1.05 s, `brew outdated` 1.8 s ([native.txt](native.txt)). speedrunner does not serve it today. `brew` is a bash launcher: `bin/brew` filters the environment and runs `env -i … /bin/bash -p brew.sh`, which computes the call's environment and ends with `exec` of Ruby on `brew.rb`. The client follows a launcher only to a Python interpreter, under ptrace (~~which macOS lacks~~: it does not lack it). A few commands (`--version`, `--prefix`, `list`) never leave bash: 58 to 175 ms, out of scope.
 
 ## Method
 
@@ -43,7 +45,7 @@ Nearly everyone on a Mac runs it, and its Ruby commands take a second or more: `
 
 What B1 needs:
 
-1. **Follow a bash launcher to Ruby on macOS, without ptrace.** The `exec` function used here works for brew, in two hops: `bin/brew` runs `env -i … /bin/bash -p brew.sh`, which runs Ruby. It cannot reproduce an `exec` used only for a redirection, which makes the redirection permanent: `utils/lock.sh` has two (`exec 200>…`). A call that reaches one must run natively. On Linux, the ptrace follower must accept Ruby as a target.
+1. **Follow a bash launcher to Ruby.** ~~On macOS, without ptrace, with the `exec` function used here.~~ The ptrace follower, on Linux and macOS, must accept Ruby as a target; the `exec` function was only a measuring tool.
 2. **Serve a script with interpreter flags.** `brew.rb` runs with `-W1 --disable=gems,rubyopt`: the flags belong in the daemon's identity.
 3. **Staleness.** `brew update` rewrites the Homebrew repository. The files the daemon loaded are watched, so the next call runs natively and the daemon restarts.
 
