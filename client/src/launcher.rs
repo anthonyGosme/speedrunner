@@ -58,15 +58,33 @@ pub enum Traced {
     Native(i32),
 }
 
+/// Let the launcher run natively, untraced, and say why when asked to.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn let_go(pid: i32, name: &[u8], why: &str) -> Traced {
+    if std::env::var_os("SPEEDRUNNER_DEBUG").is_some() {
+        eprintln!("speedrunner: the launcher runs natively: at {}, {}", String::from_utf8_lossy(name), why);
+    }
+    detach(pid)
+}
+
 fn is_shell(name: &[u8]) -> bool {
     SHELLS.contains(&name)
 }
 
+/// Programs that are many: BusyBox's `env` and `sh` (Alpine), coreutils'
+/// single binary (Fedora's containers). They are what argv[0] names.
+#[cfg(target_os = "linux")]
+const MULTICALL: [&[u8]; 3] = [b"busybox", b"coreutils", b"toybox"];
+
 /// What a launcher may stop at: a Python or Ruby interpreter, by its file's
-/// name (python3.12, ruby, Debian's ruby3.1).
+/// name (python3.12, ruby, Debian's ruby3.1). Fedora's /usr/bin/ruby is a
+/// script, rubypick, that execs ruby-mri: that one is the interpreter.
 fn is_interpreter(name: &[u8]) -> bool {
     name.starts_with(b"python")
-        || name.strip_prefix(b"ruby").map_or(false, |v| v.iter().all(|c| c.is_ascii_digit() || *c == b'.'))
+        || name.strip_prefix(b"ruby").map_or(false, |v| {
+            let v = v.strip_suffix(b"-mri").unwrap_or(v);
+            v.iter().all(|c| c.is_ascii_digit() || *c == b'.')
+        })
 }
 
 /// Whether every `umask` command in a shell script leaves `mask` as it is:
@@ -466,7 +484,13 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
             continue; // the launcher itself starting
         }
         let exe = fs::read_link(format!("/proc/{}/exe", pid))?;
-        let name = basename(exe.as_os_str().as_bytes());
+        let file = basename(exe.as_os_str().as_bytes());
+        let argv0 = if MULTICALL.contains(&file) {
+            fs::read(format!("/proc/{}/cmdline", pid)).ok().and_then(|c| split0(c).into_iter().next())
+        } else {
+            None
+        };
+        let name = argv0.as_deref().map_or(file, basename);
         if is_interpreter(name) {
             let launch = read_launch(pid, &exe, !quiet);
             match launch {
@@ -478,7 +502,7 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
                     kill(pid);
                     return Err(io::Error::new(io::ErrorKind::Other, "unreadable launch"));
                 }
-                None => return Ok(detach(pid)),
+                None => return Ok(let_go(pid, name, "what it execs cannot be checked")),
             }
         }
         // A framework build's python3 execs its Python.app: still the same
@@ -488,7 +512,7 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
                 kill(pid);
                 return Err(io::Error::new(io::ErrorKind::Other, "execs no Python or Ruby interpreter"));
             }
-            return Ok(detach(pid));
+            return Ok(let_go(pid, name, "it execs no Python or Ruby interpreter"));
         }
     }
 }
@@ -589,7 +613,7 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
                     kill(pid);
                     return Err(io::Error::new(io::ErrorKind::Other, "unreadable launch"));
                 }
-                None => return Ok(detach(pid)),
+                None => return Ok(let_go(pid, name, "what it execs cannot be checked")),
             }
         }
         if !is_shell(name) {
@@ -597,7 +621,7 @@ pub fn trace(path: &[u8], argv: &[Vec<u8>], quiet: bool) -> io::Result<Traced> {
                 kill(pid);
                 return Err(io::Error::new(io::ErrorKind::Other, "execs no Python or Ruby interpreter"));
             }
-            return Ok(detach(pid));
+            return Ok(let_go(pid, name, "it execs no Python or Ruby interpreter"));
         }
     }
 }
@@ -826,10 +850,10 @@ mod tests {
 
     #[test]
     fn interpreters() {
-        for name in ["python3", "python3.12", "ruby", "ruby3.1", "ruby3.4.1"] {
+        for name in ["python3", "python3.12", "ruby", "ruby3.1", "ruby3.4.1", "ruby-mri"] {
             assert!(is_interpreter(name.as_bytes()), "{}", name);
         }
-        for name in ["rubocop", "ruby-build", "bash", "env", "node"] {
+        for name in ["rubocop", "ruby-build", "ruby-mri-x", "bash", "env", "node"] {
             assert!(!is_interpreter(name.as_bytes()), "{}", name);
         }
     }
