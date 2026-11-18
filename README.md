@@ -12,7 +12,7 @@
 </p>
 
 
-aws, az, gcloud, ansible, black, pytest, rubocop, rspec, composer, artisan, eslint, npm:
+aws, az, gcloud, brew, ansible, black, pytest, rubocop, rspec, composer, artisan, eslint, npm:
 hundreds of everyday command-line tools are written in Python, Ruby, PHP or Node, and spend
 most of each call starting the interpreter and loading their code before doing any work.
 speedrunner does that once, in a daemon, and forks it for every call: often 3 to 10 times
@@ -284,6 +284,29 @@ Outputs identical to native. `llm plugins` with the four plugins (3401 → 38 ms
 changes from one native run to the next, 4 orders in 15 runs; served, it keeps the order the daemon drew, with the
 same content. A prompt's own time, waiting for the model, is not touched.
 [Protocol and every run](bench/results/20261108T205000Z-llm-docker/ANALYSE.md).
+
+### brew
+
+Homebrew's Ruby commands take a second or more, most of it loading brew's code. `brew` is a bash launcher that
+ends in Ruby: speedrunner runs its bash preamble natively, as it is, then serves `brew.rb` (1.1.0 and later).
+Homebrew 7.0.11 on an Intel Mac, 192 formulae installed, auto-update off, medians of 20 alternated runs:
+
+| Command | Native | speedrunner | Gain |
+|---|---:|---:|---:|
+| `brew config` | 1047 ms | 531 ms | **x2.0** |
+| `brew desc gh` | 1047 ms | 551 ms | **x1.9** |
+| `brew deps gh` | 1061 ms | 562 ms | **x1.9** |
+| `brew info gh` | 1071 ms | 574 ms | **x1.9** |
+| `brew commands` | 1778 ms | 1138 ms | x1.6 |
+| `brew --cache gh` | 1345 ms | 924 ms | x1.5 |
+| `brew leaves` | 1693 ms | 1220 ms | x1.4 |
+| `brew outdated` | 1845 ms | 1339 ms | x1.4 |
+| `brew uses --installed openssl@3` | 2281 ms | 1794 ms | x1.3 |
+
+Outputs identical to native, 19 commands compared, errors included. About half a second saved on every call;
+what stays is brew's bash preamble (about 240 ms: git, Xcode's tools), the work each command does, and openssl,
+which changes the environment as it loads and is not preloaded. Commands that stay in bash (`brew list`,
+`brew --prefix`) are left as they are. [Protocol and every run](bench/results/20261116T001200Z-brew-b1-mac/ANALYSE.md).
 
 ### Through uv run
 
